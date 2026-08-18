@@ -4,7 +4,7 @@ import { ArrowDownToLine, X, CircleDashed, Plus, Trash2, AlertCircle, CheckCircl
 import { useAuth } from '../../contexts/AuthContext';
 import { getJobCards } from '../../lib/supabase/jobCardService';
 import { getProducts } from '../../lib/supabase/productService';
-import { executeFinishGoodInwardTransaction, type FinishGoodInwardPayload } from '../../lib/supabase/finishGoodService';
+import { executeFinishGoodInwardTransaction, getFinishGoods, type FinishGoodInwardPayload } from '../../lib/supabase/finishGoodService';
 
 interface FGRow {
   productId: string; // Will store the selected product's ID
@@ -117,10 +117,14 @@ export default function BulkInModal({ onClose, onSuccess }: { onClose: () => voi
   
   // Fetch Products for dropdowns
   const [products, setProducts] = useState<any[]>([]);
+  const [finishGoods, setFinishGoods] = useState<any[]>([]);
   
   useEffect(() => {
     getProducts().then(data => {
       setProducts(data);
+    });
+    getFinishGoods().then(data => {
+      setFinishGoods(data);
     });
   }, []);
 
@@ -160,6 +164,13 @@ export default function BulkInModal({ onClose, onSuccess }: { onClose: () => voi
     if (product) {
       setValue(`rows.${index}.customerName`, product.customerName || '');
       setValue(`rows.${index}.productName`, product.itemName || product.artworkNo || '');
+      
+      const fg = finishGoods.find(fg => fg.productId === productId);
+      if (fg && fg.rate) {
+        setValue(`rows.${index}.rate`, fg.rate);
+      } else {
+        setValue(`rows.${index}.rate`, '');
+      }
     }
   };
 
