@@ -68,7 +68,10 @@ export default function OutwardModal({ reels, onClose, onSuccess }: OutwardModal
   const handleRemainingChange = (reelId: string, val: string) => {
     setSelected(prev => ({
       ...prev,
-      [reelId]: { remainingWeight: val === '' ? '' : Number(val) }
+      [reelId]: { 
+        remainingWeight: val === '' ? '' : Number(val),
+        selectedAt: prev[reelId]?.selectedAt || Date.now() 
+      }
     }));
   };
 
