@@ -40,9 +40,36 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
       const matchWeight = filterWeight ? String(r.weight) === filterWeight : true;
       const matchPaperType = filterPaperType ? (r.paperType || '').toLowerCase() === filterPaperType.toLowerCase() : true;
 
-      return searchMatch && matchSize && matchBF && matchGSM && matchWeight && matchPaperType;
-    }).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      // Only show reels that have a positive balance
+      const hasBalance = Number(r.currentBalance) > 0;
+
+      return hasBalance && searchMatch && matchSize && matchBF && matchGSM && matchWeight && matchPaperType;
+    }).sort((a, b) => Number(a.currentBalance) - Number(b.currentBalance));
   }, [reels, search, filterSize, filterBF, filterGSM, filterWeight, filterPaperType]);
+
+  // Total weight stats for filtered reels
+  const filteredStats = useMemo(() => {
+    let totalWeight = 0, shortCount = 0, shortWeight = 0, fullCount = 0, fullWeight = 0;
+    filteredReels.forEach(r => {
+      const bal = Number(r.currentBalance) || 0;
+      const origWt = Number(r.weight) || 0;
+      totalWeight += bal;
+      if (origWt > 0 && bal < origWt) {
+        shortCount++;
+        shortWeight += bal;
+      } else {
+        fullCount++;
+        fullWeight += bal;
+      }
+    });
+    return {
+      totalWeight: Math.round(totalWeight),
+      shortCount,
+      shortWeight: Math.round(shortWeight),
+      fullCount,
+      fullWeight: Math.round(fullWeight),
+    };
+  }, [filteredReels]);
 
   // Unique values for filter dropdowns
   const uniqueSizes = Array.from(new Set(reels.map(p => p.reelSize))).filter(Boolean).sort((a,b)=>Number(a)-Number(b));
@@ -102,20 +129,22 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
           <div className="w-1/3 border-r border-border flex flex-col bg-secondary/10 min-w-[350px]">
             {/* Filters */}
             <div className="p-4 border-b border-border space-y-3 shrink-0">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <input 
-                  type="text" 
-                  value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Search Reel No..." 
-                  className={inputCls + " pl-9"}
-                />
-              </div>
               <div className="grid grid-cols-2 gap-2">
-                <select className={inputCls + " py-1.5 col-span-2"} value={filterPaperType} onChange={e => setFilterPaperType(e.target.value)}>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <input 
+                    type="text" 
+                    value={search} onChange={e => setSearch(e.target.value)}
+                    placeholder="Reel No..." 
+                    className={inputCls + " pl-9 py-1.5 h-full"}
+                  />
+                </div>
+                <select className={inputCls + " py-1.5"} value={filterPaperType} onChange={e => setFilterPaperType(e.target.value)}>
                   <option value="">Paper Type</option>
                   {uniquePaperTypes.map(v => <option key={v as string} value={v as string}>{v}</option>)}
                 </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
                 <select className={inputCls + " py-1.5"} value={filterSize} onChange={e => setFilterSize(e.target.value)}>
                   <option value="">Size</option>
                   {uniqueSizes.map(v => <option key={v} value={v}>{v}"</option>)}
@@ -141,8 +170,20 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
                 </button>
               )}
               
-              <div className="text-xs text-muted-foreground pt-1 border-t border-border font-medium">
-                Found {filteredReels.length} Reels
+              <div className="text-sm text-foreground pt-2 pb-1 border-t border-border font-bold flex justify-between items-center">
+                <span>{filteredReels.length} Reels Found</span>
+                <span className="text-primary">{filteredStats.totalWeight.toLocaleString()} Kg Total</span>
+              </div>
+              {/* Weight Summary */}
+              <div className="bg-secondary/30 border border-border rounded-md p-2 space-y-1.5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-orange-600 font-medium">⟳ Short Reels ({filteredStats.shortCount}):</span>
+                  <span className="text-orange-700 font-bold">{filteredStats.shortWeight.toLocaleString()} Kg</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-blue-600 font-medium">● Full Reels ({filteredStats.fullCount}):</span>
+                  <span className="text-blue-700 font-bold">{filteredStats.fullWeight.toLocaleString()} Kg</span>
+                </div>
               </div>
             </div>
 

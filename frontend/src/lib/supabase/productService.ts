@@ -258,3 +258,194 @@ export const updateProduct = async (id: string, data: Record<string, any>, user:
     referenceId: id,
   });
 };
+
+/**
+ * Soft-deletes a product by setting is_archived to true.
+ */
+export const deleteProduct = async (id: string, user: string = 'System'): Promise<void> => {
+  const { error } = await supabase
+    .from('products')
+    .update({
+      is_archived: true,
+      updated_by: user,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('firestore_document_id', id);
+
+  if (error) {
+    console.error('Error deleting product:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: 'Deleted',
+    entity: 'products',
+    referenceId: id,
+  });
+};
+
+export interface ProductUsage {
+  purchaseOrders: number;
+  jobCards: number;
+  finishGoods: number;
+  transactions: number;
+  total: number;
+}
+
+export const checkProductUsage = async (productId: string): Promise<ProductUsage> => {
+  const [{ count: poCount }, { count: jcCount }, { count: fgCount }, { count: fgtCount }] = await Promise.all([
+    supabase.from('purchase_orders').select('*', { count: 'exact', head: true }).or(`product_id_raw.eq.${productId},resolved_product_id.eq.${productId}`),
+    supabase.from('job_cards').select('*', { count: 'exact', head: true }).or(`product_id_raw.eq.${productId},resolved_product_id.eq.${productId}`),
+    supabase.from('finish_goods').select('*', { count: 'exact', head: true }).eq('product_id', productId),
+    supabase.from('finish_good_transactions').select('*', { count: 'exact', head: true }).eq('product_id', productId),
+  ]);
+
+  return {
+    purchaseOrders: poCount || 0,
+    jobCards: jcCount || 0,
+    finishGoods: fgCount || 0,
+    transactions: fgtCount || 0,
+    total: (poCount || 0) + (jcCount || 0) + (fgCount || 0) + (fgtCount || 0)
+  };
+};
+
+export const migrateProduct = async (oldProductId: string, newProduct: SupabaseProduct, user: string = 'System') => {
+  const newId = newProduct.id;
+  const newName = newProduct.itemName;
+
+  const { data: pos } = await supabase.from('purchase_orders').select('*').or(`product_id_raw.eq.${oldProductId},resolved_product_id.eq.${oldProductId}`);
+  if (pos) {
+    for (const po of pos) {
+      const raw = po.raw_data || {};
+      raw.productId = newId;
+      raw.itemName = newName;
+      await supabase.from('purchase_orders').update({ product_id_raw: newId, resolved_product_id: newId, raw_data: raw }).eq('firestore_document_id', po.firestore_document_id);
+    }
+  }
+
+  const { data: jcs } = await supabase.from('job_cards').select('*').or(`product_id_raw.eq.${oldProductId},resolved_product_id.eq.${oldProductId}`);
+  if (jcs) {
+    for (const jc of jcs) {
+      const raw = jc.raw_data || {};
+      raw.productId = newId;
+      raw.itemName = newName;
+      await supabase.from('job_cards').update({ product_id_raw: newId, resolved_product_id: newId, raw_data: raw }).eq('firestore_document_id', jc.firestore_document_id);
+    }
+  }
+
+  const { data: fgs } = await supabase.from('finish_goods').select('*').eq('product_id', oldProductId);
+  if (fgs) {
+    for (const fg of fgs) {
+      const raw = fg.raw_data || {};
+      raw.productId = newId;
+      raw.productName = newName;
+      await supabase.from('finish_goods').update({ product_id: newId, raw_data: raw }).eq('firestore_document_id', fg.firestore_document_id);
+    }
+  }
+
+  const { data: fgts } = await supabase.from('finish_good_transactions').select('*').eq('product_id', oldProductId);
+  if (fgts) {
+    for (const fgt of fgts) {
+      const raw = fgt.raw_data || {};
+      raw.productId = newId;
+      raw.productName = newName;
+      await supabase.from('finish_good_transactions').update({ product_id: newId, raw_data: raw }).eq('firestore_document_id', fgt.firestore_document_id);
+    }
+  }
+
+  await logActivity({
+    user,
+    action: 'Migrated',
+    entity: 'products',
+    referenceId: oldProductId,
+  });
+};
+
+export const bulkUpdateProductCustomers = async (productIds: string[], newCustomer: { id: string, name: string }, user: string = 'System') => {
+  const newId = newCustomer.id;
+  const newName = newCustomer.name;
+  
+  // 1. Fetch current products to update raw_data
+  const { data: products } = await supabase.from('products').select('*').in('firestore_document_id', productIds);
+  if (products) {
+    for (const p of products) {
+      const raw = p.raw_data || {};
+      raw.customerId = newId;
+      raw.customerName = newName;
+      await supabase.from('products').update({ 
+        customer_id: newId, 
+        customer_name: newName, 
+        raw_data: raw 
+      }).eq('firestore_document_id', p.firestore_document_id);
+    }
+  }
+
+  // 2. Update Job Cards referencing these products
+  const { data: jcs } = await supabase.from('job_cards').select('*').in('resolved_product_id', productIds);
+  if (jcs) {
+    for (const jc of jcs) {
+      const raw = jc.raw_data || {};
+      raw.customerId = newId;
+      raw.customerName = newName;
+      await supabase.from('job_cards').update({ 
+        customer_id_raw: newId, 
+        resolved_customer_id: newId, 
+        customer_name: newName, 
+        raw_data: raw 
+      }).eq('firestore_document_id', jc.firestore_document_id);
+    }
+  }
+
+  // 3. Update POs referencing these products
+  const { data: pos } = await supabase.from('purchase_orders').select('*').in('resolved_product_id', productIds);
+  if (pos) {
+    for (const po of pos) {
+      const raw = po.raw_data || {};
+      raw.customerId = newId;
+      raw.customerName = newName;
+      await supabase.from('purchase_orders').update({ 
+        customer_id_raw: newId, 
+        resolved_customer_id: newId, 
+        customer_name: newName, 
+        raw_data: raw 
+      }).eq('firestore_document_id', po.firestore_document_id);
+    }
+  }
+
+  // 4. Update Finish Goods
+  const { data: fgs } = await supabase.from('finish_goods').select('*').in('product_id', productIds);
+  if (fgs) {
+    for (const fg of fgs) {
+      const raw = fg.raw_data || {};
+      raw.customerId = newId;
+      raw.customerName = newName;
+      await supabase.from('finish_goods').update({ 
+        customer_id: newId, 
+        raw_data: raw 
+      }).eq('firestore_document_id', fg.firestore_document_id);
+    }
+  }
+
+  // 5. Update Finish Good Transactions
+  const { data: fgts } = await supabase.from('finish_good_transactions').select('*').in('product_id', productIds);
+  if (fgts) {
+    for (const fgt of fgts) {
+      const raw = fgt.raw_data || {};
+      raw.customerId = newId;
+      raw.customerName = newName;
+      await supabase.from('finish_good_transactions').update({ 
+        customer_id: newId, 
+        raw_data: raw 
+      }).eq('firestore_document_id', fgt.firestore_document_id);
+    }
+  }
+
+  await logActivity({
+    user,
+    action: 'Updated',
+    entity: 'products',
+    referenceId: `Bulk(${productIds.length})`,
+  });
+};
+

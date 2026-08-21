@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Truck, Search, CircleDollarSign } from 'lucide-react';
+import { Truck, Search, CircleDollarSign, FileText, Car } from 'lucide-react';
 import type { FinishGoodTransaction } from '../lib/types/models';
 import ExportButtons from '../components/ExportButtons';
 import { format } from 'date-fns';
@@ -203,14 +203,35 @@ export default function FreightCharge() {
           <p className="text-muted-foreground mt-1">Manage and track outward logistics expenses</p>
         </div>
         
-        <div className="flex justify-end items-center">
-          <div className="bg-primary/10 border border-primary/20 px-6 py-4 rounded-xl flex items-center shadow-sm">
-            <div className="bg-primary/20 p-3 rounded-full mr-4">
-              <CircleDollarSign className="w-6 h-6 text-primary" />
+        <div className="flex justify-end items-center gap-4">
+          
+          <div className="bg-blue-50 border border-blue-200 px-4 py-3 rounded-xl flex items-center shadow-sm">
+            <div className="bg-blue-100 p-2 rounded-full mr-3">
+              <Truck className="w-5 h-5 text-blue-700" />
             </div>
             <div>
-              <div className="text-sm font-semibold text-primary uppercase tracking-wider mb-1">Total Freight (Filtered)</div>
-              <div className="text-2xl font-black text-primary">₹{overallTotalFreight.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+              <div className="text-xs font-semibold text-blue-800 uppercase tracking-wider mb-1">Total Vehicles</div>
+              <div className="text-xl font-black text-blue-900">{new Set(filteredData.map(d => d.vehicleNo).filter(Boolean)).size}</div>
+            </div>
+          </div>
+
+          <div className="bg-purple-50 border border-purple-200 px-4 py-3 rounded-xl flex items-center shadow-sm">
+            <div className="bg-purple-100 p-2 rounded-full mr-3">
+              <FileText className="w-5 h-5 text-purple-700" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-purple-800 uppercase tracking-wider mb-1">Total Bills</div>
+              <div className="text-xl font-black text-purple-900">{new Set(filteredData.map(d => d.invoiceNo).filter(Boolean)).size}</div>
+            </div>
+          </div>
+
+          <div className="bg-primary/10 border border-primary/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
+            <div className="bg-primary/20 p-2 rounded-full mr-3">
+              <CircleDollarSign className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Total Freight</div>
+              <div className="text-xl font-black text-primary">₹{overallTotalFreight.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
             </div>
           </div>
         </div>

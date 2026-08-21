@@ -1,12 +1,13 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
   X, FileSpreadsheet, Upload, Download, CheckCircle2,
-  AlertTriangle, Loader2, ArrowDownToLine, Truck, Info, ChevronDown, ChevronUp
+  AlertTriangle, Loader2, ArrowDownToLine, Truck, Info, ChevronDown, ChevronUp, Trash2, RefreshCw, Plus
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getProducts } from '../../lib/supabase/productService';
-import { executeFinishGoodInwardTransaction, executeFinishGoodOutwardTransaction, type FinishGoodInwardPayload, type FinishGoodOutwardPayload, type LogisticsPayload } from '../../lib/supabase/finishGoodService';
+import { executeFinishGoodInwardTransaction, executeFinishGoodOutwardTransaction, resetAllFinishGoods, type FinishGoodInwardPayload, type FinishGoodOutwardPayload, type LogisticsPayload, initializeOpeningBalances } from '../../lib/supabase/finishGoodService';
+import { AddTradingItemModal } from './AddTradingItemModal';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -73,7 +74,10 @@ function parseExcelDate(val: any): string {
 }
 
 function safeNum(val: any): number {
-  const n = Number(val);
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  const cleaned = String(val).replace(/[^0-9.-]+/g, "");
+  const n = Number(cleaned);
   return isNaN(n) ? 0 : n;
 }
 
@@ -186,6 +190,104 @@ function downloadTemplate() {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+// ─── Fuzzy match score (0-1) — higher = more similar ────────────────────────
+function fuzzyScore(a: string, b: string): number {
+  const s = a.toLowerCase().trim();
+  const t = b.toLowerCase().trim();
+  if (s === t) return 1;
+  if (t.includes(s) || s.includes(t)) return 0.9;
+  // Word overlap
+  const sw = new Set(s.split(/\s+/));
+  const tw = new Set(t.split(/\s+/));
+  const inter = [...sw].filter(w => tw.has(w)).length;
+  const union = new Set([...sw, ...tw]).size;
+  return union > 0 ? inter / union : 0;
+}
+
+// ─── Searchable Dropdown for 500+ Items ─────────────────────────────────────
+function SearchableDropdown({
+  options,
+  value,
+  onChange,
+  placeholder = "Search..."
+}: {
+  options: { id: string; label: string; group?: string }[];
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+}) {
+  const [search, setSearch] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+
+  const selectedOption = options.find(o => o.id === value);
+
+  const openMenu = () => {
+    setSearch('');
+    setIsOpen(true);
+  };
+
+  const filtered = options.filter(o => 
+    o.label.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="relative w-full">
+      {!isOpen ? (
+        <button 
+          type="button"
+          onClick={openMenu}
+          className="w-full text-left text-xs rounded-md border border-input px-3 py-2 bg-background hover:bg-muted focus:outline-none focus:ring-1 focus:ring-orange-400 font-medium truncate shadow-sm"
+        >
+          {selectedOption ? (
+            <span className="text-emerald-700">✅ {selectedOption.label}</span>
+          ) : (
+            <span className="text-muted-foreground">{placeholder}</span>
+          )}
+        </button>
+      ) : (
+        <div className="relative z-50">
+          <input
+            autoFocus
+            type="text"
+            className="w-full text-xs rounded-md border border-orange-400 px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-orange-500 font-medium shadow-sm"
+            placeholder="Type customer or item name..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onBlur={() => setTimeout(() => setIsOpen(false), 200)}
+          />
+          <div className="absolute top-full left-0 w-full mt-1 bg-white border border-border rounded-md shadow-xl max-h-64 overflow-y-auto z-50">
+            {filtered.length > 0 ? (
+              filtered.map((opt, i) => {
+                const showGroup = i === 0 || filtered[i - 1].group !== opt.group;
+                return (
+                  <div key={`${opt.group || ''}-${opt.id}`}>
+                    {showGroup && opt.group && (
+                      <div className="bg-muted px-3 py-1 text-[10px] font-bold text-muted-foreground uppercase sticky top-0">
+                        {opt.group}
+                      </div>
+                    )}
+                    <div
+                      onMouseDown={() => {
+                        onChange(opt.id);
+                        setIsOpen(false);
+                      }}
+                      className="px-3 py-2 text-xs hover:bg-orange-50 cursor-pointer border-b border-border/50 last:border-0"
+                    >
+                      <span className={opt.id === value ? "font-bold text-orange-700" : ""}>{opt.label}</span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="px-3 py-2 text-xs text-muted-foreground">No matches found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -198,6 +300,46 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
   const [fileName, setFileName] = useState('');
   const [showFG, setShowFG] = useState(true);
   const [showFreight, setShowFreight] = useState(true);
+  // All products from DB (saved for name-mapping)
+  const [allProducts, setAllProducts] = useState<any[]>([]);
+  // name mapping: artworkNo (from Excel) → productId (from Master Data)
+  const [nameMapping, setNameMapping] = useState<Record<string, string>>({});
+  // track which mapping rows are marked "skip" by user
+  const [skipMapping, setSkipMapping] = useState<Record<string, boolean>>({});
+  const [showMappingPanel, setShowMappingPanel] = useState(true);
+  // Reset mode: if true, all FG data is cleared before import
+  const [resetMode, setResetMode] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
+  const [isAddTradingItemOpen, setIsAddTradingItemOpen] = useState(false);
+
+  const handleReloadProducts = async () => {
+    setIsReloading(true);
+    try {
+      const products: any[] = await getProducts();
+      setAllProducts(products);
+    } catch (err) {
+      console.error('Failed to reload products', err);
+    } finally {
+      setIsReloading(false);
+    }
+  };
+
+  const handleAutoMap = () => {
+    const newMapping = { ...nameMapping };
+    const newSkip = { ...skipMapping };
+    let mappedCount = 0;
+    unmappedGroups.forEach(group => {
+      if (group.suggestions && group.suggestions.length > 0) {
+        newMapping[group.artworkNo] = group.suggestions[0].id;
+        delete newSkip[group.artworkNo];
+        mappedCount++;
+      }
+    });
+    setNameMapping(newMapping);
+    setSkipMapping(newSkip);
+    alert(`${mappedCount} items automatically best match ke sath map ho gaye! Ek baar check zaroor kar lein.`);
+  };
 
   // ── Parse Excel File ──────────────────────────────────────────────────────
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -213,6 +355,9 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
 
         // Fetch products from DB for matching
         const products: any[] = await getProducts();
+        setAllProducts(products);
+        setNameMapping({});
+        setSkipMapping({});
 
         // ── Parse FinishGoods Sheet ──
         const fgSheet = wb.Sheets['FinishGoods'] || wb.Sheets[wb.SheetNames[0]];
@@ -249,7 +394,7 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
 
           // Validate category
           const validCatsIN  = ['REGULAR', 'REJECTED'];
-          const validCatsOUT = ['DISPATCH', 'NON-MOVING'];
+          const validCatsOUT = ['DISPATCH', 'NON-MOVING', 'REJECTED'];
           const validCats    = typeRaw === 'IN' ? validCatsIN : validCatsOUT;
 
           let status: 'OK' | 'ERROR' | 'WARN' = 'OK';
@@ -262,8 +407,8 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
           } else if (!validCats.includes(catRaw)) {
             status = 'ERROR';
             error = `Invalid Category "${catRaw}" for ${typeRaw}. Use: ${validCats.join(' or ')}`;
-          } else if (qty <= 0) {
-            status = 'ERROR'; error = 'Quantity must be > 0';
+          } else if (qty <= 0 && openingBal <= 0) {
+            status = 'ERROR'; error = 'Quantity ya Opening Balance me se ek > 0 hona chahiye';
           } else if (!dateStr) {
             status = 'ERROR'; error = 'Date is required';
           } else if (typeRaw === 'OUT' && !invoiceNo) {
@@ -330,13 +475,62 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
     try {
       const userName = user?.name || 'System';
 
-      // ─ Group IN rows by date ─
-      const inRows    = fgRows.filter(r => r.type === 'IN'  && r._status !== 'ERROR');
-      const outRows   = fgRows.filter(r => r.type === 'OUT' && r._status !== 'ERROR');
+      // ─ RESET if resetMode is ON ─
+      if (resetMode) {
+        log.push('⚠️  Reset mode ON — pehle saara purana data delete ho raha hai...');
+        setImportLog([...log]);
+        setIsResetting(true);
+        try {
+          const { deletedTransactions, deletedFGs } = await resetAllFinishGoods(userName);
+          log.push(`🗑️  Reset complete: ${deletedFGs} FG records + ${deletedTransactions} transactions deleted.`);
+          log.push('');
+        } catch (resetErr: any) {
+          log.push(`❌ Reset failed: ${resetErr?.message}`);
+          setImportLog([...log]);
+          setImportError('Reset failed: ' + (resetErr?.message || 'Unknown error'));
+          setStep('preview');
+          setIsResetting(false);
+          return;
+        }
+        setIsResetting(false);
+        setImportLog([...log]);
+      }
 
-      // ─ Process Opening Balance adjustments for IN rows ─
-      // For products with opening balance > 0 on first IN, we create an OPENING entry first
-      // Then add the IN quantity
+      // ─ Group IN rows by date ─ (use effectiveFgRows so mappings are respected)
+      const inRows    = effectiveFgRows.filter(r => r.type === 'IN'  && r._status !== 'ERROR');
+      const outRows   = effectiveFgRows.filter(r => r.type === 'OUT' && r._status !== 'ERROR');
+
+      // ─ Process Opening Balances First ─
+      // Any row (IN or OUT) can have an opening balance. We collect them unique by product.
+      const openingBalancesToProcess = new Map<string, FinishGoodInwardPayload>();
+      effectiveFgRows.filter(r => r._status !== 'ERROR' && r.openingBalance > 0).forEach(r => {
+        if (!openingBalancesToProcess.has(r.productId!)) {
+          openingBalancesToProcess.set(r.productId!, {
+            productId:    r.productId!,
+            productName:  r.productName!,
+            customerId:   r.customerId!,
+            customerName: r.customerName!,
+            quantity:     r.openingBalance,
+            category:     (r.category === 'REJECTED' || r.category === 'NON-MOVING') ? 'REJECTED' : 'REGULAR',
+            date:         r.date,
+            rate:         r.rate,
+          });
+        }
+      });
+
+      if (openingBalancesToProcess.size > 0) {
+        log.push(`📥 Processing Opening Balances for ${openingBalancesToProcess.size} items...`);
+        setImportLog([...log]);
+        
+        const obPayloads = Array.from(openingBalancesToProcess.values());
+        try {
+          await initializeOpeningBalances(obPayloads, userName);
+          log.push(`   ✅ Opening Balances saved successfully.`);
+        } catch (err: any) {
+          log.push(`   ❌ Opening Balances failed: ${err?.message || 'Unknown error'}`);
+        }
+        setImportLog([...log]);
+      }
 
       // Group IN rows by date for batch processing
       const inByDate = new Map<string, typeof inRows>();
@@ -355,23 +549,7 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
         const payloads: FinishGoodInwardPayload[] = [];
 
         for (const r of rows) {
-          // If opening balance > 0, we need to set it first via a separate "OPENING" IN
-          if (r.openingBalance > 0) {
-            // Add opening balance as a separate IN entry
-            payloads.push({
-              productId:    r.productId!,
-              productName:  r.productName!,
-              customerId:   r.customerId!,
-              customerName: r.customerName!,
-              quantity:     r.openingBalance,
-              category:     r.category === 'REJECTED' ? 'REJECTED' : 'REGULAR',
-              date:         r.date,
-              rate:         r.rate,
-            });
-            log.push(`   ↳ Opening Balance: ${r.artworkNo} — ${r.openingBalance} qty`);
-          }
-
-          // Add the actual IN quantity
+          // Add the actual IN quantity (Opening balance already handled)
           if (r.quantity > 0) {
             payloads.push({
               productId:    r.productId!,
@@ -394,6 +572,35 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
         setImportLog([...log]);
       }
 
+      // ─ Ensure all OUT row products exist ─
+      // The user requested: "AUR JO ITEM NA TO OPENING ME HAI AUR NA HI IN ME HAI TO USKO NEW CREATE KAR OUT COLUMN ME DAALO"
+      const missingOutProducts = new Map<string, FinishGoodInwardPayload>();
+      for (const r of outRows) {
+        if (!openingBalancesToProcess.has(r.productId!) && !inRows.some(inR => inR.productId === r.productId)) {
+          missingOutProducts.set(r.productId!, {
+            productId:    r.productId!,
+            productName:  r.productName!,
+            customerId:   r.customerId!,
+            customerName: r.customerName!,
+            quantity:     0,
+            category:     'REGULAR',
+            date:         r.date,
+            rate:         r.rate,
+          });
+        }
+      }
+      
+      if (missingOutProducts.size > 0) {
+        log.push(`📥 Creating ${missingOutProducts.size} items that only have OUT transactions...`);
+        setImportLog([...log]);
+        const missingPayloads = Array.from(missingOutProducts.values());
+        try {
+          await initializeOpeningBalances(missingPayloads, userName);
+        } catch (err: any) {
+          log.push(`   ❌ Failed to create missing items: ${err?.message || 'Unknown error'}`);
+        }
+      }
+
       // ─ Group OUT rows by invoice ─
       const outByInvoice = new Map<string, typeof outRows>();
       for (const r of outRows) {
@@ -403,54 +610,76 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
         outByInvoice.set(key, existing);
       }
 
-      // Build freight map
-      const freightMap = new Map<string, FreightRowParsed>();
+      // Build freight map grouping by invoice (support multiple vehicles per invoice)
+      const freightMap = new Map<string, FreightRowParsed[]>();
       for (const fr of freightRows) {
-        if (fr.invoiceNo) freightMap.set(fr.invoiceNo, fr);
+        if (fr.invoiceNo) {
+          const arr = freightMap.get(fr.invoiceNo) || [];
+          arr.push(fr);
+          freightMap.set(fr.invoiceNo, arr);
+        }
       }
 
       // Process each invoice's OUT batch
       for (const [invoiceKey, rows] of outByInvoice) {
-        const firstRow   = rows[0];
-        const frData     = freightMap.get(invoiceKey);
         const invoiceNo  = invoiceKey.startsWith('__NO_INV_') ? '' : invoiceKey;
+        const frDatas    = freightMap.get(invoiceKey) || [];
 
-        log.push(`📤 Processing OUT Invoice: ${invoiceNo || '(no invoice)'} (${rows.length} rows)...`);
+        log.push(`📤 Processing OUT Invoice: ${invoiceNo || '(no invoice)'} (${rows.length} FG rows, ${frDatas.length} vehicles)...`);
         setImportLog([...log]);
 
-        const logistics: LogisticsPayload = {
-          date:            firstRow.date,
-          invoiceNo:       invoiceNo,
-          place:           frData?.place           || '',
-          transporterName: frData?.transporterName || '',
-          vehicleNo:       frData?.vehicleNo       || '',
-          vehicleSize:     frData?.vehicleSize      || '',
-          freight:         frData?.freight          || 0,
-          holding:         frData?.holding          || 0,
-          point:           String(frData?.point     || 0),
-          others:          String(frData?.others    || 0),
-        };
+        // If no freight, or just 1 freight, process normally.
+        // If multiple vehicles, we process the FG rows with the FIRST vehicle,
+        // and for subsequent vehicles, we pass a dummy FG row with qty 0 to hold the logistics data.
+        const vehiclesToProcess = frDatas.length > 0 ? frDatas : [null];
 
-        const payloads: FinishGoodOutwardPayload[] = rows.map(r => ({
-          productId: r.productId!,
-          quantity:  r.quantity,
-          category:  (r.category === 'NON-MOVING' ? 'NON-MOVING' : 'DISPATCH') as 'DISPATCH' | 'NON-MOVING',
-        }));
+        for (let i = 0; i < vehiclesToProcess.length; i++) {
+          const frData = vehiclesToProcess[i];
+          const isFirst = i === 0;
 
-        try {
-          await executeFinishGoodOutwardTransaction(logistics, payloads, userName);
-          log.push(`   ✅ OUT batch done — Invoice: ${invoiceNo || 'N/A'}`);
-          if (frData) {
-            log.push(`   🚚 Freight linked — Transporter: ${frData.transporterName}, ₹${frData.freight}`);
+          const logistics: LogisticsPayload = {
+            date:            rows[0].date,
+            invoiceNo:       invoiceNo,
+            place:           frData?.place           || '',
+            transporterName: frData?.transporterName || '',
+            vehicleNo:       frData?.vehicleNo       || '',
+            vehicleSize:     frData?.vehicleSize      || '',
+            freight:         frData?.freight          || 0,
+            holding:         frData?.holding          || 0,
+            point:           String(frData?.point     || 0),
+            others:          String(frData?.others    || 0),
+          };
+
+          // Only the first vehicle carries the actual FG outward quantities.
+          // Additional vehicles get a dummy qty=0 to prevent deducting stock again.
+          const payloads: FinishGoodOutwardPayload[] = isFirst 
+            ? rows.map(r => ({
+                productId: r.productId!,
+                quantity:  r.quantity,
+                category:  (r.category === 'NON-MOVING' || r.category === 'REJECTED' ? 'NON-MOVING' : 'DISPATCH') as 'DISPATCH' | 'NON-MOVING',
+              }))
+            : [{
+                productId: rows[0].productId!,
+                quantity: 0,
+                category: 'DISPATCH'
+              }];
+
+          try {
+            await executeFinishGoodOutwardTransaction(logistics, payloads, userName);
+            if (isFirst) log.push(`   ✅ OUT batch done — Invoice: ${invoiceNo || 'N/A'}`);
+            if (frData) {
+              log.push(`   🚚 Freight linked — Transporter: ${frData.transporterName}, ₹${frData.freight}`);
+            }
+          } catch (err: any) {
+            log.push(`   ❌ OUT failed: ${err?.message || 'Unknown error'}`);
           }
-        } catch (err: any) {
-          log.push(`   ❌ OUT failed: ${err?.message || 'Unknown error'}`);
         }
         setImportLog([...log]);
       }
 
       log.push('');
       log.push('🎉 Import Complete!');
+      if (resetMode) log.push('✅ Fresh data successfully loaded. Purana data remove ho gaya.');
       setImportLog([...log]);
       setStep('done');
     } catch (err: any) {
@@ -459,11 +688,111 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
     }
   };
 
-  // ── Stats ────────────────────────────────────────────────────────────────
-  const fgOK    = fgRows.filter(r => r._status === 'OK').length;
-  const fgWarn  = fgRows.filter(r => r._status === 'WARN').length;
-  const fgErr   = fgRows.filter(r => r._status === 'ERROR').length;
+  // ── Effective rows: apply nameMapping to turn ERROR→OK ──────────────────
+  const effectiveFgRows = useMemo(() => {
+    return fgRows.map(row => {
+      if (
+        row._status === 'ERROR' &&
+        row._error?.includes('not found') &&
+        nameMapping[row.artworkNo] &&
+        !skipMapping[row.artworkNo]
+      ) {
+        const mapped = allProducts.find(p => p.id === nameMapping[row.artworkNo]);
+        if (mapped) {
+          return {
+            ...row,
+            _status: 'OK' as const,
+            productId: mapped.id,
+            productName: mapped.itemName || mapped.artworkNo || '',
+            customerId: mapped.customerId || '',
+            customerName: mapped.customerName || '',
+            _error: undefined,
+          };
+        }
+      }
+      return row;
+    });
+  }, [fgRows, nameMapping, skipMapping, allProducts]);
+
+  // Unmatched artwork nos that need mapping (unique, not skipped)
+  const unmappedGroups = useMemo(() => {
+    const seen = new Map<string, FGRowParsed>();
+    effectiveFgRows.forEach(row => {
+      if (row._status === 'ERROR' && row._error?.includes('not found') && !skipMapping[row.artworkNo]) {
+        if (!seen.has(row.artworkNo)) seen.set(row.artworkNo, row);
+      }
+    });
+    return Array.from(seen.values()).map(row => {
+      // Compute fuzzy suggestions from allProducts
+      const suggestions = allProducts
+        .map(p => ({ p, score: fuzzyScore(row.artworkNo, p.artworkNo || p.itemName || '') }))
+        .filter(s => s.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5)
+        .map(s => s.p);
+      return { artworkNo: row.artworkNo, suggestions };
+    });
+  }, [effectiveFgRows, allProducts, skipMapping]);
+
+  // ── Stats (use effectiveFgRows) ──────────────────────────────────────────
+  const fgOK    = effectiveFgRows.filter(r => r._status === 'OK').length;
+  const fgWarn  = effectiveFgRows.filter(r => r._status === 'WARN').length;
+  const fgErr   = effectiveFgRows.filter(r => r._status === 'ERROR').length;
   const hasErrors = fgErr > 0;
+
+  const totalFreightSum = freightRows.reduce((acc, row) => acc + (row.freight || 0), 0);
+
+  // ── Download Error Report ──────────────────────────────────────────────────
+  const downloadErrorReport = () => {
+    const errorRows = fgRows.filter(r => r._status === 'ERROR');
+    if (errorRows.length === 0) return;
+
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Error Summary — unique missing Artwork Nos
+    const missingArtworks = Array.from(
+      new Map(errorRows.map(r => [r.artworkNo, r])).values()
+    );
+    const summaryData = [
+      ['❌ Missing / Error Artwork Numbers — Master Data me Add Karo'],
+      [''],
+      ['Sr No', 'Artwork No', 'Error Reason', 'Action Required'],
+      ...missingArtworks.map((r, i) => [
+        i + 1,
+        r.artworkNo || '(blank)',
+        r._error || 'Unknown error',
+        r._error?.includes('not found') ? '👉 Master Data → Products me add karo' : '👉 Excel me fix karo'
+      ])
+    ];
+    const summaryWS = XLSX.utils.aoa_to_sheet(summaryData);
+    summaryWS['!cols'] = [{ wch: 8 }, { wch: 30 }, { wch: 55 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, summaryWS, 'Missing Products');
+
+    // Sheet 2: All Error Rows (full detail)
+    const detailHeaders = ['Excel Row', 'Date', 'Type', 'Artwork No', 'Category', 'Qty', 'Rate', 'Invoice No', 'Error Reason'];
+    const detailData = [
+      detailHeaders,
+      ...errorRows.map(r => [
+        r._rowNum,
+        r.date,
+        r.type,
+        r.artworkNo,
+        r.category,
+        r.quantity,
+        r.rate,
+        r.invoiceNo,
+        r._error || ''
+      ])
+    ];
+    const detailWS = XLSX.utils.aoa_to_sheet(detailData);
+    detailWS['!cols'] = [
+      { wch: 10 }, { wch: 12 }, { wch: 6 }, { wch: 30 },
+      { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 18 }, { wch: 55 }
+    ];
+    XLSX.utils.book_append_sheet(wb, detailWS, 'Error Detail');
+
+    XLSX.writeFile(wb, `ErrorReport_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -549,6 +878,51 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
 
               {/* Upload Zone */}
               <div className="w-full max-w-2xl">
+                {/* Reset Mode Toggle */}
+                <div className={`mb-4 rounded-xl border-2 p-4 transition-all ${
+                  resetMode ? 'border-red-400 bg-red-50' : 'border-border bg-secondary/20'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${ resetMode ? 'bg-red-100' : 'bg-secondary' }`}>
+                        <Trash2 className={`w-5 h-5 ${ resetMode ? 'text-red-600' : 'text-muted-foreground' }`} />
+                      </div>
+                      <div>
+                        <p className={`font-bold text-sm ${ resetMode ? 'text-red-700' : 'text-foreground' }`}>
+                          {resetMode ? 'RESET MODE ON — Purana Data Hatega' : 'Import Mode (Safe)'}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {resetMode
+                            ? 'Import se pehle ALL finish goods + transactions permanently delete honge.'
+                            : 'Normal: Purana data rehega, naya data add hoga.'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!resetMode) {
+                          if (!window.confirm(
+                            'KHABARDAR!\n\nReset Mode ON karne se import ke waqt SAARA purana Finish Goods data permanently delete ho jaayega.\n\nKya aap sure hain?'
+                          )) return;
+                        }
+                        setResetMode(v => !v);
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                        resetMode ? 'bg-red-500' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        resetMode ? 'translate-x-6' : 'translate-x-1'
+                      }`} />
+                    </button>
+                  </div>
+                  {resetMode && (
+                    <div className="mt-3 text-xs text-red-700 bg-red-100 border border-red-200 rounded-lg px-3 py-2">
+                      Import button dabate hi ek aur confirmation aayegi — tabhi delete hoga.
+                    </div>
+                  )}
+                </div>
+
                 <h3 className="text-base font-bold text-foreground mb-3">
                   Step 2 — Filled Excel Upload Karo
                 </h3>
@@ -612,9 +986,158 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
               )}
 
               {hasErrors && (
-                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-4 py-3 text-sm font-medium">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  {fgErr} rows me errors hain — unhe fix karo ya woh rows skip honge (warn rows import honge).
+                <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-4 py-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-medium">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{fgErr} rows me errors hain. Neeche list me laal rang me ERROR details dekhein.</span>
+                    </div>
+                    <button
+                      onClick={downloadErrorReport}
+                      className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-md text-xs font-bold transition-colors shrink-0 ml-4 shadow-sm"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Error Report
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Name Mapping Panel ── */}
+              {unmappedGroups.length > 0 && (
+                <div className="border-2 border-orange-300 bg-orange-50/60 rounded-xl">
+                  <div className="flex items-center justify-between px-4 py-3 bg-orange-100 border-b border-orange-200 rounded-t-xl">
+                    <button
+                      className="flex-1 flex items-center gap-2 transition-colors text-sm font-bold text-orange-900 text-left hover:text-orange-700"
+                      onClick={() => setShowMappingPanel(v => !v)}
+                    >
+                      <span className="text-lg">🔗</span>
+                      Name Mapping — {unmappedGroups.length} unmatched Artwork Nos
+                      <span className="bg-orange-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{unmappedGroups.length}</span>
+                      {showMappingPanel ? <ChevronUp className="w-4 h-4 ml-1" /> : <ChevronDown className="w-4 h-4 ml-1" />}
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setIsAddTradingItemOpen(true)}
+                        className="flex items-center gap-1.5 text-xs font-bold bg-blue-600 text-white border border-blue-600 px-3 py-1.5 rounded-md hover:bg-blue-700 transition-colors shadow-sm"
+                        title="New item master data me add karein"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add New Item
+                      </button>
+                      <button
+                        onClick={handleAutoMap}
+                        className="flex items-center gap-1.5 text-xs font-bold bg-emerald-600 text-white border border-emerald-600 px-3 py-1.5 rounded-md hover:bg-emerald-700 transition-colors shadow-sm"
+                        title="Sabhi items ko unke best suggestion se automatically map karein"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Auto-Map All
+                      </button>
+                      <button
+                      onClick={handleReloadProducts}
+                      disabled={isReloading}
+                      className="flex items-center gap-1.5 text-xs font-bold bg-white text-orange-700 border border-orange-300 px-3 py-1.5 rounded-md hover:bg-orange-50 transition-colors shadow-sm disabled:opacity-50"
+                      title="Naya product dusri tab me add karke yaha refresh karo"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isReloading ? 'animate-spin' : ''}`} />
+                      Refresh Data
+                    </button>
+                    </div>
+                  </div>
+
+                  {showMappingPanel && (
+                    <div className="p-4 space-y-3">
+                      <div className="text-xs text-orange-800 bg-orange-100 border border-orange-200 rounded-lg px-3 py-2 space-y-1">
+                        <p><strong>💡 Hint:</strong> Har row me sahi Master Data product search karo.</p>
+                        <p><strong>Naya Product?</strong> Aap <strong>"Add New Item"</strong> button se yahin par directly naya product master data me add kar sakte hain, ya phir "Refresh Data" karke manually add kiye gaye changes sync kar sakte hain.</p>
+                      </div>
+
+                      {unmappedGroups.map(({ artworkNo, suggestions }) => {
+                        const mapped = nameMapping[artworkNo];
+                        const mappedProduct = mapped ? allProducts.find(p => p.id === mapped) : null;
+                        const rowCount = fgRows.filter(r => r.artworkNo === artworkNo && r._error?.includes('not found')).length;
+
+                        return (
+                          <div key={artworkNo} className="bg-white border border-orange-200 rounded-lg p-3 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded font-mono font-bold truncate max-w-[200px]" title={artworkNo}>
+                                    {artworkNo}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">({rowCount} rows)</span>
+                                </div>
+                                <div className="text-[10px] text-muted-foreground mb-2">Excel / Tally ka naam</div>
+
+                                {/* Searchable Dropdown: select Master Data product */}
+                                <SearchableDropdown
+                                  options={[
+                                    ...suggestions.map(p => ({
+                                      id: p.id,
+                                      label: `${p.artworkNo} — ${p.itemName || ''} ${p.customerName ? `(${p.customerName})` : ''}`,
+                                      group: '🎯 Suggested Matches'
+                                    })),
+                                    ...allProducts.map(p => ({
+                                      id: p.id,
+                                      label: `${p.artworkNo} — ${p.itemName || ''} ${p.customerName ? `(${p.customerName})` : ''}`,
+                                      group: '📋 All Products'
+                                    }))
+                                  ]}
+                                  value={mapped || ''}
+                                  onChange={val => {
+                                    setNameMapping(prev => ({ ...prev, [artworkNo]: val }));
+                                    if (val) setSkipMapping(prev => { const n = { ...prev }; delete n[artworkNo]; return n; });
+                                  }}
+                                  placeholder="🔍 Type customer or item name to search..."
+                                />
+
+                                {/* Show mapped result */}
+                                {mappedProduct && (
+                                  <div className="mt-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded flex items-center gap-1">
+                                    <CheckCircle2 className="w-3 h-3 shrink-0" />
+                                    <span>✅ <strong>{mappedProduct.artworkNo}</strong> — {mappedProduct.itemName} {mappedProduct.customerName ? `(${mappedProduct.customerName})` : ''}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Skip button */}
+                              <button
+                                onClick={() => {
+                                  setSkipMapping(prev => ({ ...prev, [artworkNo]: true }));
+                                  setNameMapping(prev => { const n = { ...prev }; delete n[artworkNo]; return n; });
+                                }}
+                                className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:bg-red-50 px-2 py-1 rounded transition-colors shrink-0 font-medium"
+                                title="Yeh artwork ke saare rows skip karo (import nahi honge)"
+                              >
+                                Skip ✕
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Skipped items */}
+                      {Object.keys(skipMapping).length > 0 && (
+                        <div className="border border-dashed border-gray-300 rounded-lg p-2">
+                          <p className="text-[11px] text-muted-foreground font-semibold mb-1">Skipped (import nahi honge):</p>
+                          <div className="flex flex-wrap gap-1">
+                            {Object.keys(skipMapping).map(artNo => (
+                              <span
+                                key={artNo}
+                                className="inline-flex items-center gap-1 text-[10px] bg-gray-100 text-gray-600 border border-gray-200 px-2 py-0.5 rounded-full"
+                              >
+                                {artNo}
+                                <button
+                                  onClick={() => setSkipMapping(prev => { const n = { ...prev }; delete n[artNo]; return n; })}
+                                  className="text-gray-400 hover:text-gray-700 ml-0.5"
+                                >×</button>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -642,7 +1165,7 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {fgRows.map(row => (
+                        {effectiveFgRows.map(row => (
                           <tr
                             key={row._rowNum}
                             className={
@@ -701,7 +1224,7 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
                   >
                     <div className="flex items-center gap-2">
                       <Truck className="w-4 h-4 text-blue-600" />
-                      Freight Charges Preview ({freightRows.length} rows)
+                      Freight Charges Preview ({freightRows.length} Gaadiyan) — Total: ₹{totalFreightSum.toLocaleString('en-IN')}
                     </div>
                     {showFreight ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
@@ -817,6 +1340,16 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
 
             {step === 'preview' && (
               <div className="flex items-center gap-3">
+                {hasErrors && (
+                  <button
+                    onClick={downloadErrorReport}
+                    className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm"
+                    title={`${fgErr} error rows ka Excel download karo — missing Artwork Nos dekhne ke liye`}
+                  >
+                    <Download className="w-4 h-4" />
+                    {fgErr} Errors Download
+                  </button>
+                )}
                 <button
                   onClick={() => { setStep('upload'); setFgRows([]); setFreightRows([]); setFileName(''); }}
                   className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-secondary transition-colors"
@@ -824,18 +1357,42 @@ export default function ExcelImportModal({ onClose, onSuccess }: { onClose: () =
                   ← Dobara Upload
                 </button>
                 <button
-                  onClick={handleImport}
-                  disabled={fgOK + fgWarn === 0}
-                  className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg hover:bg-primary/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => {
+                    if (resetMode) {
+                      if (!window.confirm(
+                        'FINAL WARNING!\n\nReset Mode ON hai.\nImport dabate hi SAARA purana Finish Goods data permanently DELETE ho jaayega.\n\nKya aap 100% sure hain? Yeh undo nahi hoga!'
+                      )) return;
+                    }
+                    handleImport();
+                  }}
+                  disabled={fgOK + fgWarn === 0 || isResetting}
+                  className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    resetMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  }`}
                 >
-                  <Upload className="w-4 h-4" />
-                  Import Karo ({fgOK + fgWarn} rows + {freightRows.length} freight)
+                  {isResetting ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Resetting...</>
+                  ) : resetMode ? (
+                    <><Trash2 className="w-4 h-4" /> Reset + Import ({fgOK + fgWarn} rows)</>
+                  ) : (
+                    <><Upload className="w-4 h-4" /> Import Karo ({fgOK + fgWarn} rows + {freightRows.length} freight)</>
+                  )}
                 </button>
               </div>
             )}
           </div>
         )}
       </div>
+
+      {isAddTradingItemOpen && (
+        <AddTradingItemModal 
+          onClose={() => setIsAddTradingItemOpen(false)}
+          onSuccess={() => {
+            setIsAddTradingItemOpen(false);
+            handleReloadProducts(); // Reload products to get the newly added item
+          }}
+        />
+      )}
     </div>
   );
 }

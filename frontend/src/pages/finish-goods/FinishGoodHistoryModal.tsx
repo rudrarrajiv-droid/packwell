@@ -39,13 +39,7 @@ export default function FinishGoodHistoryModal({ onClose }: { onClose: () => voi
     return dateB - dateA;
   });
 
-  const filteredHistory = sortedHistory.filter(h => {
-    const searchString = `${h.referenceNo || ''} ${h.finishGoodId || ''} ${h.performedBy || ''} ${h.transporterName || ''} ${h.place || ''}`.toLowerCase();
-    return searchString.includes(search.toLowerCase());
-  });
-
-  // We need to fetch finish goods to map finishGoodId to Name, or we can just hope it's not needed if we save product Name in transaction?
-  // Wait, in our transaction saving, we only saved finishGoodId. Let's fetch finishGoods to map.
+  // Fetch finish goods to map finishGoodId to Name
   const { data: fgList = [] } = useQuery({
     queryKey: ['finishGoods'],
     queryFn: () => getFinishGoods() as Promise<any[]>
@@ -56,6 +50,12 @@ export default function FinishGoodHistoryModal({ onClose }: { onClose: () => voi
     if (fg) return `${fg.productName} (${fg.customerName})`;
     return id; // fallback
   };
+
+  const filteredHistory = sortedHistory.filter(h => {
+    const pName = getProductName(h.finishGoodId);
+    const searchString = `${h.referenceNo || ''} ${pName} ${h.performedBy || ''} ${h.transporterName || ''} ${h.place || ''}`.toLowerCase();
+    return searchString.includes(search.toLowerCase());
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -79,7 +79,7 @@ export default function FinishGoodHistoryModal({ onClose }: { onClose: () => voi
               <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="Search by Invoice, Customer, or Transporter..."
+                placeholder="Search Item, Customer, Invoice, ya Transporter se..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary"

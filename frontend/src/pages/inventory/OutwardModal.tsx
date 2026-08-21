@@ -25,8 +25,8 @@ export default function OutwardModal({ reels, onClose, onSuccess }: OutwardModal
   const [outwardDate, setOutwardDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   // Selection & Input State
-  // selectedReels holds reelId -> { remainingWeight: number | '' }
-  const [selected, setSelected] = useState<Record<string, { remainingWeight: number | '' }>>({});
+  // selectedReels holds reelId -> { remainingWeight: number | '', selectedAt: number }
+  const [selected, setSelected] = useState<Record<string, { remainingWeight: number | '', selectedAt: number }>>({});
 
   // Filter out empty balances
   const availableReels = useMemo(() => reels.filter(r => (Number(r.currentBalance) || 0) > 0), [reels]);
@@ -44,7 +44,7 @@ export default function OutwardModal({ reels, onClose, onSuccess }: OutwardModal
       const matchGSM = filterGSM ? String(r.gsm) === filterGSM : true;
 
       return searchMatch && matchReelSize && matchPaperType && matchBF && matchGSM;
-    });
+    }).sort((a, b) => Number(a.currentBalance) - Number(b.currentBalance));
   }, [availableReels, search, filterReelSize, filterPaperType, filterBF, filterGSM]);
 
   // Unique values for filter dropdowns (based on available reels)
@@ -59,7 +59,7 @@ export default function OutwardModal({ reels, onClose, onSuccess }: OutwardModal
       if (next[reelId]) {
         delete next[reelId]; // deselect
       } else {
-        next[reelId] = { remainingWeight: '' }; // select
+        next[reelId] = { remainingWeight: '', selectedAt: Date.now() }; // select
       }
       return next;
     });
@@ -72,7 +72,9 @@ export default function OutwardModal({ reels, onClose, onSuccess }: OutwardModal
     }));
   };
 
-  const selectedReelsList = availableReels.filter(r => selected[r.id]);
+  const selectedReelsList = availableReels
+    .filter(r => selected[r.id])
+    .sort((a, b) => selected[b.id].selectedAt - selected[a.id].selectedAt);
 
   const onSubmit = async () => {
     if (selectedReelsList.length === 0) return;

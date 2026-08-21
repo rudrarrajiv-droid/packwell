@@ -3,8 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Users, Package, X, CircleDashed, ChevronDown, ChevronUp, Trash2, Edit, FilterX } from 'lucide-react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { cn, getCustomerDisplayLabel } from '../lib/utils';
-import { getCustomers, createCustomer, updateCustomer } from '../lib/supabase/customerService';
-import { getProducts, createProduct, updateProduct } from '../lib/supabase/productService';
+import { getCustomers, createCustomer, updateCustomer, deleteCustomer, checkCustomerUsage, migrateCustomer } from '../lib/supabase/customerService';
+import { getProducts, createProduct, updateProduct, deleteProduct, checkProductUsage, migrateProduct, bulkUpdateProductCustomers } from '../lib/supabase/productService';
 import type { Customer, Product, ProductLayer } from '../lib/types/models';
 import { useAuth } from '../contexts/AuthContext';
 import RoleGuard from '../components/RoleGuard';
@@ -28,6 +28,19 @@ export default function MasterData() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
+  // Dependency/Migration State
+  const [isCheckingUsage, setIsCheckingUsage] = useState(false);
+  const [dependencyData, setDependencyData] = useState<{
+    entity: Customer | Product;
+    type: 'customer' | 'product';
+    usage: any;
+  } | null>(null);
+
+  // Bulk Selection State
+  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
+  const [bulkActionCustomer, setBulkActionCustomer] = useState<string>('');
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
   const qc = useQueryClient();
   const { data: customers = [], isLoading: loadingC } = useQuery({ 
     queryKey: ['customers'], 
@@ -37,6 +50,49 @@ export default function MasterData() {
     queryKey: ['products'],  
     queryFn: () => getProducts() as unknown as Promise<Product[]>  
   });
+  
+  const { user } = useAuth();
+  const canDelete = user?.email === 'admin@packwell.com' || user?.email === 'packwell@packwell.com';
+
+  const handleDeleteCustomer = async (customer: Customer) => {
+    setIsCheckingUsage(true);
+    try {
+      const usage = await checkCustomerUsage(customer.id!);
+      setIsCheckingUsage(false);
+      
+      if (usage.total > 0) {
+        setDependencyData({ entity: customer, type: 'customer', usage });
+        return;
+      }
+      
+      if (!confirm(`Are you sure you want to delete the customer "${customer.name}"?`)) return;
+      await deleteCustomer(customer.id!, user?.name);
+      qc.invalidateQueries({ queryKey: ['customers'] });
+    } catch (err: any) {
+      setIsCheckingUsage(false);
+      alert(err.message || 'Failed to check or delete customer');
+    }
+  };
+
+  const handleDeleteProduct = async (product: Product) => {
+    setIsCheckingUsage(true);
+    try {
+      const usage = await checkProductUsage(product.id!);
+      setIsCheckingUsage(false);
+      
+      if (usage.total > 0) {
+        setDependencyData({ entity: product, type: 'product', usage });
+        return;
+      }
+      
+      if (!confirm(`Are you sure you want to delete the product "${product.itemName}"?`)) return;
+      await deleteProduct(product.id!, user?.name);
+      qc.invalidateQueries({ queryKey: ['products'] });
+    } catch (err: any) {
+      setIsCheckingUsage(false);
+      alert(err.message || 'Failed to check or delete product');
+    }
+  };
 
   // Derived Filtering
   const filteredCustomers = useMemo(() => {
@@ -80,6 +136,47 @@ export default function MasterData() {
     setShowProductModal(true);
   };
 
+  const toggleProductSelection = (id: string) => {
+    setSelectedProducts(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedProducts.size === filteredProducts.length) {
+      setSelectedProducts(new Set());
+    } else {
+      setSelectedProducts(new Set(filteredProducts.map(p => p.id!)));
+    }
+  };
+
+  const handleBulkUpdate = async () => {
+    if (!bulkActionCustomer) return;
+    if (selectedProducts.size === 0) return;
+    if (!confirm(`Are you sure you want to reassign ${selectedProducts.size} product(s) to the new customer? This will also update any connected history.`)) return;
+
+    const targetCustomer = customers.find(c => c.id === bulkActionCustomer);
+    if (!targetCustomer) return;
+
+    setIsBulkUpdating(true);
+    try {
+      await bulkUpdateProductCustomers(Array.from(selectedProducts), { id: targetCustomer.id!, name: targetCustomer.name }, user?.name);
+      qc.invalidateQueries({ queryKey: ['products'] });
+      qc.invalidateQueries({ queryKey: ['job_cards'] });
+      qc.invalidateQueries({ queryKey: ['purchase_orders'] });
+      setSelectedProducts(new Set());
+      setBulkActionCustomer('');
+      alert(`Successfully updated ${selectedProducts.size} product(s)!`);
+    } catch (err: any) {
+      alert(err.message || 'Failed to bulk update products');
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       {/* Header & Summary Cards */}
@@ -90,7 +187,7 @@ export default function MasterData() {
         </div>
         <div className="flex gap-4">
           <div 
-            onClick={() => { setTab('customers'); setSearch(''); }}
+            onClick={() => { setTab('customers'); setSearch(''); setSelectedProducts(new Set()); }}
             className={cn(
               "px-4 py-3 rounded-lg flex flex-col items-center min-w-[140px] shadow-sm cursor-pointer transition-all hover:scale-105",
               tab === 'customers' 
@@ -102,7 +199,7 @@ export default function MasterData() {
             <span className="text-2xl font-extrabold text-primary leading-none">{customers.length}</span>
           </div>
           <div 
-            onClick={() => { setTab('products'); setSearch(''); }}
+            onClick={() => { setTab('products'); setSearch(''); setSelectedProducts(new Set()); }}
             className={cn(
               "px-4 py-3 rounded-lg flex flex-col items-center min-w-[140px] shadow-sm cursor-pointer transition-all hover:scale-105",
               tab === 'products' 
@@ -261,14 +358,50 @@ export default function MasterData() {
               )}
             </div>
           )}
+
+          {/* Bulk Actions Bar */}
+          {tab === 'products' && selectedProducts.size > 0 && (
+            <div className="bg-primary/10 p-3 rounded-lg border border-primary/20 flex items-center justify-between gap-4">
+              <div className="text-sm font-semibold text-primary">
+                {selectedProducts.size} Product(s) Selected
+              </div>
+              <div className="flex gap-2 items-center">
+                <select
+                  value={bulkActionCustomer}
+                  onChange={e => setBulkActionCustomer(e.target.value)}
+                  className="text-sm rounded-md border border-input px-3 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-ring min-w-[200px]"
+                >
+                  <option value="">-- Select New Customer --</option>
+                  {customers.map(c => (
+                    <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, customers)}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleBulkUpdate}
+                  disabled={!bulkActionCustomer || isBulkUpdating}
+                  className="bg-primary text-primary-foreground px-4 py-1.5 text-sm font-medium rounded-md shadow hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {isBulkUpdating ? 'Updating...' : 'Apply to Selected'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Table */}
         <div className="flex-1 overflow-auto">
           {tab === 'customers' ? (
-            <CustomersTable data={filteredCustomers} isLoading={loadingC} onEdit={handleEditCustomer} />
+            <CustomersTable data={filteredCustomers} isLoading={loadingC} onEdit={handleEditCustomer} onDelete={canDelete ? handleDeleteCustomer : undefined} />
           ) : (
-            <ProductsTable data={filteredProducts} isLoading={loadingP} onEdit={handleEditProduct} />
+            <ProductsTable 
+              data={filteredProducts} 
+              isLoading={loadingP} 
+              onEdit={handleEditProduct} 
+              onDelete={canDelete ? handleDeleteProduct : undefined}
+              selectedProducts={selectedProducts}
+              onToggleSelect={toggleProductSelection}
+              onToggleSelectAll={toggleSelectAll}
+            />
           )}
         </div>
       </div>
@@ -290,12 +423,33 @@ export default function MasterData() {
           onSuccess={() => { setShowProductModal(false); setEditingProduct(null); qc.invalidateQueries({ queryKey: ['products'] }); }}
         />
       )}
+      {dependencyData && (
+        <DependencyModal
+          data={dependencyData}
+          customers={customers}
+          products={products}
+          onClose={() => setDependencyData(null)}
+          onSuccess={() => {
+            setDependencyData(null);
+            qc.invalidateQueries({ queryKey: ['customers'] });
+            qc.invalidateQueries({ queryKey: ['products'] });
+          }}
+        />
+      )}
+      {isCheckingUsage && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20 backdrop-blur-sm">
+           <div className="bg-card p-6 rounded-lg shadow-xl flex items-center gap-3">
+             <CircleDashed className="w-6 h-6 animate-spin text-primary" />
+             <span className="font-medium">Checking usages...</span>
+           </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Customers Table ──────────────────────────────────────────────────────────
-function CustomersTable({ data, isLoading, onEdit }: { data: Customer[]; isLoading: boolean, onEdit: (c: Customer) => void }) {
+function CustomersTable({ data, isLoading, onEdit, onDelete }: { data: Customer[]; isLoading: boolean, onEdit: (c: Customer) => void, onDelete?: (c: Customer) => void }) {
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
   return (
     <table className="w-full text-sm text-left">
@@ -315,12 +469,17 @@ function CustomersTable({ data, isLoading, onEdit }: { data: Customer[]; isLoadi
             <td className="px-6 py-4 text-muted-foreground">
               {c.createdAt ? new Date(c.createdAt?.toDate ? c.createdAt.toDate() : c.createdAt).toLocaleDateString('en-IN') : 'N/A'}
             </td>
-            <td className="px-6 py-4 text-right">
+            <td className="px-6 py-4 text-right flex justify-end gap-2">
               <RoleGuard requireRole="ADMIN">
-                <button onClick={() => onEdit(c)} className="text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100">
+                <button onClick={() => onEdit(c)} className="text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Edit">
                   <Edit className="w-4 h-4" />
                 </button>
               </RoleGuard>
+              {onDelete && (
+                <button onClick={() => onDelete(c)} className="text-destructive hover:bg-destructive/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Delete">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </td>
           </tr>
         ))}
@@ -338,7 +497,13 @@ function CustomersTable({ data, isLoading, onEdit }: { data: Customer[]; isLoadi
 }
 
 // ─── Products Table ───────────────────────────────────────────────────────────
-function ProductsTable({ data, isLoading, onEdit }: { data: Product[]; isLoading: boolean, onEdit: (p: Product) => void }) {
+function ProductsTable({ 
+  data, isLoading, onEdit, onDelete,
+  selectedProducts, onToggleSelect, onToggleSelectAll 
+}: { 
+  data: Product[]; isLoading: boolean, onEdit: (p: Product) => void, onDelete?: (p: Product) => void,
+  selectedProducts?: Set<string>, onToggleSelect?: (id: string) => void, onToggleSelectAll?: () => void
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
   
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
@@ -346,6 +511,16 @@ function ProductsTable({ data, isLoading, onEdit }: { data: Product[]; isLoading
     <table className="w-full text-sm text-left">
       <thead className="text-xs text-muted-foreground uppercase bg-secondary/50 border-b border-border sticky top-0 z-10">
         <tr>
+          {selectedProducts && (
+            <th className="px-4 py-3 font-medium w-10">
+              <input 
+                type="checkbox" 
+                className="rounded border-input text-primary focus:ring-primary w-4 h-4"
+                checked={data.length > 0 && selectedProducts.size === data.length}
+                onChange={onToggleSelectAll}
+              />
+            </th>
+          )}
           <th className="px-6 py-3 font-medium">Artwork No</th>
           <th className="px-6 py-3 font-medium">Item Name</th>
           <th className="px-6 py-3 font-medium">Customer</th>
@@ -359,7 +534,17 @@ function ProductsTable({ data, isLoading, onEdit }: { data: Product[]; isLoading
       <tbody className="divide-y divide-border">
         {data.map(p => (
           <React.Fragment key={p.id}>
-            <tr className="hover:bg-muted/50 transition-colors group">
+            <tr className={cn("transition-colors group", selectedProducts?.has(p.id!) ? "bg-primary/5" : "hover:bg-muted/50")}>
+              {selectedProducts && (
+                <td className="px-4 py-4">
+                  <input 
+                    type="checkbox" 
+                    className="rounded border-input text-primary focus:ring-primary w-4 h-4 cursor-pointer"
+                    checked={selectedProducts.has(p.id!)}
+                    onChange={() => onToggleSelect && onToggleSelect(p.id!)}
+                  />
+                </td>
+              )}
               <td className="px-6 py-4 font-bold text-primary">{p.artworkNo}</td>
               <td className="px-6 py-4 font-semibold text-foreground">{p.itemName}</td>
               <td className="px-6 py-4 text-muted-foreground">{p.customerName}</td>
@@ -375,17 +560,22 @@ function ProductsTable({ data, isLoading, onEdit }: { data: Product[]; isLoading
                   <span className="ml-1">Layers ({p.layers?.length || 0})</span>
                 </button>
               </td>
-              <td className="px-6 py-4 text-right">
+              <td className="px-6 py-4 text-right flex justify-end gap-2">
                 <RoleGuard requireRole="ADMIN">
-                  <button onClick={() => onEdit(p)} className="text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100">
+                  <button onClick={() => onEdit(p)} className="text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Edit">
                     <Edit className="w-4 h-4" />
                   </button>
                 </RoleGuard>
+                {onDelete && (
+                  <button onClick={() => onDelete(p)} className="text-destructive hover:bg-destructive/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Delete">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </td>
             </tr>
             {expanded === p.id && p.layers?.length > 0 && (
               <tr>
-                <td colSpan={8} className="px-6 py-3 bg-secondary/30 border-b border-border/50 shadow-inner">
+                <td colSpan={selectedProducts ? 9 : 8} className="px-6 py-3 bg-secondary/30 border-b border-border/50 shadow-inner">
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Paper Layers</div>
@@ -414,7 +604,7 @@ function ProductsTable({ data, isLoading, onEdit }: { data: Product[]; isLoading
         ))}
         {data.length === 0 && (
           <tr>
-            <td colSpan={8} className="px-6 py-12 text-center text-muted-foreground">
+            <td colSpan={selectedProducts ? 9 : 8} className="px-6 py-12 text-center text-muted-foreground">
               <Package className="w-12 h-12 mx-auto text-muted mb-3" />
               <p>No products found matching filters.</p>
             </td>
@@ -513,8 +703,14 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
       if (plyValue > currentLayers) {
         const layersToAdd = [];
         for (let i = currentLayers; i < plyValue; i++) {
-          const type = (i % 2 !== 0) ? 'Flute' : (i === 0 ? 'Top' : 'Bottom');
-          layersToAdd.push({ layerName: type, paperType: 'SK', bf: '', gsm: 0 });
+          let type = 'Liner';
+          if (i % 2 !== 0) type = 'Fluting Medium';
+          else if (i === 0) type = 'Top Liner';
+          else if (i === plyValue - 1) type = 'Bottom Liner';
+          else if (plyValue === 5 && i === 2) type = 'Centre Liner';
+          
+          const defaultPaper = i % 2 === 0 ? 'VK' : 'SK'; // Liners (Even index) get VK, Flutes (Odd index) get SK
+          layersToAdd.push({ layerName: type, paperType: defaultPaper, bf: '', gsm: 0 });
         }
         append(layersToAdd);
       } else if (plyValue < currentLayers) {
@@ -658,7 +854,7 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
             <div>
               <div className="flex items-center justify-between mb-3 border-b border-border/50 pb-2">
                 <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Paper Layers</h3>
-                <button type="button" onClick={() => append({ layerName: '', paperType: 'SK', bf: '', gsm: 0 })} className="text-xs flex items-center text-primary hover:underline bg-primary/10 px-3 py-1.5 rounded-full">
+                <button type="button" onClick={() => append({ layerName: (fields.length % 2 !== 0 ? 'Fluting Medium' : 'Liner'), paperType: (fields.length % 2 === 0 ? 'VK' : 'SK'), bf: '', gsm: 0 })} className="text-xs flex items-center text-primary hover:underline bg-primary/10 px-3 py-1.5 rounded-full">
                   <Plus className="w-3.5 h-3.5 mr-1" /> Add Layer
                 </button>
               </div>
@@ -671,7 +867,7 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
                 {fields.map((field, idx) => (
                   <div key={field.id} className="grid grid-cols-[2fr_2fr_1fr_1fr_auto] gap-3 items-end bg-secondary/20 p-4 rounded-xl border border-border/50 hover:border-border transition-colors">
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-muted-foreground">Layer Name (e.g. Top/Flute/Bottom)</label>
+                      <label className="text-xs font-semibold text-muted-foreground">Layer Name (e.g. Top Liner/Fluting Medium)</label>
                       <input {...register(`layers.${idx}.layerName` as const, { required: true })} className={inputCls} placeholder="Layer Name" />
                     </div>
                     <div className="space-y-1">
@@ -709,6 +905,116 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
             {isSubmitting && <CircleDashed className="w-4 h-4 mr-2 animate-spin" />}
             {product ? 'Update' : 'Save'} Product
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DependencyModal({
+  data,
+  customers,
+  products,
+  onClose,
+  onSuccess
+}: {
+  data: { entity: any; type: 'customer' | 'product'; usage: any };
+  customers: Customer[];
+  products: Product[];
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const { user } = useAuth();
+  const [selectedTargetId, setSelectedTargetId] = useState('');
+  const [isMigrating, setIsMigrating] = useState(false);
+
+  const handleMigrate = async () => {
+    if (!selectedTargetId) return;
+    if (!confirm(`Are you sure you want to transfer all records to the new selection and delete this ${data.type}? This action will permanently update historical data.`)) return;
+    
+    setIsMigrating(true);
+    try {
+      if (data.type === 'customer') {
+        const target = customers.find(c => c.id === selectedTargetId);
+        if (target) {
+          await migrateCustomer(data.entity.id, target as any, user?.name);
+          await deleteCustomer(data.entity.id, user?.name);
+        }
+      } else {
+        const target = products.find(p => p.id === selectedTargetId);
+        if (target) {
+          await migrateProduct(data.entity.id, target as any, user?.name);
+          await deleteProduct(data.entity.id, user?.name);
+        }
+      }
+      onSuccess();
+    } catch (err: any) {
+      alert(err.message || 'Migration failed');
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card w-full max-w-lg rounded-xl shadow-2xl">
+        <div className="flex items-center justify-between p-6 border-b border-border">
+          <h2 className="text-xl font-bold text-foreground flex items-center text-destructive">
+            <Trash2 className="w-5 h-5 mr-2" /> Cannot Delete {data.type === 'customer' ? 'Customer' : 'Product'}
+          </h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-sm">
+            The {data.type} <strong>{data.type === 'customer' ? data.entity.name : data.entity.itemName}</strong> cannot be deleted directly because it is being used in other records.
+          </p>
+          <div className="bg-secondary/30 p-4 rounded-md text-sm space-y-2 border border-border">
+            <div className="font-semibold text-primary mb-2">Current Usages:</div>
+            {data.type === 'customer' && data.usage.products > 0 && <div>• Products: {data.usage.products}</div>}
+            {data.usage.purchaseOrders > 0 && <div>• Purchase Orders: {data.usage.purchaseOrders}</div>}
+            {data.usage.jobCards > 0 && <div>• Job Cards: {data.usage.jobCards}</div>}
+            {data.usage.finishGoods > 0 && <div>• Finish Goods: {data.usage.finishGoods}</div>}
+            {data.usage.transactions > 0 && <div>• Finish Good Transactions: {data.usage.transactions}</div>}
+          </div>
+          
+          <div className="pt-4 border-t border-border">
+            <label className="block text-sm font-medium mb-2">
+              Select another {data.type} to transfer these records to:
+            </label>
+            <select
+              value={selectedTargetId}
+              onChange={e => setSelectedTargetId(e.target.value)}
+              className="w-full text-sm rounded-md border border-input px-3 py-2 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="">-- Select Replacement --</option>
+              {data.type === 'customer'
+                ? customers.filter(c => c.id !== data.entity.id).map(c => (
+                    <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, customers)}</option>
+                  ))
+                : products.filter(p => p.id !== data.entity.id).map(p => (
+                    <option key={p.id} value={p.id!}>{p.itemName} ({p.artworkNo})</option>
+                  ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-2">
+              * By migrating, all historical records will be updated to point to the new selection, and the current {data.type} will be deleted.
+            </p>
+          </div>
+          
+          <div className="flex justify-end gap-3 pt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-md border border-input bg-background hover:bg-secondary transition-colors">
+              Cancel
+            </button>
+            <button
+              onClick={handleMigrate}
+              disabled={!selectedTargetId || isMigrating}
+              className="px-6 py-2 text-sm font-medium rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors flex items-center disabled:opacity-50"
+            >
+              {isMigrating && <CircleDashed className="w-4 h-4 mr-2 animate-spin" />}
+              Migrate & Delete
+            </button>
+          </div>
         </div>
       </div>
     </div>

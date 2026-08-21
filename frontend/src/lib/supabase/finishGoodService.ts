@@ -331,6 +331,77 @@ export const executeFinishGoodInwardTransaction = async (
   }
 };
 
+export const initializeOpeningBalances = async (
+  payloads: FinishGoodInwardPayload[],
+  user: string
+) => {
+  try {
+    for (const payload of payloads) {
+      // Get existing
+      const { data: existing } = await supabase
+        .from('finish_goods')
+        .select('*')
+        .eq('firestore_document_id', payload.productId)
+        .maybeSingle();
+      
+      if (existing) {
+        // Adjust opening qty and closing/non-moving balance
+        const diff = payload.quantity - Number(existing.opening_qty || 0);
+        
+        let newClosing = Number(existing.closing_balance || 0);
+        let newNonMoving = Number(existing.non_moving_balance || 0);
+
+        if (payload.category === 'REJECTED') {
+          newNonMoving += diff;
+        } else {
+          newClosing += diff;
+        }
+        
+        await supabase.from('finish_goods').update({
+          opening_qty: payload.quantity,
+          closing_balance: newClosing,
+          non_moving_balance: newNonMoving,
+          updated_by: user,
+          updated_at: new Date().toISOString()
+        }).eq('firestore_document_id', payload.productId);
+      } else {
+        // Create new
+        await supabase.from('finish_goods').insert({
+          firestore_document_id: payload.productId,
+          product_id: payload.productId,
+          product_name: payload.productName,
+          customer_id: payload.customerId,
+          customer_name: payload.customerName,
+          opening_qty: payload.quantity,
+          in_qty: 0,
+          out_qty: 0,
+          closing_balance: payload.category === 'REJECTED' ? 0 : payload.quantity,
+          non_moving_balance: payload.category === 'REJECTED' ? payload.quantity : 0,
+          rate: payload.rate,
+          created_by: user,
+          updated_by: user,
+          raw_data: {},
+          is_archived: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+      }
+    }
+
+    await logActivity({
+      user,
+      action: `Set Opening Balances for ${payloads.length} items`,
+      entity: 'finishGoods',
+      referenceId: 'BULK_OPENING',
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Error initializing opening balances:', error);
+    throw error;
+  }
+};
+
 export const executeFinishGoodOutwardTransaction = async (
   logistics: LogisticsPayload,
   payloads: FinishGoodOutwardPayload[],
@@ -413,6 +484,42 @@ export const deleteFinishGoodTransaction = async (
   }
 };
 
+// ── Reset ALL Finish Goods data (for fresh import) ───────────────────────────
+// WARNING: This permanently deletes ALL finish_good_transactions and finish_goods.
+// Use only before a fresh bulk import.
+export const resetAllFinishGoods = async (user: string): Promise<{ deletedTransactions: number; deletedFGs: number }> => {
+  // Step 1: Delete all transactions first (FK constraint)
+  const { count: txCount, error: txError } = await supabase
+    .from('finish_good_transactions')
+    .delete({ count: 'exact' })
+    .neq('firestore_document_id', '__NEVER_MATCH__'); // delete all
+
+  if (txError) {
+    console.error('Error resetting finish_good_transactions:', txError);
+    throw txError;
+  }
+
+  // Step 2: Delete all finish_goods records
+  const { count: fgCount, error: fgError } = await supabase
+    .from('finish_goods')
+    .delete({ count: 'exact' })
+    .neq('firestore_document_id', '__NEVER_MATCH__'); // delete all
+
+  if (fgError) {
+    console.error('Error resetting finish_goods:', fgError);
+    throw fgError;
+  }
+
+  await logActivity({
+    user,
+    action: `⚠️ RESET ALL Finish Goods — ${txCount ?? 0} transactions + ${fgCount ?? 0} FG records deleted before fresh import`,
+    entity: 'finishGoods',
+    referenceId: 'RESET_ALL',
+  });
+
+  return { deletedTransactions: txCount ?? 0, deletedFGs: fgCount ?? 0 };
+};
+
 export const markFreightReceived = async (invoiceNo: string, user: string) => {
   try {
     const { data, error } = await supabase.rpc('mark_finish_good_freight_received', {
@@ -485,4 +592,55 @@ export const executeProductionCompletionTransaction = async (
     console.error('Error executing atomic production completion:', error);
     throw error;
   }
+};
+
+export const createTradingFinishGood = async (
+  customerName: string,
+  productName: string,
+  user: string
+): Promise<FinishGood> => {
+  const id = crypto.randomUUID();
+  // Using pseudo IDs for trading goods as they might not exist in the regular product/customer tables.
+  const customerId = `TRADING_CUST_${crypto.randomUUID()}`;
+  const productId = `TRADING_PROD_${crypto.randomUUID()}`;
+  
+  const payload = {
+    firestore_document_id: id,
+    customer_id: customerId,
+    customer_name: customerName,
+    product_id: productId,
+    product_name: productName,
+    opening_qty: 0,
+    in_qty: 0,
+    out_qty: 0,
+    closing_balance: 0,
+    non_moving_balance: 0,
+    rate: 0,
+    is_archived: false,
+    created_at: new Date().toISOString(),
+    created_by: user,
+    updated_at: new Date().toISOString(),
+    updated_by: user,
+    raw_data: {},
+  };
+
+  const { data, error } = await supabase
+    .from('finish_goods')
+    .insert(payload)
+    .select(FINISH_GOOD_SELECT_COLUMNS)
+    .single();
+
+  if (error) {
+    console.error('Error creating trading finish good:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: 'Create Trading Finish Good',
+    entity: 'finishGoods',
+    referenceId: id,
+  });
+
+  return mapFinishGoodRow(data as any as FinishGoodRow);
 };

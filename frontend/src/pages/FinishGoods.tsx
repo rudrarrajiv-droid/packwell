@@ -1,16 +1,18 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { PackageCheck, Search, ArrowDownToLine, ArrowUpFromLine, FileText, History, Calendar, FileSpreadsheet } from 'lucide-react';
+import { PackageCheck, Search, ArrowDownToLine, ArrowUpFromLine, FileText, History, Calendar, FileSpreadsheet, Edit, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import BulkInModal from './finish-goods/BulkInModal';
 import BulkOutModal from './finish-goods/BulkOutModal';
 import FinishGoodHistoryModal from './finish-goods/FinishGoodHistoryModal';
 import ExcelImportModal from './finish-goods/ExcelImportModal';
+import ItemLedgerModal from './finish-goods/ItemLedgerModal';
+import CustomerLedgerTab from './finish-goods/CustomerLedgerTab';
 import { getFinishGoods, getFinishGoodTransactions } from '../lib/supabase/finishGoodService';
 
 export default function FinishGoods() {
-  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'EMPTY' | 'REPORT'>('ACTIVE');
+  const [activeTab, setActiveTab] = useState<'ACTIVE' | 'EMPTY' | 'REPORT' | 'CUSTOMER_LEDGER'>('ACTIVE');
   const [search, setSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<'ALL' | 'REGULAR' | 'NON-MOVING'>('ALL');
   const [reportDate, setReportDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -19,6 +21,7 @@ export default function FinishGoods() {
   const [isBulkOutOpen, setIsBulkOutOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
+  const [selectedFinishGood, setSelectedFinishGood] = useState<any>(null);
 
   const { data: fgList = [], isLoading, refetch } = useQuery({
     queryKey: ['finishGoods'],
@@ -28,7 +31,7 @@ export default function FinishGoods() {
   const { data: transactions = [], isLoading: loadingTx } = useQuery({
     queryKey: ['finishGoodTransactions'],
     queryFn: () => getFinishGoodTransactions() as Promise<any[]>,
-    enabled: activeTab === 'REPORT'
+    enabled: activeTab === 'REPORT' || activeTab === 'CUSTOMER_LEDGER' || isHistoryOpen
   });
 
   const filteredFG = useMemo(() => {
@@ -183,6 +186,15 @@ export default function FinishGoods() {
         >
           In/Out Date Report
         </button>
+        <button
+          onClick={() => setActiveTab('CUSTOMER_LEDGER')}
+          className={cn(
+            "pb-2 px-1 font-medium text-sm transition-colors border-b-2",
+            activeTab === 'CUSTOMER_LEDGER' ? "border-blue-600 text-blue-600" : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Customer Ledger
+        </button>
       </div>
 
       {/* Actions Bar */}
@@ -276,13 +288,15 @@ export default function FinishGoods() {
         </div>
       </div>
 
-      {/* Main Table */}
       <div className="flex-1 bg-card border border-border shadow-sm rounded-lg overflow-hidden flex flex-col">
-        <div className="flex-1 overflow-auto">
-          {isLoading || (activeTab === 'REPORT' && loadingTx) ? (
-            <div className="p-8 text-center text-muted-foreground">Loading records...</div>
-          ) : activeTab === 'REPORT' ? (
-            <table className="w-full text-sm text-left">
+        {activeTab === 'CUSTOMER_LEDGER' ? (
+          <CustomerLedgerTab finishGoods={fgList} transactions={transactions} />
+        ) : (
+          <div className="flex-1 overflow-auto">
+            {isLoading || (activeTab === 'REPORT' && loadingTx) ? (
+              <div className="p-8 text-center text-muted-foreground">Loading records...</div>
+            ) : activeTab === 'REPORT' ? (
+              <table className="w-full text-sm text-left">
               <thead className="text-xs text-muted-foreground uppercase bg-secondary/50 border-b border-border sticky top-0 z-10">
                 <tr>
                   <th className="px-6 py-4 font-medium">Customer Name</th>
@@ -331,18 +345,37 @@ export default function FinishGoods() {
                   const nonMovingBal = Number(item.nonMovingBalance) || 0;
                   const rate = Number(item.rate) || 0;
                   const totalVal = (closingBal + nonMovingBal) * rate;
+                  const isNegative = closingBal < 0;
                   
                   return (
-                    <tr key={item.id} className="hover:bg-muted/50 transition-colors">
-                      <td className="px-6 py-4 font-bold text-foreground">{item.customerName}</td>
-                      <td className="px-6 py-4 font-medium text-muted-foreground">{item.productName}</td>
+                    <tr 
+                      key={item.id} 
+                      className={`transition-colors cursor-pointer ${isNegative ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-muted/50'}`}
+                      onClick={() => setSelectedFinishGood(item)}
+                    >
+                      <td className={`px-6 py-4 font-bold ${isNegative ? 'text-red-700' : 'text-foreground'}`}>{item.customerName}</td>
+                      <td className={`px-6 py-4 font-medium ${isNegative ? 'text-red-600' : 'text-muted-foreground'}`}>{item.productName}</td>
                       <td className="px-6 py-4 text-right font-medium">{item.openingQty || 0}</td>
                       <td className="px-6 py-4 text-right font-bold text-green-600">{item.inQty || 0}</td>
                       <td className="px-6 py-4 text-right font-bold text-red-600">{item.outQty || 0}</td>
-                      <td className="px-6 py-4 text-right font-black text-blue-700 text-base">{closingBal}</td>
+                      <td className={`px-6 py-4 text-right font-black text-base ${isNegative ? 'text-red-700' : 'text-blue-700'}`}>
+                        {isNegative && <AlertTriangle className="inline-block w-4 h-4 mr-1 text-red-500 mb-1" />}
+                        {closingBal}
+                      </td>
                       <td className="px-6 py-4 text-right font-bold text-orange-600">{nonMovingBal}</td>
                       <td className="px-6 py-4 text-right font-medium text-muted-foreground">₹{rate.toFixed(2)}</td>
-                      <td className="px-6 py-4 text-right font-bold text-foreground">₹{totalVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                      <td className={`px-6 py-4 text-right font-bold ${isNegative ? 'text-red-700' : 'text-foreground'}`}>₹{totalVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                      <td className="px-6 py-4 text-center">
+                        {isNegative && (
+                          <button 
+                            onClick={() => setIsBulkInOpen(true)}
+                            className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-md shadow-sm transition-colors"
+                            title="Fix Negative Stock (Use Bulk IN)"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -358,6 +391,7 @@ export default function FinishGoods() {
             </table>
           )}
         </div>
+        )}
         
         <div className="p-3 border-t border-border bg-secondary/20 text-xs text-muted-foreground flex justify-between">
           <span>Showing {activeTab === 'REPORT' ? reportData.length : filteredFG.length} records</span>
@@ -387,6 +421,14 @@ export default function FinishGoods() {
       {isHistoryOpen && (
         <FinishGoodHistoryModal 
           onClose={() => setIsHistoryOpen(false)}
+        />
+      )}
+
+      {selectedFinishGood && (
+        <ItemLedgerModal
+          finishGood={selectedFinishGood}
+          transactions={transactions}
+          onClose={() => setSelectedFinishGood(null)}
         />
       )}
 

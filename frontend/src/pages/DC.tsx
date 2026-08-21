@@ -223,62 +223,129 @@ export default function DC() {
     }
 
     const doc = new jsPDF('landscape');
-    
-    // Add title
-    doc.setFontSize(16);
-    doc.text(`Daily Conversion Report - ${selectedMonth}`, 14, 15);
-    
-    const tableColumn = ["Date", "SK", "VK20", "VK22", "VK25", "VK28", "Duplex", "Tot Wt", "Tot Amt", "Tot Ply", "Manpower", "Conv/Kg", "Scrap"];
-    const tableRows: any[][] = [];
 
-    filteredRows.forEach(row => {
-      const rowData = [
-        new Date(row.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
-        row.skWeight || '-',
-        row.vk20Weight || '-',
-        row.vk22Weight || '-',
-        row.vk25Weight || '-',
-        row.vk28Weight || '-',
-        row.duplexWeight || '-',
-        row.totalWeight || '-',
-        row.totalAmount || '-',
-        row.totalPly || '-',
-        row.manpowerCost || '-',
-        row.conversionCost > 0 ? row.conversionCost.toFixed(2) : '-',
-        row.scrap || '-'
-      ];
-      tableRows.push(rowData);
-    });
+    // ── Step 1: Figure out which optional columns have ANY data ──────────────
+    const hasSK     = filteredRows.some(r => r.skWeight > 0);
+    const hasVK20   = filteredRows.some(r => r.vk20Weight > 0);
+    const hasVK22   = filteredRows.some(r => r.vk22Weight > 0);
+    const hasVK25   = filteredRows.some(r => r.vk25Weight > 0);
+    const hasVK28   = filteredRows.some(r => r.vk28Weight > 0);
+    const hasDuplex = filteredRows.some(r => r.duplexWeight > 0);
+    const hasPly    = filteredRows.some(r => r.totalPly > 0);
+    const hasScrap  = filteredRows.some(r => r.scrap > 0);
 
-    // Add totals row
-    const totalsRow = [
-      "TOTAL",
-      filteredRows.reduce((s, r) => s + r.skWeight, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.vk20Weight, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.vk22Weight, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.vk25Weight, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.vk28Weight, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.duplexWeight, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.totalWeight, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.totalAmount, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.totalPly, 0) || '-',
-      filteredRows.reduce((s, r) => s + r.manpowerCost, 0) || '-',
-      (() => {
-        const tw = filteredRows.reduce((s, r) => s + r.totalWeight, 0);
-        const tmc = filteredRows.reduce((s, r) => s + r.manpowerCost, 0);
-        return tw > 0 ? (tmc / tw).toFixed(2) : '-';
-      })(),
-      filteredRows.reduce((s, r) => s + r.scrap, 0) || '-'
+    // ── Step 2: Build dynamic column list ───────────────────────────────────
+    // Each entry: { label, key, getValue, getTotal }
+    type ColDef = { label: string; getValue: (r: DCDailyRow) => string | number; getTotal: () => string | number; convKg?: boolean };
+
+    const allCols: ColDef[] = [
+      { label: 'Date',      getValue: r => new Date(r.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }), getTotal: () => 'TOTAL' },
+      ...(hasSK     ? [{ label: 'SK',      getValue: (r: DCDailyRow) => r.skWeight     || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.skWeight,0)     || '-' }] : []),
+      ...(hasVK20   ? [{ label: 'VK20',    getValue: (r: DCDailyRow) => r.vk20Weight   || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.vk20Weight,0)   || '-' }] : []),
+      ...(hasVK22   ? [{ label: 'VK22',    getValue: (r: DCDailyRow) => r.vk22Weight   || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.vk22Weight,0)   || '-' }] : []),
+      ...(hasVK25   ? [{ label: 'VK25',    getValue: (r: DCDailyRow) => r.vk25Weight   || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.vk25Weight,0)   || '-' }] : []),
+      ...(hasVK28   ? [{ label: 'VK28',    getValue: (r: DCDailyRow) => r.vk28Weight   || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.vk28Weight,0)   || '-' }] : []),
+      ...(hasDuplex ? [{ label: 'Duplex',  getValue: (r: DCDailyRow) => r.duplexWeight || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.duplexWeight,0) || '-' }] : []),
+      { label: 'Tot Wt',   getValue: r => r.totalWeight  || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.totalWeight,0)  || '-' },
+      { label: 'Tot Amt',  getValue: r => r.totalAmount  || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.totalAmount,0)  || '-' },
+      ...(hasPly    ? [{ label: 'Tot Ply', getValue: (r: DCDailyRow) => r.totalPly     || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.totalPly,0)     || '-' }] : []),
+      { label: 'Manpower', getValue: r => r.manpowerCost || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.manpowerCost,0) || '-' },
+      { label: 'Conv/Kg',  getValue: r => r.conversionCost > 0 ? r.conversionCost.toFixed(2) : '-',
+        getTotal: () => {
+          const tw  = filteredRows.reduce((s,r)=>s+r.totalWeight,0);
+          const tmc = filteredRows.reduce((s,r)=>s+r.manpowerCost,0);
+          return tw > 0 ? (tmc/tw).toFixed(2) : '-';
+        },
+        convKg: true },
+      ...(hasScrap  ? [{ label: 'Scrap',   getValue: (r: DCDailyRow) => r.scrap        || '-', getTotal: () => filteredRows.reduce((s,r)=>s+r.scrap,0)        || '-' }] : []),
     ];
 
+    const tableColumn = allCols.map(c => c.label);
+    const tableRows   = filteredRows.map(row => allCols.map(c => c.getValue(row)));
+    const totalsRow   = allCols.map(c => c.getTotal());
+
+    // Index of Conv/Kg column in the final column list
+    const convKgColIndex = allCols.findIndex(c => c.convKg);
+
+    // ── Step 3: Totals row value for Conv/Kg (for colour logic) ─────────────
+    const convKgTotal = filteredRows.reduce((s,r)=>s+r.totalWeight,0) > 0
+      ? parseFloat((filteredRows.reduce((s,r)=>s+r.manpowerCost,0) / filteredRows.reduce((s,r)=>s+r.totalWeight,0)).toFixed(2))
+      : 0;
+
+    // ── Step 4: Auto-calculate font & padding to fit ALL rows in ONE page ────
+    // Landscape A4 usable height ≈ 190mm. Title=15mm, startY=20mm → 170mm left.
+    // Each row ≈ fontSize + 2*cellPadding (mm). Solve for fontSize.
+    const totalDataRows = filteredRows.length + 2; // +1 header +1 footer
+    const pageUsableH   = 170; // mm available after title
+    // Try to fit: rowH = fontSize*0.352 + 2*padding (rough pt→mm conversion)
+    // We keep padding proportional: padding = fontSize * 0.18
+    // pageUsableH = totalDataRows * (fontSize*0.352 + 2*fontSize*0.18)
+    // pageUsableH = totalDataRows * fontSize * (0.352 + 0.36)
+    // fontSize = pageUsableH / (totalDataRows * 0.712)
+    let autoFontSize  = Math.floor(pageUsableH / (totalDataRows * 0.712));
+    autoFontSize      = Math.min(9, Math.max(5, autoFontSize)); // clamp 5–9
+    const autoPadding = Math.max(1, Math.floor(autoFontSize * 0.18));
+    const footFontSize = Math.min(10, autoFontSize + 1);
+
+    // ── Step 5: Title ────────────────────────────────────────────────────────
+    doc.setFontSize(13);
+    doc.setTextColor(30, 60, 120);
+    doc.text(`Daily Conversion Report - ${selectedMonth}`, 14, 13);
+    doc.setTextColor(0, 0, 0);
+
+    // ── Step 6: Render table (single page) ───────────────────────────────────
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 20,
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [41, 128, 185], textColor: 255 },
+      startY: 18,
+      // ── Force single page: no page breaks inside table ────────────────────
+      pageBreak: 'avoid',
+      rowPageBreak: 'avoid',
+      showHead: 'firstPage',
+      showFoot: 'lastPage',
+      styles: {
+        fontSize: autoFontSize,
+        cellPadding: autoPadding,
+        overflow: 'linebreak',
+        halign: 'center',
+      },
+      headStyles: {
+        fillColor: [41, 128, 185],
+        textColor: 255,
+        fontStyle: 'bold',
+        halign: 'center',
+        fontSize: autoFontSize,
+        cellPadding: autoPadding,
+      },
+      // ── Total row (foot) ──────────────────────────────────────────────────
       foot: [totalsRow],
-      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' }
+      footStyles: {
+        fillColor: [28, 40, 80],    // Dark navy background
+        textColor: [255, 255, 255], // White text
+        fontStyle: 'bold',
+        fontSize: footFontSize,
+        cellPadding: autoPadding,
+      },
+      // ── Per-cell overrides for Conv/Kg in the totals row ──────────────────
+      didDrawCell: (data) => {
+        if (data.section === 'foot' && data.column.index === convKgColIndex && convKgColIndex >= 0) {
+          const { x, y, width, height } = data.cell;
+          doc.setFillColor(255, 180, 0); // Bright gold
+          doc.rect(x, y, width, height, 'F');
+          doc.setFontSize(footFontSize + 1);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(80, 20, 0);
+          const cellText = String(convKgTotal > 0 ? `${convKgTotal.toFixed(2)}` : '-');
+          doc.text(cellText, x + width / 2, y + height / 2 + 1.2, { align: 'center' });
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(autoFontSize);
+          doc.setFont('helvetica', 'normal');
+        }
+      },
+      columnStyles: {
+        0: { halign: 'left', fontStyle: 'bold' }, // Date column left-aligned
+        ...(convKgColIndex >= 0 ? { [convKgColIndex]: { halign: 'center', fontStyle: 'bold' } } : {})
+      }
     });
 
     doc.save(`Conversion_Report_${selectedMonth}.pdf`);
@@ -461,37 +528,52 @@ export default function DC() {
             </tbody>
             {/* Grand Totals */}
             {!isLoading && filteredRows.length > 0 && (
-              <tfoot className="bg-muted/30 sticky bottom-0 z-10 border-t border-border font-bold">
-                <tr>
-                  <td className="px-3 py-4 text-right text-foreground uppercase tracking-wider">
-                    Total
+              <tfoot className="sticky bottom-0 z-10 border-t-2 border-primary">
+                <tr style={{ background: 'linear-gradient(90deg, #1e2d5a 0%, #2563eb 100%)' }}>
+                  <td className="px-3 py-4 text-right font-black text-white uppercase tracking-widest text-sm">
+                    TOTAL
                   </td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.skWeight, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.vk20Weight, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.vk22Weight, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.vk25Weight, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.vk28Weight, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.duplexWeight, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.totalWeight, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">₹{filteredRows.reduce((s, r) => s + r.totalAmount, 0)}</td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.totalPly, 0) || '-'}</td>
-                  <td className="px-3 py-4 text-primary">₹{filteredRows.reduce((s, r) => s + r.manpowerCost, 0)}</td>
-                  <td className="px-3 py-4">
-                    {/* Average Conversion Cost = Total Manpower / Total Weight */}
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.skWeight, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.vk20Weight, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.vk22Weight, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.vk25Weight, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.vk28Weight, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.duplexWeight, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-white">{filteredRows.reduce((s, r) => s + r.totalWeight, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-white">₹{filteredRows.reduce((s, r) => s + r.totalAmount, 0)}</td>
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.totalPly, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-white">₹{filteredRows.reduce((s, r) => s + r.manpowerCost, 0)}</td>
+                  {/* ★ Conv/Kg total — specially highlighted ★ */}
+                  <td className="px-3 py-3">
                     {(() => {
                       const tw = filteredRows.reduce((s, r) => s + r.totalWeight, 0);
                       const tmc = filteredRows.reduce((s, r) => s + r.manpowerCost, 0);
                       const avgCost = tw > 0 ? tmc / tw : null;
-                      if (!avgCost) return <span className="text-muted-foreground">-</span>;
+                      if (!avgCost) return <span className="text-blue-300">-</span>;
                       const isHigh = avgCost > 5;
                       return (
-                        <span className={`font-bold text-base ${isHigh ? 'text-red-600' : 'text-green-700'}`}>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            padding: '4px 12px',
+                            borderRadius: '9999px',
+                            background: isHigh
+                              ? 'linear-gradient(135deg, #ff4e50, #f9d423)'
+                              : 'linear-gradient(135deg, #f9d423, #56ab2f)',
+                            color: '#1a1a1a',
+                            fontWeight: 900,
+                            fontSize: '1rem',
+                            letterSpacing: '0.02em',
+                            boxShadow: '0 0 12px 3px rgba(249,212,35,0.6)',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
                           ₹{avgCost.toFixed(2)}
                         </span>
                       );
                     })()}
                   </td>
-                  <td className="px-3 py-4 text-primary">{filteredRows.reduce((s, r) => s + r.scrap, 0) || '-'}</td>
+                  <td className="px-3 py-4 font-bold text-blue-200">{filteredRows.reduce((s, r) => s + r.scrap, 0) || '-'}</td>
                 </tr>
               </tfoot>
             )}
