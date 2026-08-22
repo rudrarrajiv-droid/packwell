@@ -123,6 +123,8 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
       else if (reqBF === 18 && reqGSM === 120) matchPasses.push({ bf: 16, gsm: 100 });
       else if (reqBF === 25 && reqGSM === 230) matchPasses.push({ bf: 28, gsm: 220 });
       else if (reqBF === 28 && reqGSM === 220) matchPasses.push({ bf: 25, gsm: 230 });
+      else if (reqBF === 20) { matchPasses.push({ bf: 18, gsm: reqGSM }); matchPasses.push({ bf: 22, gsm: reqGSM }); }
+      else if (reqBF === 22) { matchPasses.push({ bf: 20, gsm: reqGSM }); matchPasses.push({ bf: 25, gsm: reqGSM }); }
 
       for (const pass of matchPasses) {
         if (remainingWeight <= 0.1) break;
@@ -353,6 +355,10 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
         }]
       };
     }));
+
+    if (remainingWeight - allocWeight <= 0.1) {
+      setShowManualModal(false);
+    }
 
     // Clear search for next time
     setManualSearch({ paperType: '', reelSize: '', bf: '', gsm: '', reelNumber: '' });
