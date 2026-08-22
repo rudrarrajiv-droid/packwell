@@ -110,7 +110,7 @@ function JobCardSelector({
   );
 }
 
-export default function BulkInModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
+export default function BulkInModal({ onClose, onSuccess, initialItem }: { onClose: () => void, onSuccess: () => void, initialItem?: any }) {
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -145,16 +145,27 @@ export default function BulkInModal({ onClose, onSuccess }: { onClose: () => voi
   useEffect(() => {
     if (!initialized.current && fields.length === 0) {
       initialized.current = true;
-      append({ 
-        productId: '',
-        customerName: '',
-        productName: '',
-        category: 'REGULAR',
-        quantity: '',
-        rate: ''
-      });
+      if (initialItem) {
+        append({ 
+          productId: initialItem.productId,
+          customerName: initialItem.customerName || '',
+          productName: initialItem.productName || '',
+          category: 'REGULAR',
+          quantity: Math.abs(Number(initialItem.closingBalance) || 0),
+          rate: initialItem.rate || ''
+        });
+      } else {
+        append({ 
+          productId: '',
+          customerName: '',
+          productName: '',
+          category: 'REGULAR',
+          quantity: '',
+          rate: ''
+        });
+      }
     }
-  }, [append]);
+  }, [append, initialItem]);
 
   const rows = watch('rows');
 
@@ -331,6 +342,7 @@ export default function BulkInModal({ onClose, onSuccess }: { onClose: () => voi
                       setValue={setValue} 
                       handleProductChange={handleProductChange} 
                       inputCls={inputCls} 
+                      defaultSearchText={rows[index]?.productName || ''}
                     />
                   </div>
 
@@ -360,10 +372,10 @@ export default function BulkInModal({ onClose, onSuccess }: { onClose: () => voi
                   <div className="col-span-1">
                     <input
                       type="number"
-                      step="0.01"
+                      step="0.001"
                       {...register(`rows.${index}.rate` as const)}
                       className={inputCls}
-                      placeholder="₹0.00"
+                      placeholder="₹0.000"
                     />
                   </div>
 
@@ -452,8 +464,8 @@ export default function BulkInModal({ onClose, onSuccess }: { onClose: () => voi
   );
 }
 
-function ProductSearchSelect({ index, products, register, setValue, handleProductChange, inputCls }: any) {
-  const [searchText, setSearchText] = useState('');
+function ProductSearchSelect({ index, products, register, setValue, handleProductChange, inputCls, defaultSearchText = '' }: any) {
+  const [searchText, setSearchText] = useState(defaultSearchText);
   const [isOpen, setIsOpen] = useState(false);
 
   return (

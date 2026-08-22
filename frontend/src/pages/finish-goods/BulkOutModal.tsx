@@ -123,6 +123,12 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
   };
 
   const onSubmit = async (data: BulkOutwardForm) => {
+    const incompleteRows = data.rows.filter(r => (!r.productId && r.quantity) || (r.productId && (!r.quantity || Number(r.quantity) <= 0)));
+    if (incompleteRows.length > 0) {
+      alert("Some rows are incomplete. Please make sure you selected a product from the dropdown and entered a valid quantity for all rows.");
+      return;
+    }
+
     const validRows = data.rows.filter(r => r.quantity && Number(r.quantity) > 0 && r.productId);
     
     if (validRows.length === 0) {
@@ -421,10 +427,9 @@ function ProductSearchSelect({ index, finishGoods, register, setValue, handlePro
         }}
         onFocus={() => setIsOpen(true)}
         onBlur={() => setTimeout(() => setIsOpen(false), 200)}
-        required={!searchText}
       />
       {/* Hidden input for react-hook-form to register productId */}
-      <input type="hidden" {...register(`rows.${index}.productId` as const, { required: true })} />
+      <input type="hidden" {...register(`rows.${index}.productId` as const)} />
       
       {isOpen && (
         <div className="absolute z-[100] mt-1 w-[150%] bg-white border border-gray-300 rounded-md shadow-xl max-h-60 overflow-y-auto">

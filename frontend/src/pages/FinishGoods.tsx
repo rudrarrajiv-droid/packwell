@@ -22,6 +22,7 @@ export default function FinishGoods() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [selectedFinishGood, setSelectedFinishGood] = useState<any>(null);
+  const [itemToFix, setItemToFix] = useState<any>(null);
 
   const { data: fgList = [], isLoading, refetch } = useQuery({
     queryKey: ['finishGoods'],
@@ -368,7 +369,11 @@ export default function FinishGoods() {
                       <td className="px-6 py-4 text-center">
                         {isNegative && (
                           <button 
-                            onClick={() => setIsBulkInOpen(true)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setItemToFix(item);
+                              setIsBulkInOpen(true);
+                            }}
                             className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-md shadow-sm transition-colors"
                             title="Fix Negative Stock (Use Bulk IN)"
                           >
@@ -401,9 +406,14 @@ export default function FinishGoods() {
       
       {isBulkInOpen && (
         <BulkInModal 
-          onClose={() => setIsBulkInOpen(false)}
+          initialItem={itemToFix}
+          onClose={() => {
+            setIsBulkInOpen(false);
+            setItemToFix(null);
+          }}
           onSuccess={() => {
             setIsBulkInOpen(false);
+            setItemToFix(null);
             refetch();
           }}
         />

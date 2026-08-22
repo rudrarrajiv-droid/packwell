@@ -9,6 +9,7 @@ import type { Customer, Product, ProductLayer } from '../lib/types/models';
 import { useAuth } from '../contexts/AuthContext';
 import RoleGuard from '../components/RoleGuard';
 import ExportButtons from '../components/ExportButtons';
+import { AddTradingItemModal } from './finish-goods/AddTradingItemModal';
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function MasterData() {
@@ -25,6 +26,7 @@ export default function MasterData() {
   // Modal States
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showProductModal,  setShowProductModal]  = useState(false);
+  const [showTradingModal,  setShowTradingModal]  = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
@@ -285,16 +287,27 @@ export default function MasterData() {
                   </button>
                 </RoleGuard>
               ) : (
-                <button
-                  onClick={() => {
-                    setEditingProduct(null);
-                    setShowProductModal(true);
-                  }}
-                  className="bg-primary text-primary-foreground px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-primary/90 transition-colors"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Product
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setShowTradingModal(true);
+                    }}
+                    className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Trading Item
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingProduct(null);
+                      setShowProductModal(true);
+                    }}
+                    className="bg-primary text-primary-foreground px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-primary/90 transition-colors"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Product
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -421,6 +434,12 @@ export default function MasterData() {
           customers={customers}
           onClose={() => { setShowProductModal(false); setEditingProduct(null); }}
           onSuccess={() => { setShowProductModal(false); setEditingProduct(null); qc.invalidateQueries({ queryKey: ['products'] }); }}
+        />
+      )}
+      {showTradingModal && (
+        <AddTradingItemModal
+          onClose={() => setShowTradingModal(false)}
+          onSuccess={() => { setShowTradingModal(false); qc.invalidateQueries({ queryKey: ['products'] }); }}
         />
       )}
       {dependencyData && (

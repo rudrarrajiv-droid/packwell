@@ -1,3 +1,5 @@
+import { getUserPassword } from '../supabase/userCredentialsService';
+
 export interface AppUser {
   id: string;
   name: string;
@@ -30,11 +32,20 @@ export const CONFIGURED_USERS: AppUser[] = [
   }
 ];
 
-export const authenticate = (email: string, password: string): Omit<AppUser, 'password'> | null => {
-  const user = CONFIGURED_USERS.find(u => u.email === email && u.password === password);
-  if (user) {
+export const authenticate = async (email: string, password: string): Promise<Omit<AppUser, 'password'> | null> => {
+  const user = CONFIGURED_USERS.find(u => u.email === email);
+  if (!user) return null;
+
+  // Check Supabase for overridden password
+  const dbPassword = await getUserPassword(user.id);
+  
+  // If a DB password exists, it must match. Otherwise, fallback to hardcoded password.
+  const activePassword = dbPassword !== null ? dbPassword : user.password;
+
+  if (activePassword === password) {
     const { password: _, ...userWithoutPassword } = user;
     return userWithoutPassword;
   }
+  
   return null;
 };

@@ -22,7 +22,7 @@ export default function Login() {
     // Simulate slight network delay for better UX
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    const user = authenticate(email, password);
+    const user = await authenticate(email, password);
     
     if (user) {
       try {
