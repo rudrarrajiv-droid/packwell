@@ -411,20 +411,36 @@ export const getOutwardReelTransactionsByMonth = async (monthPrefix: string): Pr
   const startDate = `${monthPrefix}-01`;
   const nextMonthPrefix = nextMonthDate.toISOString().slice(0, 10);
 
-  const { data, error } = await supabase
-    .from('reel_transactions')
-    .select(REEL_TRANSACTION_SELECT_COLUMNS)
-    .eq('type', 'OUTWARD')
-    .eq('is_archived', false)
-    .gte('transaction_date', startDate)
-    .lt('transaction_date', nextMonthPrefix);
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error('Error fetching outward reel transactions:', error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('reel_transactions')
+      .select(REEL_TRANSACTION_SELECT_COLUMNS)
+      .eq('type', 'OUTWARD')
+      .eq('is_archived', false)
+      .gte('transaction_date', startDate)
+      .lt('transaction_date', nextMonthPrefix)
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error('Error fetching outward reel transactions:', error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map((row) => mapReelTransactionRow(row as unknown as ReelTransactionRow));
+  return allData.map((row) => mapReelTransactionRow(row as unknown as ReelTransactionRow));
 };
 
 export const getReelsByIds = async (reelIds: string[]): Promise<Record<string, Reel>> => {

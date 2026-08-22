@@ -82,18 +82,34 @@ export const getAttendanceByMonth = async (yearMonth: string): Promise<Attendanc
   const nextYear = month === 12 ? year + 1 : year;
   const nextMonthStr = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-01`;
 
-  const { data, error } = await supabase
-    .from('attendance')
-    .select(SELECT_COLUMNS)
-    .gte('attendance_date', startStr)
-    .lt('attendance_date', nextMonthStr);
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error(`Error fetching attendance for month ${yearMonth}:`, error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('attendance')
+      .select(SELECT_COLUMNS)
+      .gte('attendance_date', startStr)
+      .lt('attendance_date', nextMonthStr)
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error(`Error fetching attendance for month ${yearMonth}:`, error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map(mapRow);
+  return allData.map(mapRow);
 };
 
 /**
@@ -102,18 +118,34 @@ export const getAttendanceByMonth = async (yearMonth: string): Promise<Attendanc
  * query.
  */
 export const getAttendanceByDateRange = async (startDate: string, endDate: string): Promise<AttendanceRecord[]> => {
-  const { data, error } = await supabase
-    .from('attendance')
-    .select(SELECT_COLUMNS)
-    .gte('attendance_date', startDate)
-    .lte('attendance_date', endDate);
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error(`Error fetching attendance from ${startDate} to ${endDate}:`, error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('attendance')
+      .select(SELECT_COLUMNS)
+      .gte('attendance_date', startDate)
+      .lte('attendance_date', endDate)
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error(`Error fetching attendance from ${startDate} to ${endDate}:`, error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map(mapRow);
+  return allData.map(mapRow);
 };
 
 /**
