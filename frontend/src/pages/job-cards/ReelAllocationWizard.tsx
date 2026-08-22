@@ -205,14 +205,18 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
   const handleConfirm = () => {
     const updatedLayers = (jobCard.productSnapshot.layers || []).map((layer: any, idx: number) => {
       const alloc = allocations.find(a => a.layerIndex === idx);
+      const req = layerRequirements.find((r: any) => r.originalIndex === idx);
+      
       if (alloc) {
         return {
           ...layer,
+          requiredWeight: req ? req.requiredWeight : layer.requiredWeight,
           allocatedReels: alloc.reels
         };
       }
       return {
         ...layer,
+        requiredWeight: req ? req.requiredWeight : layer.requiredWeight,
         allocatedReels: []
       };
     });
@@ -235,14 +239,18 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
     }
     const updatedLayers = (jobCard.productSnapshot.layers || []).map((layer: any, idx: number) => {
       const alloc = allocations.find(a => a.layerIndex === idx);
+      const req = layerRequirements.find((r: any) => r.originalIndex === idx);
+      
       if (alloc) {
         return {
           ...layer,
+          requiredWeight: req ? req.requiredWeight : layer.requiredWeight,
           allocatedReels: alloc.reels
         };
       }
       return {
         ...layer,
+        requiredWeight: req ? req.requiredWeight : layer.requiredWeight,
         allocatedReels: []
       };
     });
