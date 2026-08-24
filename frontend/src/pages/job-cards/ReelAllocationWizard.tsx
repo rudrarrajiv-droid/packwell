@@ -173,8 +173,8 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
           });
           
           remainingWeight -= allocWeight;
-          // As per requirement, completely freeze reel for other layers once selected
-          candidate.virtualBalance = 0; 
+          // Deduct allocated weight so the remaining balance can be used in other layers of the same job card
+          candidate.virtualBalance -= allocWeight; 
         }
       }
       }
@@ -384,14 +384,11 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
 
     let results = rawReels
       .map(r => {
-        const avail = Math.max(0, (r.currentBalance || 0) - (r.activeReservedWeight || 0) + (selfReservedWeights[r.id] || 0));
+        const avail = Math.max(0, (r.currentBalance || 0) - (r.activeReservedWeight || 0) + (selfReservedWeights[r.id] || 0) - (uiReserved[r.id] || 0));
         return { ...r, availableAllocationWeight: avail };
       })
       .filter(r => {
-         // 1. If already selected by ANY layer in the current UI, hide it completely (Strict Freezing)
-         if (uiReserved[r.id] && uiReserved[r.id] > 0) return false;
-
-         // 2. Hide zero balance reels from manual search unless explicitly searching by reel number
+         // Hide zero balance reels from manual search unless explicitly searching by reel number
          if (manualSearch.reelNumber && String(r.reelNumber).toLowerCase().includes(manualSearch.reelNumber.toLowerCase())) return true;
          return r.availableAllocationWeight > 0;
       })
@@ -441,7 +438,13 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
         matchType,
         matchColor
       };
-    }).filter(r => r.availableAllocationWeight > 0 && r.sizeDiff !== Infinity);
+    }).filter(r => {
+      // If explicitly searching by reel number, show it regardless of balance or size
+      if (manualSearch.reelNumber && String(r.reelNumber).toLowerCase().includes(manualSearch.reelNumber.toLowerCase())) {
+        return true;
+      }
+      return r.availableAllocationWeight > 0 && r.sizeDiff !== Infinity;
+    });
 
     // Apply Live Filters (partial matching)
     if (manualSearch.reelNumber) {

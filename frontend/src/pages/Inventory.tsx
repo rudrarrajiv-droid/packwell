@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar } from 'lucide-react';
+import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { getReels, getReelTransactions } from '../lib/supabase/reelService';
+import { useAuth } from '../contexts/AuthContext';
+import { getReels, getReelTransactions, updateReelTransactionDate } from '../lib/supabase/reelService';
 import BulkInwardModal from './inventory/BulkInwardModal';
 import OutwardModal from './inventory/OutwardModal';
 import ReelHistoryModal from './inventory/ReelHistoryModal';
@@ -11,6 +12,7 @@ import JobFinderTab from './inventory/JobFinderTab';
 import ReverseCalculatorTab from './inventory/ReverseCalculatorTab';
 
 export default function Inventory() {
+  const { user, hasRole } = useAuth();
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'EMPTY' | 'ISSUED_REPORT' | 'PURCHASE_REPORT' | 'MONTHLY_SUMMARY' | 'JOB_FINDER' | 'REVERSE_CALC'>('ACTIVE');
   const [isBulkInwardOpen, setIsBulkInwardOpen] = useState(false);
   const [isOutwardOpen, setIsOutwardOpen] = useState(false);
@@ -20,13 +22,21 @@ export default function Inventory() {
   const [reportDate, setReportDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [metricFilter, setMetricFilter] = useState<'CLOSING' | 'OPENING' | 'IN' | 'OUT'>('CLOSING');
   const [metricMonth, setMetricMonth] = useState<string>(new Date().toISOString().substring(0, 7));
+  const [showReservedOnly, setShowReservedOnly] = useState(false);
+
+  // Bulk Edit State
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
+  const [newBulkDate, setNewBulkDate] = useState('');
+  const [isBulkEditing, setIsBulkEditing] = useState(false);
+  const [bulkError, setBulkError] = useState('');
+  const [bulkSuccess, setBulkSuccess] = useState('');
 
   const { data: reels = [], isLoading: loadingReels, refetch } = useQuery({
     queryKey: ['reels'],
     queryFn: () => getReels() as Promise<any[]>
   });
 
-  const { data: transactions = [], isLoading: loadingTx } = useQuery({
+  const { data: transactions = [], isLoading: loadingTx, refetch: refetchTx } = useQuery({
     queryKey: ['reelTransactions'],
     queryFn: () => getReelTransactions() as Promise<any[]>,
     enabled: activeTab === 'ISSUED_REPORT' || activeTab === 'PURCHASE_REPORT' || activeTab === 'MONTHLY_SUMMARY' || metricFilter !== 'CLOSING'
@@ -46,10 +56,16 @@ export default function Inventory() {
       return pt === paperTypeFilter;
     });
 
-    // Filter by Active vs Empty
+    // Filter by Active vs Empty vs Reserved
     result = result.filter(r => {
       const bal = Number(r.currentBalance) || 0;
-      if (activeTab === 'ACTIVE') return bal > 0;
+      if (activeTab === 'ACTIVE') {
+        if (bal <= 0) return false;
+        if (showReservedOnly) {
+          return (Number(r.activeReservedWeight) || 0) > 0;
+        }
+        return true;
+      }
       if (activeTab === 'EMPTY') return bal <= 0;
       return false;
     });
@@ -82,7 +98,7 @@ export default function Inventory() {
     });
 
     return result;
-  }, [reels, search, paperTypeFilter, activeTab]);
+  }, [reels, search, paperTypeFilter, activeTab, showReservedOnly]);
 
   const { totalReels, totalWeight, totalValue, shortReels, shortReelsWeight, fullReels, fullReelsWeight } = useMemo(() => {
     let tr = 0, tw = 0, tv = 0, sr = 0, sw = 0, fr = 0, fw = 0;
@@ -282,6 +298,50 @@ export default function Inventory() {
     };
   }, [transactions, reels, reportDate, activeTab]);
 
+  const handleBulkDateChange = async () => {
+    try {
+      setBulkError('');
+      setBulkSuccess('');
+
+      if (!newBulkDate) {
+        setBulkError('Please select a new date');
+        return;
+      }
+
+      const txType = activeTab === 'PURCHASE_REPORT' ? 'INWARD' : 'OUTWARD';
+      const txForDate = transactions.filter(tx => tx.type === txType && tx.date && tx.date.startsWith(reportDate));
+
+      if (txForDate.length === 0) {
+        setBulkError(`No ${txType} transactions found for date: ${reportDate}. Please ensure transactions exist.`);
+        return;
+      }
+
+      setIsBulkEditing(true);
+      let successCount = 0;
+      
+      for (const tx of txForDate) {
+        // Keep original time if possible, just change date part
+        const originalTime = tx.date && tx.date.includes('T') ? tx.date.split('T')[1] : '00:00:00Z';
+        const newDateTime = `${newBulkDate}T${originalTime}`;
+        await updateReelTransactionDate(tx.id, newDateTime, user?.name || 'System');
+        successCount++;
+      }
+      
+      setBulkSuccess(`Success! Moved ${successCount} transactions to ${newBulkDate}`);
+      setTimeout(() => {
+        setShowBulkEditModal(false);
+        setBulkSuccess('');
+      }, 2000);
+      refetch();
+      refetchTx();
+    } catch (err: any) {
+      console.error(err);
+      setBulkError(`Error updating transactions: ${err.message || JSON.stringify(err)}`);
+    } finally {
+      setIsBulkEditing(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
@@ -462,6 +522,18 @@ export default function Inventory() {
                     )}
                   </>
                 )}
+                
+                {activeTab === 'ACTIVE' && (
+                  <label className="flex items-center space-x-2 text-sm font-medium bg-blue-50 text-blue-800 px-3 py-2 rounded-md border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={showReservedOnly} 
+                      onChange={e => setShowReservedOnly(e.target.checked)} 
+                      className="rounded border-blue-400 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer" 
+                    />
+                    <span>Show Reserved Only</span>
+                  </label>
+                )}
               </div>
               
               <div className="flex gap-3 text-sm flex-wrap">
@@ -494,6 +566,16 @@ export default function Inventory() {
                  onChange={e => setReportDate(activeTab === 'MONTHLY_SUMMARY' ? `${e.target.value}-01` : e.target.value)}
                  className="px-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring font-medium"
                />
+               
+               {hasRole('ADMIN') && (activeTab === 'ISSUED_REPORT' || activeTab === 'PURCHASE_REPORT') && (
+                 <button
+                   onClick={() => setShowBulkEditModal(true)}
+                   className="ml-4 bg-orange-100 text-orange-700 px-3 py-2 flex items-center text-sm font-medium rounded-md border border-orange-200 hover:bg-orange-200 transition-colors"
+                 >
+                   <Edit2 className="w-4 h-4 mr-2" />
+                   Change Date for All
+                 </button>
+               )}
             </div>
           )}
         </div>
@@ -680,6 +762,47 @@ export default function Inventory() {
           reels={reels}
           onClose={() => setIsHistoryOpen(false)}
         />
+      )}
+
+      {showBulkEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-card w-full max-w-md rounded-xl shadow-2xl flex flex-col p-6">
+            <h3 className="text-lg font-bold text-foreground mb-2">Bulk Change Date</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Move all <span className="font-bold text-foreground">{activeTab === 'PURCHASE_REPORT' ? 'Purchased (INWARD)' : 'Issued (OUTWARD)'}</span> transactions from <span className="font-bold text-foreground">{new Date(reportDate).toLocaleDateString('en-IN')}</span> to a new date.
+            </p>
+            {bulkError && <div className="mb-4 p-3 text-sm text-red-700 bg-red-100 rounded-md border border-red-200">{bulkError}</div>}
+            {bulkSuccess && <div className="mb-4 p-3 text-sm text-green-700 bg-green-100 rounded-md border border-green-200">{bulkSuccess}</div>}
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground block mb-1">New Date</label>
+                <input
+                  type="date"
+                  value={newBulkDate}
+                  onChange={(e) => setNewBulkDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkEditModal(false)}
+                  className="px-4 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-secondary transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDateChange}
+                  disabled={isBulkEditing || !newBulkDate}
+                  className="px-4 py-2 text-sm font-medium rounded-md bg-orange-600 text-white hover:bg-orange-700 transition-colors disabled:opacity-50"
+                >
+                  {isBulkEditing ? 'Moving...' : 'Move Transactions'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

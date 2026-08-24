@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, X, History, FilterX, ArrowDownToLine, ArrowUpFromLine, Receipt, Trash2 } from 'lucide-react';
-import { getReelTransactionsByReelId, deleteReelTransaction } from '../../lib/supabase/reelService';
+import { Search, X, History, FilterX, ArrowDownToLine, ArrowUpFromLine, Receipt, Trash2, CalendarDays, Check, XCircle } from 'lucide-react';
+import { getReelTransactionsByReelId, deleteReelTransaction, updateReelTransactionDate } from '../../lib/supabase/reelService';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface ReelHistoryModalProps {
@@ -12,6 +12,8 @@ interface ReelHistoryModalProps {
 export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalProps) {
   const { user, hasRole } = useAuth();
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [editingDateTx, setEditingDateTx] = useState<string | null>(null);
+  const [newDateValue, setNewDateValue] = useState('');
 
   // Filtering States
   const [search, setSearch] = useState('');
@@ -100,6 +102,18 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
       console.error(error);
     } finally {
       setIsDeleting(null);
+    }
+  };
+
+  const handleUpdateDate = async (tx: any) => {
+    if (!newDateValue) return;
+    try {
+      await updateReelTransactionDate(tx.id, newDateValue, user?.name || 'System');
+      setEditingDateTx(null);
+      refetch();
+    } catch (error) {
+      alert('Failed to update date. See console.');
+      console.error(error);
     }
   };
 
@@ -314,12 +328,25 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
                                 <div className={`font-black uppercase tracking-tight text-sm ${tx.type === 'INWARD' ? 'text-green-600' : 'text-red-600'}`}>
                                   {tx.type}
                                 </div>
-                                <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">
-                                  {new Date(tx.date).toLocaleString('en-IN', { 
-                                    day: '2-digit', month: 'short', year: 'numeric', 
-                                    hour: '2-digit', minute: '2-digit' 
-                                  })}
-                                </div>
+                                {editingDateTx === tx.id ? (
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <input 
+                                      type="datetime-local" 
+                                      value={newDateValue} 
+                                      onChange={(e) => setNewDateValue(e.target.value)}
+                                      className="text-xs p-1 border rounded bg-background"
+                                    />
+                                    <button onClick={() => handleUpdateDate(tx)} className="text-green-600 hover:text-green-800"><Check className="w-4 h-4" /></button>
+                                    <button onClick={() => setEditingDateTx(null)} className="text-red-500 hover:text-red-700"><XCircle className="w-4 h-4" /></button>
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+                                    {new Date(tx.date).toLocaleString('en-IN', { 
+                                      day: '2-digit', month: 'short', year: 'numeric', 
+                                      hour: '2-digit', minute: '2-digit' 
+                                    })}
+                                  </div>
+                                )}
                               </div>
                               <div className="text-right">
                                 <div className={`font-bold text-lg leading-none ${tx.type === 'INWARD' ? 'text-green-600' : 'text-red-600'}`}>
@@ -334,14 +361,29 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
                               </div>
                               <div className="flex items-center gap-2">
                                 {hasRole('ADMIN') && (
-                                  <button
-                                    onClick={() => handleDelete(tx)}
-                                    disabled={isDeleting === tx.id}
-                                    className="text-red-500 hover:text-red-700 disabled:opacity-50 p-1 rounded hover:bg-red-50 transition-colors"
-                                    title="Delete Transaction"
-                                  >
-                                    <Trash2 className={`w-3.5 h-3.5 ${isDeleting === tx.id ? 'animate-pulse' : ''}`} />
-                                  </button>
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setEditingDateTx(tx.id);
+                                        const localDate = new Date(tx.date);
+                                        const tzOffset = localDate.getTimezoneOffset() * 60000;
+                                        const localISOTime = (new Date(localDate.getTime() - tzOffset)).toISOString().slice(0,16);
+                                        setNewDateValue(localISOTime);
+                                      }}
+                                      className="text-blue-500 hover:text-blue-700 p-1 rounded hover:bg-blue-50 transition-colors"
+                                      title="Edit Date"
+                                    >
+                                      <CalendarDays className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDelete(tx)}
+                                      disabled={isDeleting === tx.id}
+                                      className="text-red-500 hover:text-red-700 disabled:opacity-50 p-1 rounded hover:bg-red-50 transition-colors"
+                                      title="Delete Transaction"
+                                    >
+                                      <Trash2 className={`w-3.5 h-3.5 ${isDeleting === tx.id ? 'animate-pulse' : ''}`} />
+                                    </button>
+                                  </>
                                 )}
                                 <div className="text-xs font-bold bg-secondary px-2 py-1 rounded text-foreground">
                                   Bal: {tx.remainingBalance} Kg

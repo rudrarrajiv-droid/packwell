@@ -620,6 +620,32 @@ export const deleteReelTransaction = async (
   return true;
 };
 
+export const updateReelTransactionDate = async (
+  transactionId: string,
+  newDate: string,
+  user: string = 'System'
+): Promise<void> => {
+  const normalizedDate = normalizeIsoDate(newDate);
+
+  const { error } = await supabase.rpc('update_reel_transaction_date', {
+    p_transaction_id: transactionId,
+    p_new_date: normalizedDate,
+    p_user: user,
+  });
+
+  if (error) {
+    console.error('Error updating reel transaction date:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: 'Updated Transaction Date',
+    entity: 'reelTransactions',
+    referenceId: transactionId,
+  });
+};
+
 export const unfreezeReel = async (reelId: string, user: string = 'System'): Promise<boolean> => {
   const existing = await getRawReelRow(reelId);
   const now = new Date().toISOString();

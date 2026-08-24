@@ -22,7 +22,7 @@ export default function OutwardModal({ reels, onClose, onSuccess }: OutwardModal
   const [filterGSM, setFilterGSM] = useState('');
   
   // Date State
-  const [outwardDate, setOutwardDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [outwardDate, setOutwardDate] = useState('');
 
   // Selection & Input State
   // selectedReels holds reelId -> { remainingWeight: number | '', selectedAt: number }
@@ -81,6 +81,11 @@ export default function OutwardModal({ reels, onClose, onSuccess }: OutwardModal
 
   const onSubmit = async () => {
     if (selectedReelsList.length === 0) return;
+
+    if (!outwardDate) {
+      alert("Please select an Outward Date");
+      return;
+    }
 
     // Validate
     const payloads: OutwardPayload[] = [];
