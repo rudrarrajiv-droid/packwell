@@ -106,8 +106,8 @@ export default function LedgerTab() {
     XLSX.writeFile(workbook, `Ledger_${selectedEmployee.name.replace(/\s+/g, '_')}_${fromDate}_to_${toDate}.xlsx`);
   };
 
-  const thClass = "px-3 py-3 border-b-2 border-black text-left font-bold text-black whitespace-nowrap";
-  const tdClass = "px-3 py-2 border-b border-gray-300 text-black";
+  const thClass = "px-3 py-3 border-b-2 border-black text-left font-bold text-black whitespace-nowrap print:py-1 print:text-[10px]";
+  const tdClass = "px-3 py-2 border-b border-gray-300 text-black print:py-0.5 print:text-[10px]";
 
   return (
     <div className="flex flex-col h-full space-y-4 print:h-auto print:block">
@@ -179,7 +179,7 @@ export default function LedgerTab() {
       </div>
 
       {/* Printable Ledger Area */}
-      <div className="bg-white text-black border border-gray-200 rounded-lg shadow-sm flex-1 overflow-auto custom-scrollbar p-8 print:p-0 print:border-none print:shadow-none print:m-0 print:overflow-visible print:h-auto print:block">
+      <div className="bg-white text-black border border-gray-200 rounded-lg shadow-sm flex-1 overflow-auto custom-scrollbar p-8 print:p-0 print:border-none print:shadow-none print:m-0 print:overflow-visible print:h-auto print:block print-view-multipage">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500 print:hidden">
             <Loader2 className="w-8 h-8 animate-spin mb-3" />
@@ -192,29 +192,29 @@ export default function LedgerTab() {
         ) : (
           <div className="max-w-5xl mx-auto">
             {/* Header / Company Info */}
-            <div className="text-center mb-8 border-b-2 border-black pb-4">
-              <h1 className="text-2xl font-black uppercase tracking-wider mb-1">PACKWELL INDIA</h1>
-              <h2 className="text-lg font-bold text-gray-700">EMPLOYEE LEDGER REPORT</h2>
-              <p className="text-sm text-gray-600 font-medium mt-1">Period: {new Date(fromDate).toLocaleDateString('en-GB')} to {new Date(toDate).toLocaleDateString('en-GB')}</p>
+            <div className="text-center mb-8 border-b-2 border-black pb-4 print:mb-2 print:pb-2">
+              <h1 className="text-2xl font-black uppercase tracking-wider mb-1 print:text-xl">PACKWELL INDIA</h1>
+              <h2 className="text-lg font-bold text-gray-700 print:text-sm">EMPLOYEE LEDGER REPORT</h2>
+              <p className="text-sm text-gray-600 font-medium mt-1 print:text-xs">Period: {new Date(fromDate).toLocaleDateString('en-GB')} to {new Date(toDate).toLocaleDateString('en-GB')}</p>
             </div>
 
             {/* Employee Details Box */}
-            <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
+            <div className="grid grid-cols-2 gap-4 mb-6 text-sm print:mb-2 print:text-xs print:gap-2">
               <div className="flex flex-col">
-                <span className="text-gray-500 font-semibold text-xs uppercase">Employee Name</span>
-                <span className="font-bold text-lg">{selectedEmployee.name}</span>
+                <span className="text-gray-500 font-semibold text-xs uppercase print:text-[10px]">Employee Name</span>
+                <span className="font-bold text-lg print:text-sm">{selectedEmployee.name}</span>
               </div>
               <div className="flex flex-col text-right">
-                <span className="text-gray-500 font-semibold text-xs uppercase">Designation</span>
-                <span className="font-bold text-lg">{selectedEmployee.designation || 'N/A'}</span>
+                <span className="text-gray-500 font-semibold text-xs uppercase print:text-[10px]">Designation</span>
+                <span className="font-bold text-lg print:text-sm">{selectedEmployee.designation || 'N/A'}</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-gray-500 font-semibold text-xs uppercase">Category / Contractor</span>
-                <span className="font-bold">{selectedEmployee.category === 'COMPANY' ? 'Company Roll' : `Wages (${selectedEmployee.contractorName})`}</span>
+                <span className="text-gray-500 font-semibold text-xs uppercase print:text-[10px]">Category / Contractor</span>
+                <span className="font-bold print:text-sm">{selectedEmployee.category === 'COMPANY' ? 'Company Roll' : `Wages (${selectedEmployee.contractorName})`}</span>
               </div>
               <div className="flex flex-col text-right">
-                <span className="text-gray-500 font-semibold text-xs uppercase">Basic Salary (Per Month)</span>
-                <span className="font-bold">₹{selectedEmployee.basicSalary.toLocaleString()}</span>
+                <span className="text-gray-500 font-semibold text-xs uppercase print:text-[10px]">Basic Salary (Per Month)</span>
+                <span className="font-bold print:text-sm">₹{selectedEmployee.basicSalary.toLocaleString()}</span>
               </div>
             </div>
 
@@ -264,23 +264,23 @@ export default function LedgerTab() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t-2 border-black">
                   <tr>
-                    <td colSpan={2} className="px-3 py-4 text-right font-black uppercase text-sm">
+                    <td colSpan={2} className="px-3 py-4 text-right font-black uppercase text-sm print:py-1 print:text-xs">
                       Grand Total
                     </td>
-                    <td className="px-3 py-4 text-right font-black text-sm">
+                    <td className="px-3 py-4 text-right font-black text-sm print:py-1 print:text-xs">
                       ₹{Math.round(totals.perDayAmount)}
-                      <div className="text-xs text-gray-500 font-semibold">{totals.present} Days</div>
+                      <div className="text-xs text-gray-500 font-semibold print:text-[10px]">{totals.present} Days</div>
                     </td>
-                    <td className="px-3 py-4 text-right font-black text-blue-700 text-sm">
+                    <td className="px-3 py-4 text-right font-black text-blue-700 text-sm print:py-1 print:text-xs">
                       {totals.otHours.toFixed(2)} Hrs
                     </td>
-                    <td className="px-3 py-4 text-right font-black text-sm">
+                    <td className="px-3 py-4 text-right font-black text-sm print:py-1 print:text-xs">
                       ₹{Math.round(totals.otAmount)}
                     </td>
-                    <td className="px-3 py-4 text-right font-black text-sm">
+                    <td className="px-3 py-4 text-right font-black text-sm print:py-1 print:text-xs">
                       ₹{Math.round(totals.refreshment)}
                     </td>
-                    <td className="px-3 py-4 text-right font-black text-green-700 text-lg">
+                    <td className="px-3 py-4 text-right font-black text-green-700 text-lg print:py-1 print:text-sm">
                       ₹{Math.round(totals.gross)}
                     </td>
                   </tr>
@@ -289,7 +289,7 @@ export default function LedgerTab() {
             )}
 
             {/* Print Footer */}
-            <div className="mt-16 flex justify-between items-end border-t border-gray-300 pt-8 print:flex hidden">
+            <div className="mt-16 flex justify-between items-end border-t border-gray-300 pt-8 print:flex hidden print:mt-4 print:pt-4">
               <div className="text-center">
                 <div className="w-40 border-b border-black mb-2"></div>
                 <span className="text-sm font-semibold text-gray-600">Employee Signature</span>
