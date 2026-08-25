@@ -67,6 +67,7 @@ export interface FinishGoodOutwardPayload {
   productId: string;
   quantity: number;
   category: 'DISPATCH' | 'NON-MOVING';
+  poId?: string;
 }
 
 export interface LogisticsPayload {

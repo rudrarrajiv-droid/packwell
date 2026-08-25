@@ -708,7 +708,7 @@ export default function Inventory() {
                         )}
                       </td>
                       <td className="px-6 py-4 font-semibold text-gray-700">
-                        {reel.rate ? `₹${Number(reel.rate).toFixed(2)}` : '-'}
+                        {reel.rate ? `₹${Number(reel.rate).toFixed(3)}` : '-'}
                       </td>
                       <td className="px-6 py-4 text-blue-600">{Math.round(reel.weight)} Kg</td>
                       <td className="px-6 py-4 text-red-600">{consumed > 0 ? `${Math.round(consumed)} Kg` : '-'}</td>

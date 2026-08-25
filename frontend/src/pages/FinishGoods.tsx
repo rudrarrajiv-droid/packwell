@@ -364,7 +364,7 @@ export default function FinishGoods() {
                         {closingBal}
                       </td>
                       <td className="px-6 py-4 text-right font-bold text-orange-600">{nonMovingBal}</td>
-                      <td className="px-6 py-4 text-right font-medium text-muted-foreground">₹{rate.toFixed(2)}</td>
+                      <td className="px-6 py-4 text-right font-medium text-muted-foreground">₹{rate.toFixed(3)}</td>
                       <td className={`px-6 py-4 text-right font-bold ${isNegative ? 'text-red-700' : 'text-foreground'}`}>₹{totalVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
                       <td className="px-6 py-4 text-center">
                         {isNegative && (

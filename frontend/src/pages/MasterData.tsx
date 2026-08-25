@@ -5,6 +5,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { cn, getCustomerDisplayLabel } from '../lib/utils';
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer, checkCustomerUsage, migrateCustomer } from '../lib/supabase/customerService';
 import { getProducts, createProduct, updateProduct, deleteProduct, checkProductUsage, migrateProduct, bulkUpdateProductCustomers } from '../lib/supabase/productService';
+import { getFinishGoods } from '../lib/supabase/finishGoodService';
 import type { Customer, Product, ProductLayer } from '../lib/types/models';
 import { useAuth } from '../contexts/AuthContext';
 import RoleGuard from '../components/RoleGuard';
@@ -52,9 +53,14 @@ export default function MasterData() {
     queryKey: ['products'],  
     queryFn: () => getProducts() as unknown as Promise<Product[]>  
   });
+  const { data: finishGoods = [] } = useQuery({ 
+    queryKey: ['finish_goods'], 
+    queryFn: () => getFinishGoods() as unknown as Promise<any[]> 
+  });
   
   const { user } = useAuth();
   const canDelete = user?.email === 'admin@packwell.com' || user?.email === 'packwell@packwell.com';
+  const showCosting = user?.email === 'admin@packwell.com' || user?.email === 'packwell@packwell.com';
 
   const handleDeleteCustomer = async (customer: Customer) => {
     setIsCheckingUsage(true);
@@ -102,7 +108,7 @@ export default function MasterData() {
   }, [customers, search]);
 
   const filteredProducts = useMemo(() => {
-    return products.filter(p => {
+    let filtered = products.filter(p => {
       // General Search
       const searchMatch = p.itemName.toLowerCase().includes(search.toLowerCase()) ||
                           p.artworkNo.toLowerCase().includes(search.toLowerCase()) ||
@@ -119,7 +125,33 @@ export default function MasterData() {
 
       return searchMatch && matchReelSize && matchCutSize && matchFlute && matchBF && matchGSM;
     });
-  }, [products, search, filterReelSize, filterBF, filterGSM, filterFlute, filterCutSize]);
+
+    const enriched = filtered.map(p => {
+      // Find the corresponding finish good to get the latest rate
+      const fg = finishGoods.find(fg => fg.productId === p.id);
+      const customerRate = fg?.rate ? Number(fg.rate) : 0;
+      const actualCosting = p.actualCosting ? Number(p.actualCosting) : 0;
+      const difference = actualCosting - customerRate;
+      return { ...p, customerRate, difference };
+    });
+
+    enriched.sort((a, b) => {
+      // 1. Negative differences first
+      const aNeg = a.difference < 0;
+      const bNeg = b.difference < 0;
+      if (aNeg && !bNeg) return -1;
+      if (!aNeg && bNeg) return 1;
+
+      // 2. Customer Name
+      const custDiff = a.customerName.localeCompare(b.customerName);
+      if (custDiff !== 0) return custDiff;
+
+      // 3. Item Name
+      return a.itemName.localeCompare(b.itemName);
+    });
+
+    return enriched;
+  }, [products, finishGoods, search, filterReelSize, filterBF, filterGSM, filterFlute, filterCutSize]);
 
   // Unique values for filter dropdowns
   const uniqueReelSizes = Array.from(new Set(products.map(p => p.reelSize))).sort((a,b)=>a-b);
@@ -414,6 +446,7 @@ export default function MasterData() {
               selectedProducts={selectedProducts}
               onToggleSelect={toggleProductSelection}
               onToggleSelectAll={toggleSelectAll}
+              showCosting={showCosting}
             />
           )}
         </div>
@@ -518,10 +551,10 @@ function CustomersTable({ data, isLoading, onEdit, onDelete }: { data: Customer[
 // ─── Products Table ───────────────────────────────────────────────────────────
 function ProductsTable({ 
   data, isLoading, onEdit, onDelete,
-  selectedProducts, onToggleSelect, onToggleSelectAll 
+  selectedProducts, onToggleSelect, onToggleSelectAll, showCosting
 }: { 
-  data: Product[]; isLoading: boolean, onEdit: (p: Product) => void, onDelete?: (p: Product) => void,
-  selectedProducts?: Set<string>, onToggleSelect?: (id: string) => void, onToggleSelectAll?: () => void
+  data: any[]; isLoading: boolean, onEdit: (p: Product) => void, onDelete?: (p: Product) => void,
+  selectedProducts?: Set<string>, onToggleSelect?: (id: string) => void, onToggleSelectAll?: () => void, showCosting?: boolean
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   
@@ -546,12 +579,19 @@ function ProductsTable({
           <th className="px-6 py-3 font-medium">Size (L×W×H)</th>
           <th className="px-6 py-3 font-medium">Ply / Flute</th>
           <th className="px-6 py-3 font-medium">Reel / Cut</th>
+          {showCosting && (
+            <>
+              <th className="px-6 py-3 font-medium">Actual Costing</th>
+              <th className="px-6 py-3 font-medium">Customer Rate</th>
+              <th className="px-6 py-3 font-medium">Difference</th>
+            </>
+          )}
           <th className="px-6 py-3 font-medium">Details</th>
           <th className="px-6 py-3 font-medium text-right">Actions</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-border">
-        {data.map(p => (
+        {data.map((p: any) => (
           <React.Fragment key={p.id}>
             <tr className={cn("transition-colors group", selectedProducts?.has(p.id!) ? "bg-primary/5" : "hover:bg-muted/50")}>
               {selectedProducts && (
@@ -570,6 +610,15 @@ function ProductsTable({
               <td className="px-6 py-4">{p.length}×{p.width}×{p.height}</td>
               <td className="px-6 py-4">{p.ply} Ply {p.flute ? `/ ${p.flute}` : ''}</td>
               <td className="px-6 py-4">{p.reelSize}" / {p.cutSize}"</td>
+              {showCosting && (
+                <>
+                  <td className="px-6 py-4 font-medium">₹{Number(p.actualCosting || 0).toFixed(3)}</td>
+                  <td className="px-6 py-4 font-medium">₹{Number(p.customerRate || 0).toFixed(3)}</td>
+                  <td className={cn("px-6 py-4 font-bold", p.difference < 0 ? "text-destructive" : p.difference > 0 ? "text-green-600 dark:text-green-400" : "")}>
+                    {p.difference > 0 ? '+' : ''}₹{Number(p.difference || 0).toFixed(3)}
+                  </td>
+                </>
+              )}
               <td className="px-6 py-4">
                 <button
                   onClick={() => setExpanded(expanded === p.id ? null : p.id!)}
@@ -594,12 +643,12 @@ function ProductsTable({
             </tr>
             {expanded === p.id && p.layers?.length > 0 && (
               <tr>
-                <td colSpan={selectedProducts ? 9 : 8} className="px-6 py-3 bg-secondary/30 border-b border-border/50 shadow-inner">
+                <td colSpan={selectedProducts ? (showCosting ? 12 : 9) : (showCosting ? 11 : 8)} className="px-6 py-3 bg-secondary/30 border-b border-border/50 shadow-inner">
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Paper Layers</div>
                       <div className="flex gap-3 flex-wrap">
-                        {p.layers.map((l, i) => (
+                        {p.layers.map((l: any, i: number) => (
                           <div key={i} className="bg-card border border-border rounded-md px-3 py-2 text-xs shadow-sm">
                             <span className="font-semibold text-foreground">{l.layerName}</span>
                             {l.paperType && <span className="ml-2 text-muted-foreground">{l.paperType}</span>}
@@ -623,7 +672,7 @@ function ProductsTable({
         ))}
         {data.length === 0 && (
           <tr>
-            <td colSpan={selectedProducts ? 9 : 8} className="px-6 py-12 text-center text-muted-foreground">
+            <td colSpan={selectedProducts ? (showCosting ? 12 : 9) : (showCosting ? 11 : 8)} className="px-6 py-12 text-center text-muted-foreground">
               <Package className="w-12 h-12 mx-auto text-muted mb-3" />
               <p>No products found matching filters.</p>
             </td>
@@ -754,6 +803,7 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
         length: Number(data.length), width: Number(data.width), height: Number(data.height),
         ply: Number(data.ply), reelSize: Number(data.reelSize), cutSize: Number(data.cutSize),
         pinQty: Number(data.pinQty), ups: Number(data.ups),
+        actualCosting: data.actualCosting ? Number(data.actualCosting) : undefined,
         layers: data.layers.map(l => ({ ...l, gsm: l.gsm ? Number(l.gsm) : undefined }))
       };
 
@@ -799,12 +849,16 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
                   <label className={labelCls}>Item Name <span className="text-destructive">*</span></label>
                   <input {...register('itemName', { required: true })} className={inputCls} placeholder="e.g. 5 Ply Printed Box" />
                 </div>
-                <div className="space-y-1.5 col-span-2">
+                <div className="space-y-1.5">
                   <label className={labelCls}>Customer <span className="text-destructive">*</span></label>
                   <select {...register('customerId', { required: true })} className={inputCls}>
                     <option value="">-- Select Customer --</option>
                     {customers.map(c => <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, customers)}</option>)}
                   </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className={labelCls}>Actual Costing (₹)</label>
+                  <input type="number" step="0.01" {...register('actualCosting')} className={inputCls} placeholder="e.g. 15.50" />
                 </div>
               </div>
             </div>

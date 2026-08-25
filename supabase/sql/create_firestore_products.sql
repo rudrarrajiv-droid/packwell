@@ -19,6 +19,7 @@ create table if not exists public.products (
   ups numeric,
   packing text,
   special_requirement text,
+  actual_costing numeric,
   layers jsonb,
   is_archived boolean,
   created_by text,

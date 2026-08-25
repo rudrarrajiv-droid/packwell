@@ -64,6 +64,7 @@ export interface SupabaseProduct {
   pinType?: string;
   boxType?: string;
   specialRequirement?: string;
+  actualCosting?: number;
   layers: SupabaseProductLayer[];
   isArchived: boolean;
   createdBy: string | null;
@@ -93,6 +94,7 @@ const SELECT_COLUMNS = [
   'ups',
   'packing',
   'special_requirement',
+  'actual_costing',
   'layers',
   'is_archived',
   'created_by',
@@ -125,6 +127,7 @@ const mapRow = (row: any): SupabaseProduct => ({
   pinType: row.pin_type ?? undefined,
   boxType: row.raw_data?.boxType ?? undefined,
   specialRequirement: row.special_requirement ?? undefined,
+  actualCosting: row.actual_costing != null ? Number(row.actual_costing) : undefined,
   layers: row.layers ?? [],
   isArchived: row.is_archived,
   createdBy: row.created_by,
@@ -177,6 +180,7 @@ const toColumns = (data: Record<string, any>) => ({
   ups: data.ups ?? null,
   packing: data.packing ?? null,
   special_requirement: data.specialRequirement ?? null,
+  actual_costing: data.actualCosting ?? null,
   layers: data.layers ?? [],
 });
 

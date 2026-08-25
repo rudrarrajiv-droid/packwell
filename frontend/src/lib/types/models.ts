@@ -44,6 +44,7 @@ export interface Product extends BaseModel {
   pinType?: string;
   boxType?: string;
   specialRequirement?: string;
+  actualCosting?: number;
   layers: ProductLayer[];
 }
 

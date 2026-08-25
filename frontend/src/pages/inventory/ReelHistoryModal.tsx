@@ -278,7 +278,7 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
                   <div className="grid grid-cols-4 gap-6 text-sm">
                     <div>
                       <span className="text-muted-foreground block text-xs mb-1 font-medium">Rate</span>
-                      <span className="font-bold text-foreground">₹{selectedReel.rate ? Number(selectedReel.rate).toFixed(2) : '0.00'} / Kg</span>
+                      <span className="font-bold text-foreground">₹{selectedReel.rate ? Number(selectedReel.rate).toFixed(3) : '0.000'} / Kg</span>
                     </div>
                     <div>
                       <span className="text-muted-foreground block text-xs mb-1 font-medium">Inward Date</span>

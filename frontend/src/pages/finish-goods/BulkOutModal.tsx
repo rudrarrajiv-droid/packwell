@@ -3,6 +3,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { ArrowUpFromLine, X, CircleDashed, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { executeFinishGoodOutwardTransaction, getFinishGoods, getFinishGoodTransactions, type FinishGoodOutwardPayload, type LogisticsPayload } from '../../lib/supabase/finishGoodService';
+import { getPurchaseOrders, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
 
 interface FGRow {
   productId: string;
@@ -10,6 +11,7 @@ interface FGRow {
   productName: string;
   category: 'DISPATCH' | 'NON-MOVING';
   quantity: number | '';
+  poId?: string;
 }
 
 interface BulkOutwardForm extends LogisticsPayload {
@@ -24,11 +26,13 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
   // Fetch available finished goods (so we only show products that have stock)
   const [finishGoods, setFinishGoods] = useState<any[]>([]);
   const [historyDocs, setHistoryDocs] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   
   useEffect(() => {
-    void Promise.all([getFinishGoods(), getFinishGoodTransactions()]).then(([fgData, txData]) => {
+    void Promise.all([getFinishGoods(), getFinishGoodTransactions(), getPurchaseOrders()]).then(([fgData, txData, poData]) => {
       setFinishGoods(fgData);
       setHistoryDocs(txData);
+      setPurchaseOrders(poData.filter(po => po.status === 'OPEN' || po.status === 'PARTIAL'));
     });
   }, []);
 
@@ -68,7 +72,8 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
         customerName: '',
         productName: '',
         category: 'DISPATCH',
-        quantity: ''
+        quantity: '',
+        poId: ''
       });
     }
   }, [append]);
@@ -107,7 +112,8 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
           customerName: '',
           productName: '',
           category: prevRow.category,
-          quantity: ''
+          quantity: '',
+          poId: ''
         });
         setTimeout(() => {
           if (containerRef.current) {
@@ -146,7 +152,7 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
     let hasDuplicates = false;
     
     validRows.forEach(r => {
-      const key = `${r.productId}_${r.category}`;
+      const key = `${r.productId}_${r.category}_${r.poId || 'none'}`;
       if (productCounts.has(key)) {
         hasDuplicates = true;
       }
@@ -170,12 +176,13 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
       const processed = new Set<string>();
       
       validRows.forEach(r => {
-        const key = `${r.productId}_${r.category}`;
+        const key = `${r.productId}_${r.category}_${r.poId || 'none'}`;
         if (!processed.has(key)) {
           mergedPayloads.push({
             productId: r.productId,
             quantity: productCounts.get(key)!,
-            category: r.category
+            category: r.category,
+            poId: r.poId || undefined
           });
           processed.add(key);
         }
@@ -285,8 +292,9 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
           <div className="flex-1 overflow-auto p-5 bg-muted/20" ref={containerRef}>
             <div className="min-w-[800px]">
               <div className="grid grid-cols-12 gap-3 mb-3 px-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                <div className="col-span-5">Product Name</div>
-                <div className="col-span-3">Customer</div>
+                <div className="col-span-4">Product Name</div>
+                <div className="col-span-2">Customer</div>
+                <div className="col-span-2">Against PO</div>
                 <div className="col-span-2">Category</div>
                 <div className="col-span-1 text-right">Qty OUT</div>
                 <div className="col-span-1 text-center">Action</div>
@@ -300,7 +308,7 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                 <div key={field.id} className="grid grid-cols-12 gap-3 mb-3 items-start bg-card p-2 rounded-lg border border-border shadow-sm">
                   
                   {/* Product */}
-                  <div className="col-span-5">
+                  <div className="col-span-4">
                     <ProductSearchSelect 
                       index={index} 
                       finishGoods={finishGoods} 
@@ -312,21 +320,60 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                   </div>
 
                   {/* Customer */}
-                  <div className="col-span-3">
+                  <div className="col-span-2">
                     <input
                       type="text"
                       {...register(`rows.${index}.customerName` as const)}
-                      className={inputCls + " bg-muted/30"}
+                      className={inputCls + " bg-muted/30 text-xs"}
                       placeholder="Auto-filled"
                       readOnly
                     />
+                  </div>
+
+                  {/* Against PO */}
+                  <div className="col-span-2">
+                    {(() => {
+                      const rowFg = finishGoods.find(fg => fg.productId === currentProductId);
+                      if (!currentProductId || !rowFg) {
+                        return <select disabled className={inputCls + " bg-muted/30 text-xs"}><option>Select Product First</option></select>;
+                      }
+                      
+                      const availablePOs = purchaseOrders
+                        .filter(po => po.productId === currentProductId && po.customerName === rowFg.customerName)
+                        .sort((a, b) => new Date(a.poDate).getTime() - new Date(b.poDate).getTime());
+                        
+                      if (availablePOs.length === 0) {
+                        return (
+                          <div className="relative">
+                            <select {...register(`rows.${index}.poId` as const)} className={inputCls + " text-xs text-muted-foreground bg-muted/10 border-orange-200"}>
+                              <option value="">No Pending POs</option>
+                            </select>
+                            <input type="hidden" {...register(`rows.${index}.poId` as const)} value="" />
+                          </div>
+                        );
+                      }
+                      
+                      return (
+                        <select {...register(`rows.${index}.poId` as const)} className={inputCls + " text-xs font-semibold text-blue-700"}>
+                          <option value="">-- Skip PO --</option>
+                          {availablePOs.map(po => {
+                            const pending = po.orderQty - po.outQty;
+                            return (
+                              <option key={po.id} value={po.id!}>
+                                {po.poNo} ({pending} pending)
+                              </option>
+                            );
+                          })}
+                        </select>
+                      );
+                    })()}
                   </div>
 
                   {/* Category */}
                   <div className="col-span-2">
                     <select
                       {...register(`rows.${index}.category` as const)}
-                      className={inputCls + (rows[index]?.category === 'NON-MOVING' ? " text-orange-600 font-semibold" : " text-blue-600 font-semibold")}
+                      className={inputCls + (rows[index]?.category === 'NON-MOVING' ? " text-orange-600 font-semibold text-xs" : " text-blue-600 font-semibold text-xs")}
                     >
                       <option value="DISPATCH">DISPATCH (Sale)</option>
                       <option value="NON-MOVING">NON-MOVING (Reject)</option>
@@ -334,7 +381,7 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                   </div>
 
                   {/* Quantity */}
-                  <div className="col-span-1">
+                  <div className="col-span-1 relative">
                     <input
                       type="number"
                       {...register(`rows.${index}.quantity` as const)}
@@ -356,12 +403,34 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                     </button>
                   </div>
 
-                  {isDuplicate && (
-                    <div className="col-span-12 mt-1 text-xs text-orange-600 flex items-center font-semibold bg-orange-50/50 p-1.5 rounded border border-orange-200">
-                      <AlertCircle className="w-4 h-4 mr-1.5" />
-                      Warning: This product is already selected in another row of this batch.
-                    </div>
-                  )}
+                  {/* Warnings (Duplicate or Exceeding PO) */}
+                  {(() => {
+                    let warnings = [];
+                    if (isDuplicate) warnings.push("This product is selected multiple times.");
+                    
+                    const rowPoId = rows[index]?.poId;
+                    const rowQty = Number(rows[index]?.quantity || 0);
+                    if (rowPoId && rowQty > 0) {
+                      const selectedPo = purchaseOrders.find(po => po.id === rowPoId);
+                      if (selectedPo) {
+                        const pending = selectedPo.orderQty - selectedPo.outQty;
+                        if (rowQty > pending) {
+                          warnings.push(`Dispatch quantity (${rowQty}) exceeds pending PO quantity (${pending}).`);
+                        }
+                      }
+                    }
+                    
+                    if (warnings.length > 0) {
+                      return (
+                        <div className="col-span-12 mt-1 text-xs text-orange-700 flex flex-col gap-1 font-semibold bg-orange-50 p-1.5 rounded border border-orange-200">
+                          {warnings.map((w, i) => (
+                            <div key={i} className="flex items-center"><AlertCircle className="w-4 h-4 mr-1.5 shrink-0" /> {w}</div>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
 
                 </div>
               )})}
