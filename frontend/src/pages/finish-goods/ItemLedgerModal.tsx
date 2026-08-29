@@ -142,6 +142,7 @@ export default function ItemLedgerModal({ finishGood, transactions, onClose }: P
               <tbody className="divide-y divide-border">
                 {ledger.map((tx, i) => {
                   const isAdjustment = (tx.category || (tx as any).raw_data?.category) === 'ADJUSTMENT';
+                  const isTransfer = (tx.category || (tx as any).raw_data?.category) === 'STOCK_TRANSFER';
                   const remarksText = getRemarks(tx);
                   const formattedDate = tx.date 
                     ? (tx.date.includes('T') ? tx.date.split('T')[0] : tx.date) 
@@ -150,7 +151,9 @@ export default function ItemLedgerModal({ finishGood, transactions, onClose }: P
                   return (
                     <tr 
                       key={tx.id || i} 
-                      className={`hover:bg-muted/50 transition-colors ${isAdjustment ? 'bg-amber-50/40 dark:bg-amber-950/20' : 'bg-card'}`}
+                      className={`hover:bg-muted/50 transition-colors ${
+                        isTransfer ? 'bg-purple-50/40 dark:bg-purple-950/20' : isAdjustment ? 'bg-amber-50/40 dark:bg-amber-950/20' : 'bg-card'
+                      }`}
                     >
                       <td className="px-4 py-3 whitespace-nowrap border-r border-border font-medium">
                         {formattedDate}
@@ -173,7 +176,11 @@ export default function ItemLedgerModal({ finishGood, transactions, onClose }: P
                       </td>
 
                       <td className="px-4 py-3 border-r border-border whitespace-nowrap text-xs font-bold">
-                        {isAdjustment ? (
+                        {isTransfer ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                            🔄 TRANSFER
+                          </span>
+                        ) : isAdjustment ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                             <Sliders className="w-3 h-3 mr-1" /> ADJUSTMENT
                           </span>
