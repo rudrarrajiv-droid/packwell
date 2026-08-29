@@ -84,8 +84,29 @@ export default function FreightCharge() {
       }
     });
 
+    // Natural sort helper: extract the numeric invoice number so current/latest number stays on top
+    const parseInvoiceNumber = (invStr: string) => {
+      if (!invStr) return 0;
+      const match = invStr.match(/(\d+)(?!.*\d)/);
+      return match ? parseInt(match[1], 10) : 0;
+    };
+
+    const sortedInvoices = Array.from(invoiceMap.values()).sort((a, b) => {
+      const numA = parseInvoiceNumber(a.invoiceNo || '');
+      const numB = parseInvoiceNumber(b.invoiceNo || '');
+
+      if (numA !== numB) {
+        return numB - numA; // Higher/Current invoice number on top
+      }
+
+      const strCompare = (b.invoiceNo || '').localeCompare(a.invoiceNo || '', undefined, { numeric: true, sensitivity: 'base' });
+      if (strCompare !== 0) return strCompare;
+
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+
     return {
-      uniqueInvoices: Array.from(invoiceMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+      uniqueInvoices: sortedInvoices,
       transporterOptions: Array.from(transporters).sort(),
       sizeOptions: Array.from(sizes).sort(),
       customerOptions: Array.from(customers).sort()
