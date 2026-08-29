@@ -141,17 +141,33 @@ const mapRow = (row: any): SupabaseProduct => ({
  * of `queryDocuments('products', [])` (which always filters isArchived == false).
  */
 export const getProducts = async (): Promise<SupabaseProduct[]> => {
-  const { data, error } = await supabase
-    .from('products')
-    .select(SELECT_COLUMNS)
-    .eq('is_archived', false);
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error('Error fetching products:', error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('products')
+      .select(SELECT_COLUMNS)
+      .eq('is_archived', false)
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error('Error fetching products:', error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map(mapRow);
+  return allData.map(mapRow);
 };
 
 // Maps whatever product-shaped fields are present on the input object to the

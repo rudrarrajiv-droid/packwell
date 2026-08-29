@@ -265,33 +265,65 @@ function mapFinishGoodTransactionRow(row: FinishGoodTransactionRow): FinishGoodT
 }
 
 export const getFinishGoods = async (): Promise<FinishGood[]> => {
-  const { data, error } = await supabase
-    .from('finish_goods')
-    .select(FINISH_GOOD_SELECT_COLUMNS)
-    .eq('is_archived', false)
-    .order('customer_name', { ascending: true, nullsFirst: false })
-    .order('product_name', { ascending: true, nullsFirst: false });
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error('Error fetching finish goods:', error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('finish_goods')
+      .select(FINISH_GOOD_SELECT_COLUMNS)
+      .eq('is_archived', false)
+      .order('customer_name', { ascending: true, nullsFirst: false })
+      .order('product_name', { ascending: true, nullsFirst: false })
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error('Error fetching finish goods:', error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map((row) => mapFinishGoodRow(row as unknown as FinishGoodRow));
+  return allData.map((row) => mapFinishGoodRow(row as unknown as FinishGoodRow));
 };
 
 export const getFinishGoodTransactions = async (): Promise<FinishGoodTransaction[]> => {
-  const { data, error } = await supabase
-    .from('finish_good_transactions')
-    .select(FINISH_GOOD_TRANSACTION_SELECT_COLUMNS)
-    .eq('is_archived', false);
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error('Error fetching finish good transactions:', error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('finish_good_transactions')
+      .select(FINISH_GOOD_TRANSACTION_SELECT_COLUMNS)
+      .eq('is_archived', false)
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error('Error fetching finish good transactions:', error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map((row) => mapFinishGoodTransactionRow(row as unknown as FinishGoodTransactionRow));
+  return allData.map((row) => mapFinishGoodTransactionRow(row as unknown as FinishGoodTransactionRow));
 };
 
 export const executeFinishGoodInwardTransaction = async (
