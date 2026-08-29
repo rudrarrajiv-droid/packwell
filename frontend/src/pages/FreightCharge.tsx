@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getFinishGoods, getFinishGoodTransactions, markFreightReceived } from '../lib/supabase/finishGoodService';
+import { getCustomers } from '../lib/supabase/customerService';
 import FreightModal from './freight/FreightModal';
 
 export default function FreightCharge() {
@@ -34,6 +35,11 @@ export default function FreightCharge() {
     queryFn: () => getFinishGoods() as Promise<any[]>
   });
 
+  const { data: registeredCustomers = [] } = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => getCustomers()
+  });
+
   const isLoading = txLoading || fgLoading;
 
   // Process data to unique invoices
@@ -44,6 +50,11 @@ export default function FreightCharge() {
     const transporters = new Set<string>();
     const sizes = new Set<string>();
     const customers = new Set<string>();
+
+    // Seed customers from Master Data
+    registeredCustomers.forEach(c => {
+      if (c.name) customers.add(c.name);
+    });
 
     // Also seed customers from finish goods
     finishGoods.forEach(fg => {
@@ -153,6 +164,7 @@ export default function FreightCharge() {
   const handleModalSuccess = () => {
     queryClient.invalidateQueries({ queryKey: ['finishGoodTransactions'] });
     queryClient.invalidateQueries({ queryKey: ['finishGoods'] });
+    queryClient.invalidateQueries({ queryKey: ['customers'] });
   };
 
   const generateTransporterLedgerPDF = () => {

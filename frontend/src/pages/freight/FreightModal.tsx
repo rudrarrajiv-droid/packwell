@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, Plus, Truck, Calendar, FileText, MapPin, Hash, DollarSign } from 'lucide-react';
 import { addFreightRecord, updateFreightRecord, deleteFreightRecord, type FreightRecordPayload } from '../../lib/supabase/finishGoodService';
+import { createCustomer } from '../../lib/supabase/customerService';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface FreightModalProps {
@@ -88,11 +89,29 @@ export default function FreightModal({
       setIsSubmitting(true);
       setErrorMsg('');
 
+      const trimmedCust = customerName.trim();
+      const currentUser = user?.name || 'System';
+
+      // ─ Automatically create new Customer in Master Data if not already existing ─
+      if (trimmedCust) {
+        const customerExists = customerOptions.some(
+          c => c.trim().toLowerCase() === trimmedCust.toLowerCase()
+        );
+        if (!customerExists) {
+          try {
+            await createCustomer(trimmedCust, currentUser);
+            console.log(`Auto-created customer in Master Data: ${trimmedCust}`);
+          } catch (custErr) {
+            console.warn('Could not auto-create customer in Master Data:', custErr);
+          }
+        }
+      }
+
       const payload: FreightRecordPayload = {
         invoiceNo: initialData ? initialData.invoiceNo : invoiceNo.trim(),
         newInvoiceNo: invoiceNo.trim(),
         date: date,
-        customerName: customerName.trim(),
+        customerName: trimmedCust,
         transporterName: transporterName.trim(),
         place: place.trim(),
         vehicleNo: vehicleNo.trim().toUpperCase(),
@@ -105,9 +124,9 @@ export default function FreightModal({
       };
 
       if (isEditing) {
-        await updateFreightRecord(payload, user?.name || 'System');
+        await updateFreightRecord(payload, currentUser);
       } else {
-        await addFreightRecord(payload, user?.name || 'System');
+        await addFreightRecord(payload, currentUser);
       }
 
       onSuccess();
