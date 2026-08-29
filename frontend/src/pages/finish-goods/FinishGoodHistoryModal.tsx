@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { X, Search, History, ArrowDownToLine, ArrowUpFromLine, Trash2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { X, Search, History, ArrowDownToLine, ArrowUpFromLine, Trash2, Calendar } from 'lucide-react';
 import type { FinishGoodTransaction } from '../../lib/types/models';
 import { format } from 'date-fns';
 import ExportButtons from '../../components/ExportButtons';
 import { useAuth } from '../../contexts/AuthContext';
-import { deleteFinishGoodTransaction, getFinishGoods, getFinishGoodTransactions } from '../../lib/supabase/finishGoodService';
+import { deleteFinishGoodTransaction, getFinishGoods, getFinishGoodTransactions, updateFinishGoodTransactionDate } from '../../lib/supabase/finishGoodService';
 
 export default function FinishGoodHistoryModal({ onClose }: { onClose: () => void }) {
   const { user, hasRole } = useAuth();
@@ -17,12 +17,36 @@ export default function FinishGoodHistoryModal({ onClose }: { onClose: () => voi
     queryFn: () => getFinishGoodTransactions() as Promise<FinishGoodTransaction[]>
   });
 
+  const queryClient = useQueryClient();
+
+  const handleEditDate = async (tx: FinishGoodTransaction) => {
+    const current = tx.date ? format(new Date(tx.date), 'yyyy-MM-dd') : '';
+    const newDate = window.prompt(`Enter new date for transaction (YYYY-MM-DD):`, current);
+    if (!newDate || newDate === current) return;
+    
+    // basic validation
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+      alert("Invalid date format. Please use YYYY-MM-DD.");
+      return;
+    }
+
+    try {
+      await updateFinishGoodTransactionDate(tx.id!, newDate, user?.name || 'System');
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['finishGoods'] });
+    } catch (error: any) {
+      alert(error.message || 'Failed to update date. See console.');
+      console.error(error);
+    }
+  };
+
   const handleDelete = async (tx: FinishGoodTransaction) => {
     if (!window.confirm('Are you sure you want to delete this transaction? This will reverse the stock balance mathematically.')) return;
     try {
       setIsDeleting(tx.id!);
       await deleteFinishGoodTransaction(tx.id!, tx.finishGoodId, tx.type as any, tx.category, Number(tx.quantity), user?.name || 'System');
       refetch();
+      queryClient.invalidateQueries({ queryKey: ['finishGoods'] });
     } catch (error) {
       alert('Failed to delete transaction. See console.');
       console.error(error);
@@ -188,14 +212,23 @@ export default function FinishGoodHistoryModal({ onClose }: { onClose: () => voi
                     </td>
                     {hasRole('ADMIN') && (
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => handleDelete(item)}
-                          disabled={isDeleting === item.id}
-                          className="text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors p-1 rounded-md hover:bg-red-50"
-                          title="Delete Transaction & Reverse Balance"
-                        >
-                          <Trash2 className={`w-4 h-4 ${isDeleting === item.id ? 'animate-pulse' : ''}`} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleEditDate(item)}
+                            className="text-blue-500 hover:text-blue-700 transition-colors p-1 rounded-md hover:bg-blue-50"
+                            title="Edit Transaction Date"
+                          >
+                            <Calendar className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(item)}
+                            disabled={isDeleting === item.id}
+                            className="text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors p-1 rounded-md hover:bg-red-50"
+                            title="Delete Transaction & Reverse Balance"
+                          >
+                            <Trash2 className={`w-4 h-4 ${isDeleting === item.id ? 'animate-pulse' : ''}`} />
+                          </button>
+                        </div>
                       </td>
                     )}
                     <td className="px-4 py-3 text-muted-foreground text-xs">

@@ -110,7 +110,7 @@ function JobCardSelector({
   );
 }
 
-export default function BulkInModal({ onClose, onSuccess, initialItem }: { onClose: () => void, onSuccess: () => void, initialItem?: any }) {
+export default function BulkInModal({ onClose, onSuccess, initialItem, initialItems }: { onClose: () => void, onSuccess: () => void, initialItem?: any, initialItems?: any[] }) {
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -145,7 +145,18 @@ export default function BulkInModal({ onClose, onSuccess, initialItem }: { onClo
   useEffect(() => {
     if (!initialized.current && fields.length === 0) {
       initialized.current = true;
-      if (initialItem) {
+      if (initialItems && initialItems.length > 0) {
+        initialItems.forEach(item => {
+          append({
+            productId: item.productId,
+            customerName: item.customerName || '',
+            productName: item.productName || '',
+            category: item.category || 'REGULAR',
+            quantity: Math.abs(Number(item.shortQty || item.quantity || item.closingBalance) || 0),
+            rate: item.rate || ''
+          });
+        });
+      } else if (initialItem) {
         append({ 
           productId: initialItem.productId,
           customerName: initialItem.customerName || '',
@@ -165,7 +176,7 @@ export default function BulkInModal({ onClose, onSuccess, initialItem }: { onClo
         });
       }
     }
-  }, [append, initialItem]);
+  }, [append, initialItem, initialItems]);
 
   const rows = watch('rows');
 

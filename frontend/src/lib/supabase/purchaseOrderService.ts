@@ -26,6 +26,12 @@ export interface PurchaseOrder {
   isArchived: boolean;
 }
 
+export const getPurchaseOrderBalance = (po: PurchaseOrder): number => {
+  if (po.status === 'CLOSED' || po.status === 'CANCELLED') return 0;
+  const bal = po.orderQty + (po.inQty || 0) - (po.outQty || 0);
+  return bal < 0 ? 0 : bal;
+};
+
 export interface POTransaction {
   id?: string;
   poId: string;
@@ -329,6 +335,25 @@ export const getPOTransactionsByPOId = async (poId: string): Promise<POTransacti
   return (data || []).map((row) => mapPOTransactionRow(row as unknown as POTransactionRow));
 };
 
+export const getPendingPOsForCustomerAndProducts = async (customerId: string, productIds: string[]): Promise<PurchaseOrder[]> => {
+  if (!customerId || productIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('purchase_orders')
+    .select(PURCHASE_ORDER_SELECT_COLUMNS)
+    .eq('is_archived', false)
+    .eq('customer_id_raw', customerId)
+    .in('product_id_raw', productIds)
+    .in('status', ['OPEN', 'PARTIAL']);
+
+  if (error) {
+    console.error('Error fetching pending POs for items:', error);
+    throw error;
+  }
+
+  return (data || []).map((row) => mapPurchaseOrderRow(row as unknown as PurchaseOrderRow));
+};
+
 export const purchaseOrderNumberExists = async (poNo: string): Promise<boolean> => {
   const normalizedPoNo = poNo.trim();
 
@@ -358,6 +383,24 @@ export const createPurchaseOrders = async (
   if (error) {
     console.error('Error creating purchase orders:', error);
     throw error;
+  }
+
+  // Auto-IN Transaction for each PO created
+  const txRows = rows.map(r => ({
+    firestore_document_id: crypto.randomUUID(),
+    po_id: r.firestore_document_id,
+    type: 'IN',
+    quantity: r.order_qty,
+    transaction_date: r.po_date_raw || r.po_date || new Date().toISOString(),
+    remarks: 'Auto-IN on PO Creation',
+    performed_by: user,
+    created_at: new Date().toISOString(),
+    raw_data: {}
+  }));
+
+  if (txRows.length > 0) {
+    const { error: txError } = await supabase.from('po_transactions').insert(txRows);
+    if (txError) console.error('Error creating auto-IN transactions:', txError);
   }
 
   if (rows.length > 0) {
@@ -447,6 +490,24 @@ export const importPurchaseOrdersBatch = async (
       console.error('Error importing purchase orders batch:', error);
       errors.push(error.message);
       throw new Error('Batch import failed: ' + error.message);
+    }
+
+    // Auto-IN Transaction for each imported PO
+    const txRows = rows.map(r => ({
+      firestore_document_id: crypto.randomUUID(),
+      po_id: r.firestore_document_id,
+      type: 'IN',
+      quantity: r.order_qty,
+      transaction_date: r.po_date_raw || r.po_date || new Date().toISOString(),
+      remarks: 'Auto-IN on PO Import',
+      performed_by: user,
+      created_at: new Date().toISOString(),
+      raw_data: {}
+    }));
+
+    if (txRows.length > 0) {
+      const { error: txError } = await supabase.from('po_transactions').insert(txRows);
+      if (txError) console.error('Error creating auto-IN transactions for import:', txError);
     }
 
     successCount += rows.length;
@@ -613,6 +674,34 @@ export const deletePurchaseOrder = async (id: string, user: string): Promise<boo
     action: `Deleted Purchase Order (ID: ${id})`,
     entity: 'purchaseOrders',
     referenceId: id,
+  });
+
+  return true;
+};
+
+export const bulkCloseCustomerPOs = async (poIds: string[], user: string): Promise<boolean> => {
+  if (!poIds.length) return true;
+
+  const now = new Date().toISOString();
+  
+  const { error } = await supabase
+    .from('purchase_orders')
+    .update({ 
+      status: 'CLOSED', 
+      updated_at: now, 
+      updated_by: user 
+    })
+    .in('firestore_document_id', poIds);
+
+  if (error) {
+    console.error('Error bulk closing purchase orders:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: `Bulk Closed ${poIds.length} POs`,
+    entity: 'purchaseOrders',
   });
 
   return true;

@@ -3,11 +3,11 @@
 // Base model for audit trailing and soft delete
 export interface BaseModel {
   id?: string; // Firestore document ID
-  createdAt: any; // Firestore Timestamp
-  updatedAt: any; // Firestore Timestamp
-  createdBy: string;
-  updatedBy: string;
-  isArchived: boolean;
+  createdAt?: any; // Firestore Timestamp
+  updatedAt?: any; // Firestore Timestamp
+  createdBy?: string;
+  updatedBy?: string;
+  isArchived?: boolean;
 }
 
 export interface Customer extends BaseModel {
@@ -154,4 +154,37 @@ export interface ActivityLog {
   entity: string;
   referenceId: string;
   timestamp: any;
+}
+
+export interface RawMaterial extends BaseModel {
+  name: string;
+  openingQty: number;
+  inQty: number;
+  outQty: number;
+  closingBalance: number;
+  rate: number;
+}
+
+export interface RawMaterialTransaction extends BaseModel {
+  rawMaterialId: string;
+  type: 'IN' | 'OUT';
+  quantity: number;
+  remainingBalance: number;
+  date: string;
+  referenceNo?: string;
+  performedBy: string;
+}
+
+export interface ScrapEntry extends BaseModel {
+  date: string;
+  description: string;
+  weight: number;
+  rate: number;
+  totalValue: number;
+  paymentType: 'CASH' | 'BILLING';
+}
+
+export interface MonthlyReport extends BaseModel {
+  month: string; // e.g., '2026-07'
+  expenses: { id: string; name: string; amount: number }[];
 }

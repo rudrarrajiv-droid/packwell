@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { type PurchaseOrder } from '../lib/supabase/purchaseOrderService';
+import { type PurchaseOrder, getPurchaseOrderBalance } from '../lib/supabase/purchaseOrderService';
 
 /**
  * Export Purchase Orders to an Excel file
@@ -21,8 +21,8 @@ export const exportPurchaseOrdersToExcel = (poList: PurchaseOrder[]) => {
     'OPN QTY': po.orderQty,
     'IN QTY': po.inQty || 0,
     'OUT QTY': po.outQty || 0,
-    'Closing Bal': po.orderQty + (po.inQty || 0) - (po.outQty || 0),
-    'Value (₹)': (po.orderQty + (po.inQty || 0) - (po.outQty || 0)) * po.rate,
+    'Closing Bal': getPurchaseOrderBalance(po),
+    'Value (₹)': (getPurchaseOrderBalance(po)) * po.rate,
     'Status': po.status,
   }));
 
@@ -59,4 +59,49 @@ export const exportPurchaseOrdersToExcel = (poList: PurchaseOrder[]) => {
 
   // Trigger download
   XLSX.writeFile(workbook, filename);
+};
+
+/**
+ * Generate and download a blank PO import template
+ */
+export const downloadPOTemplate = () => {
+  // Define the headers based on the current system requirements
+  const headers = [
+    'PO NO',
+    'PO DATE',
+    'DELIVERY DATE',
+    'CUSTOMER',
+    'ITEM',
+    'RATE',
+    'OPN QTY'
+  ];
+
+  // Provide one sample row to help the user understand the format
+  const sampleRow = [
+    'PO-2026-001',
+    '2026-08-28',
+    '2026-09-15',
+    'PACKWELL INDIA',
+    '01W4003',
+    '5.50',
+    '5000'
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, sampleRow]);
+  const workbook = XLSX.utils.book_new();
+
+  // Make columns wider for readability
+  const colWidths = [
+    { wch: 15 }, // PO NO
+    { wch: 12 }, // PO DATE
+    { wch: 15 }, // DELIVERY DATE
+    { wch: 25 }, // CUSTOMER
+    { wch: 25 }, // ITEM
+    { wch: 10 }, // RATE
+    { wch: 12 }, // OPN QTY
+  ];
+  worksheet['!cols'] = colWidths;
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'PO_Template');
+  XLSX.writeFile(workbook, 'Bulk_PO_Import_Template.xlsx');
 };

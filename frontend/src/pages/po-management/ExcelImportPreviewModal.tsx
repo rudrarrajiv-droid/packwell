@@ -202,6 +202,7 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
 
         if (status === 'READY TO IMPORT') { 
           const existingPo = existingPOs.find(p => 
+            p.status !== 'CLOSED' &&
             p.poNo?.toLowerCase() === poNo.toLowerCase() && 
             p.productName?.toLowerCase() === itemName.toLowerCase() &&
             (p.deliveryDate || '') === (deliveryDate || '') &&

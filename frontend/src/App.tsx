@@ -15,6 +15,7 @@ import Salary from './pages/Salary';
 import DC from './pages/DC';
 import MR from './pages/MR';
 import RM from './pages/RM';
+import Scrap from './pages/Scrap';
 import AppLayout from './layouts/AppLayout';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -51,6 +52,7 @@ function App() {
                 <Route path="dc" element={<DC />} />
                 <Route path="mr" element={<MR />} />
                 <Route path="rm" element={<RM />} />
+                <Route path="scrap" element={<Scrap />} />
                 <Route path="settings" element={<Settings />} />
               </Route>
             </Route>

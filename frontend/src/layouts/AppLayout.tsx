@@ -28,6 +28,7 @@ export default function AppLayout() {
     { name: 'Conversion Report', path: '/dc', icon: FileSpreadsheet },
     { name: 'MR', path: '/mr', icon: Box },
     { name: 'RM', path: '/rm', icon: Archive },
+    { name: 'Scrap', path: '/scrap', icon: Archive },
     { name: 'Settings', path: '/settings', icon: Settings },
   ];
 

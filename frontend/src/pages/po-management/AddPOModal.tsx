@@ -3,7 +3,7 @@ import { X, Plus, Trash2, Loader2, Search, ChevronDown } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getProducts } from '../../lib/supabase/productService';
 import { getCustomers } from '../../lib/supabase/customerService';
-import { createPurchaseOrders, purchaseOrderNumberExists, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
+import { createPurchaseOrders, purchaseOrderNumberExists, getPendingPOsForCustomerAndProducts, bulkCloseCustomerPOs, getPurchaseOrderBalance, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn, getCustomerDisplayLabel } from '../../lib/utils';
 import RMStatusPanel from './RMStatusPanel';
@@ -184,6 +184,10 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [pendingOldPOs, setPendingOldPOs] = useState<PurchaseOrder[]>([]);
+  const [showConfirmNil, setShowConfirmNil] = useState(false);
+  const [validatedDataToSave, setValidatedDataToSave] = useState<any[]>([]);
+
   // Refs for qty inputs — used for Enter-key auto-add-row
   const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -338,12 +342,36 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
          return;
       }
 
-      await createPurchaseOrders(purchaseOrdersToCreate, user?.name || 'System');
-      
-      onSuccess(); 
+      const productIds = Array.from(new Set(items.map(i => i.productId).filter(Boolean)));
+      const oldPOs = await getPendingPOsForCustomerAndProducts(customer.id, productIds);
+
+      if (oldPOs.length > 0) {
+        setPendingOldPOs(oldPOs);
+        setValidatedDataToSave(purchaseOrdersToCreate);
+        setShowConfirmNil(true);
+        setIsSubmitting(false);
+        return;
+      }
+
+      await proceedWithSave(purchaseOrdersToCreate, false);
 
     } catch (error: any) {
-      console.error("Error creating bulk PO:", error);
+      console.error("Error checking POs:", error);
+      setErrors({ general: `A critical database error occurred. ${error?.message || ''}` });
+      setIsSubmitting(false);
+    }
+  };
+
+  const proceedWithSave = async (poToCreate: any[], shouldNilOld: boolean) => {
+    setIsSubmitting(true);
+    try {
+      if (shouldNilOld && pendingOldPOs.length > 0) {
+        await bulkCloseCustomerPOs(pendingOldPOs.map(p => p.id!), user?.name || 'System');
+      }
+      await createPurchaseOrders(poToCreate, user?.name || 'System');
+      onSuccess();
+    } catch (error: any) {
+      console.error("Error saving PO:", error);
       setErrors({ general: `A critical database error occurred. ${error?.message || ''}` });
       setIsSubmitting(false);
     }
@@ -587,6 +615,47 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
           </button>
         </div>
       </div>
+
+      {showConfirmNil && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
+          <div className="bg-card w-full max-w-lg rounded-2xl shadow-2xl border border-border overflow-hidden">
+            <div className="p-5 border-b border-border bg-orange-500/10">
+              <h2 className="text-xl font-black text-foreground">Old Pending PO Found!</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                We found existing pending PO(s) for this customer and item(s).
+              </p>
+            </div>
+            <div className="p-5 max-h-[300px] overflow-y-auto">
+              {pendingOldPOs.map(po => (
+                <div key={po.id} className="mb-3 p-3 bg-muted/30 rounded border border-border">
+                  <p className="text-sm font-bold">PO No: {po.poNo}</p>
+                  <p className="text-xs text-muted-foreground">Item: {po.productName}</p>
+                  <p className="text-sm font-semibold text-orange-600">Pending Balance: {getPurchaseOrderBalance(po)}</p>
+                </div>
+              ))}
+              <p className="text-sm font-semibold mt-4">
+                Do you want to NIL (Close) these old POs before saving the new one?
+              </p>
+            </div>
+            <div className="p-5 border-t border-border bg-muted/20 flex justify-end gap-3">
+              <button 
+                onClick={() => { setShowConfirmNil(false); proceedWithSave(validatedDataToSave, false); }}
+                className="px-4 py-2 bg-secondary text-secondary-foreground font-bold rounded hover:bg-secondary/80 transition-colors"
+                disabled={isSubmitting}
+              >
+                No, Keep Them Open
+              </button>
+              <button 
+                onClick={() => { setShowConfirmNil(false); proceedWithSave(validatedDataToSave, true); }}
+                className="px-4 py-2 bg-red-600 text-white font-bold rounded shadow hover:bg-red-700 transition-colors"
+                disabled={isSubmitting}
+              >
+                Yes, NIL Old POs
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

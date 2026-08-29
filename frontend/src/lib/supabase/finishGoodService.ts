@@ -430,6 +430,74 @@ export const executeFinishGoodOutwardTransaction = async (
       throw new Error('Finish Goods outward RPC did not complete successfully.');
     }
 
+    for (const payload of payloads) {
+      if (payload.category !== 'DISPATCH') continue;
+      
+      let qtyToDeduct = payload.quantity;
+      if (qtyToDeduct <= 0) continue;
+
+      let openPOs: any[] = [];
+
+      if (payload.poId) {
+        const { data: poRow } = await supabase.from('purchase_orders').select('*').eq('firestore_document_id', payload.poId).single();
+        if (poRow) openPOs.push(poRow);
+      } else {
+        const { data: poRows } = await supabase
+          .from('purchase_orders')
+          .select('*')
+          .eq('is_archived', false)
+          .eq('product_id_raw', payload.productId)
+          .in('status', ['OPEN', 'PARTIAL'])
+          .order('po_date', { ascending: true });
+        if (poRows) openPOs = poRows;
+      }
+
+      for (const po of openPOs) {
+         if (qtyToDeduct <= 0) break;
+         
+         const orderQty = Number(po.order_qty) || 0;
+         const inQty = Number(po.in_qty) || 0;
+         const outQty = Number(po.out_qty) || 0;
+         let currentBal = orderQty + inQty - outQty;
+         if (currentBal < 0) currentBal = 0;
+         
+         if (currentBal === 0 && !payload.poId) continue; 
+         
+         let deduction = 0;
+         if (payload.poId) {
+            deduction = qtyToDeduct;
+         } else {
+            deduction = Math.min(qtyToDeduct, currentBal);
+         }
+         
+         const newOutQty = outQty + deduction;
+         const newBal = orderQty + inQty - newOutQty;
+         const newStatus = (newBal <= 0 || po.status === 'CLOSED') ? 'CLOSED' : 'PARTIAL';
+         
+         await supabase.from('purchase_orders').update({
+           out_qty: newOutQty,
+           status: newStatus,
+           updated_at: new Date().toISOString(),
+           updated_by: user,
+           raw_data: { ...(po.raw_data || {}), outQty: newOutQty, status: newStatus }
+         }).eq('firestore_document_id', po.firestore_document_id);
+         
+         await supabase.from('po_transactions').insert({
+            firestore_document_id: crypto.randomUUID(),
+            po_id: po.firestore_document_id,
+            type: 'OUT',
+            quantity: deduction,
+            transaction_date: logistics.date || new Date().toISOString(),
+            remarks: `Auto-dispatch from Invoice ${logistics.invoiceNo || 'N/A'}`,
+            reference_id: logistics.invoiceNo,
+            performed_by: user,
+            created_at: new Date().toISOString()
+         });
+         
+         qtyToDeduct -= deduction;
+      }
+    }
+
     await logActivity({
       user,
       action: 'Finish Goods Bulk Outward',
@@ -644,4 +712,35 @@ export const createTradingFinishGood = async (
   });
 
   return mapFinishGoodRow(data as any as FinishGoodRow);
+};
+
+export const updateFinishGoodTransactionDate = async (
+  transactionId: string,
+  newDate: string,
+  user: string
+) => {
+  try {
+    const { data, error } = await supabase.rpc('update_finish_good_transaction_date', {
+      p_transaction_id: transactionId,
+      p_new_date: newDate,
+      p_user: user || 'System'
+    });
+
+    if (error) {
+      console.error('Error updating transaction date:', error);
+      throw error;
+    }
+
+    await logActivity({
+      user,
+      action: `Updated transaction date to ${newDate}`,
+      entity: 'finishGoodTransactions',
+      referenceId: transactionId,
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Error updating transaction date:', error);
+    throw error;
+  }
 };

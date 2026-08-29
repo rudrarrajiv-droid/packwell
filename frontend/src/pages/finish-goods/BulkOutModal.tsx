@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { ArrowUpFromLine, X, CircleDashed, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { executeFinishGoodOutwardTransaction, getFinishGoods, getFinishGoodTransactions, type FinishGoodOutwardPayload, type LogisticsPayload } from '../../lib/supabase/finishGoodService';
+import { getProducts } from '../../lib/supabase/productService';
 import { getPurchaseOrders, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
+import BulkInModal from './BulkInModal';
 
 interface FGRow {
   productId: string;
@@ -21,20 +23,68 @@ interface BulkOutwardForm extends LogisticsPayload {
 export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showInModal, setShowInModal] = useState(false);
+  const [shortages, setShortages] = useState<any[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Fetch available finished goods (so we only show products that have stock)
+  // Fetch products and finish goods
+  const [products, setProducts] = useState<any[]>([]);
   const [finishGoods, setFinishGoods] = useState<any[]>([]);
   const [historyDocs, setHistoryDocs] = useState<any[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   
-  useEffect(() => {
-    void Promise.all([getFinishGoods(), getFinishGoodTransactions(), getPurchaseOrders()]).then(([fgData, txData, poData]) => {
-      setFinishGoods(fgData);
-      setHistoryDocs(txData);
+  const loadData = () => {
+    void Promise.all([getProducts(), getFinishGoods(), getFinishGoodTransactions(), getPurchaseOrders()]).then(([prodData, fgData, txData, poData]) => {
+      setProducts(prodData || []);
+      setFinishGoods(fgData || []);
+      setHistoryDocs(txData || []);
       setPurchaseOrders(poData.filter(po => po.status === 'OPEN' || po.status === 'PARTIAL'));
     });
+  };
+
+  useEffect(() => {
+    loadData();
   }, []);
+
+  const mergedProducts = useMemo(() => {
+    const map = new Map<string, any>();
+
+    products.forEach((p: any) => {
+      map.set(p.id, {
+        productId: p.id,
+        productName: p.itemName,
+        customerName: p.customerName || '',
+        artworkNo: p.artworkNo || '',
+        closingBalance: 0,
+        nonMovingBalance: 0,
+        rate: p.actualCosting || 0
+      });
+    });
+
+    finishGoods.forEach((fg: any) => {
+      const pid = fg.productId || fg.id;
+      const existing = map.get(pid);
+      if (existing) {
+        existing.closingBalance = fg.closingBalance || 0;
+        existing.nonMovingBalance = fg.nonMovingBalance || 0;
+        existing.rate = fg.rate || existing.rate || 0;
+        if (!existing.productName && fg.productName) existing.productName = fg.productName;
+        if (!existing.customerName && fg.customerName) existing.customerName = fg.customerName;
+      } else {
+        map.set(pid, {
+          productId: pid,
+          productName: fg.productName,
+          customerName: fg.customerName || '',
+          artworkNo: '',
+          closingBalance: fg.closingBalance || 0,
+          nonMovingBalance: fg.nonMovingBalance || 0,
+          rate: fg.rate || 0
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => (a.productName || '').localeCompare(b.productName || ''));
+  }, [products, finishGoods]);
 
   const uniquePlaces = Array.from(new Set(historyDocs.map(d => d.place).filter(Boolean)));
   const uniqueTransporters = Array.from(new Set(historyDocs.map(d => d.transporterName).filter(Boolean)));
@@ -94,7 +144,7 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
   }, [vehicleNoValue, historyDocs, setValue]);
 
   const handleProductChange = (index: number, productId: string) => {
-    const fg = finishGoods.find(p => p.productId === productId);
+    const fg = mergedProducts.find(p => p.productId === productId);
     if (fg) {
       setValue(`rows.${index}.customerName`, fg.customerName || '');
       setValue(`rows.${index}.productName`, fg.productName || '');
@@ -170,6 +220,42 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
       }
     }
 
+    // Pre-calculate shortages
+    const requiredStock = new Map<string, { productId: string, category: string, requiredQty: number }>();
+    validRows.forEach(r => {
+       const key = `${r.productId}_${r.category}`;
+       const current = requiredStock.get(key) || { productId: r.productId, category: r.category, requiredQty: 0 };
+       current.requiredQty += Number(r.quantity);
+       requiredStock.set(key, current);
+    });
+
+    const currentShortages: any[] = [];
+    for (const req of requiredStock.values()) {
+       const fg = mergedProducts.find(f => f.productId === req.productId);
+       if (!fg) continue;
+       const available = req.category === 'NON-MOVING' ? (fg.nonMovingBalance || 0) : (fg.closingBalance || 0);
+       if (req.requiredQty > available) {
+           currentShortages.push({
+               productId: fg.productId,
+               productName: fg.productName,
+               customerName: fg.customerName,
+               category: req.category === 'NON-MOVING' ? 'REJECTED' : 'REGULAR',
+               shortQty: req.requiredQty - available,
+               rate: fg.rate
+           });
+       }
+    }
+
+    if (currentShortages.length > 0) {
+       const msg = `Insufficient balance for some products:\n` + currentShortages.map(s => `- ${s.productName}: Short by ${s.shortQty}`).join('\n');
+       const confirmIn = window.confirm(`${msg}\n\nWould you like to auto-fill the Bulk IN form with these exact shortages now?`);
+       if (confirmIn) {
+          setShortages(currentShortages);
+          setShowInModal(true);
+       }
+       return;
+    }
+
     setIsSubmitting(true);
     try {
       const mergedPayloads: FinishGoodOutwardPayload[] = [];
@@ -205,7 +291,15 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
       onSuccess();
     } catch (error: any) {
       console.error("Bulk OUT failed", error);
-      alert(error.message || "Failed to submit Bulk OUT. See console for details.");
+      const msg = error.message || "";
+      if (msg.toLowerCase().includes("insufficient") && msg.toLowerCase().includes("balance")) {
+        const confirmIn = window.confirm(`${msg}\n\nWould you like to open the Bulk IN form to add stock right now?`);
+        if (confirmIn) {
+          setShowInModal(true);
+        }
+      } else {
+        alert(msg || "Failed to submit Bulk OUT. See console for details.");
+      }
       setIsSubmitting(false);
     }
   };
@@ -311,7 +405,7 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                   <div className="col-span-4">
                     <ProductSearchSelect 
                       index={index} 
-                      finishGoods={finishGoods} 
+                      items={mergedProducts} 
                       register={register} 
                       setValue={setValue} 
                       handleProductChange={handleProductChange} 
@@ -333,7 +427,7 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                   {/* Against PO */}
                   <div className="col-span-2">
                     {(() => {
-                      const rowFg = finishGoods.find(fg => fg.productId === currentProductId);
+                      const rowFg = mergedProducts.find(fg => fg.productId === currentProductId);
                       if (!currentProductId || !rowFg) {
                         return <select disabled className={inputCls + " bg-muted/30 text-xs"}><option>Select Product First</option></select>;
                       }
@@ -403,35 +497,40 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                     </button>
                   </div>
 
-                  {/* Warnings (Duplicate or Exceeding PO) */}
-                  {(() => {
-                    let warnings = [];
-                    if (isDuplicate) warnings.push("This product is selected multiple times.");
-                    
-                    const rowPoId = rows[index]?.poId;
-                    const rowQty = Number(rows[index]?.quantity || 0);
-                    if (rowPoId && rowQty > 0) {
-                      const selectedPo = purchaseOrders.find(po => po.id === rowPoId);
-                      if (selectedPo) {
-                        const pending = selectedPo.orderQty - selectedPo.outQty;
-                        if (rowQty > pending) {
-                          warnings.push(`Dispatch quantity (${rowQty}) exceeds pending PO quantity (${pending}).`);
-                        }
-                      }
-                    }
-                    
-                    if (warnings.length > 0) {
-                      return (
-                        <div className="col-span-12 mt-1 text-xs text-orange-700 flex flex-col gap-1 font-semibold bg-orange-50 p-1.5 rounded border border-orange-200">
-                          {warnings.map((w, i) => (
-                            <div key={i} className="flex items-center"><AlertCircle className="w-4 h-4 mr-1.5 shrink-0" /> {w}</div>
-                          ))}
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
+                  {/* Stock Indicator */}
+                  {currentProductId && (
+                    <div className="col-span-12 -mt-1 px-2 pb-1 flex items-center justify-between text-xs">
+                      {(() => {
+                        const fg = mergedProducts.find(p => p.productId === currentProductId);
+                        if (!fg) return null;
+                        const stock = rows[index]?.category === 'NON-MOVING' ? (fg.nonMovingBalance || 0) : (fg.closingBalance || 0);
+                        const isShortage = rows[index]?.quantity && Number(rows[index]?.quantity) > stock;
+                        
+                        return (
+                          <div className={`flex items-center gap-2 font-medium ${isShortage ? 'text-destructive font-bold' : 'text-muted-foreground'}`}>
+                            {isShortage && <AlertCircle className="w-3.5 h-3.5 inline text-destructive animate-pulse" />}
+                            <span>
+                              Available in {rows[index]?.category === 'NON-MOVING' ? 'Non-Moving' : 'Regular'}: {stock} pcs
+                            </span>
+                            {isShortage && (
+                              <span className="text-destructive font-bold bg-destructive/10 px-1.5 py-0.5 rounded">
+                                (Short by {Number(rows[index]?.quantity) - stock} pcs)
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
 
+                  {/* Duplicate warning */}
+                  {isDuplicate && (
+                    <div className="col-span-12 -mt-1 px-2 pb-1">
+                      <span className="text-[11px] text-amber-600 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded flex items-center gap-1 w-fit">
+                        <AlertCircle className="w-3 h-3 inline" /> Duplicate product entry — quantities will be merged automatically on submit
+                      </span>
+                    </div>
+                  )}
                 </div>
               )})}
             </div>
@@ -439,9 +538,9 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
             <button
               type="button"
               onClick={() => append({ 
-                productId: '', customerName: '', productName: '', category: 'DISPATCH', quantity: '' 
+                productId: '', customerName: '', productName: '', category: 'DISPATCH', quantity: '', poId: '' 
               })}
-              className="mt-4 flex items-center text-sm font-semibold text-primary hover:text-primary/80 transition-colors"
+              className="mt-4 flex items-center text-sm font-semibold text-destructive hover:text-destructive/80 transition-colors"
             >
               <Plus className="w-4 h-4 mr-1" />
               Add Another Row
@@ -473,11 +572,27 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
           </div>
         </form>
       </div>
+
+      {showInModal && (
+        <BulkInModal
+          initialItems={shortages}
+          onClose={() => {
+            setShowInModal(false);
+            setShortages([]);
+            loadData();
+          }}
+          onSuccess={() => {
+            setShowInModal(false);
+            setShortages([]);
+            loadData();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function ProductSearchSelect({ index, finishGoods, register, setValue, handleProductChange, inputCls }: any) {
+function ProductSearchSelect({ index, items, register, setValue, handleProductChange, inputCls }: any) {
   const [searchText, setSearchText] = useState('');
   const [isOpen, setIsOpen] = useState(false);
 
@@ -502,27 +617,34 @@ function ProductSearchSelect({ index, finishGoods, register, setValue, handlePro
       
       {isOpen && (
         <div className="absolute z-[100] mt-1 w-[150%] bg-white border border-gray-300 rounded-md shadow-xl max-h-60 overflow-y-auto">
-          {finishGoods.filter((p: any) => {
+          {items.filter((p: any) => {
              const lower = searchText.toLowerCase();
-             return !searchText || p.productName?.toLowerCase().includes(lower);
+             const combined = `${p.productName || ''} ${p.artworkNo || ''} ${p.customerName || ''}`.toLowerCase();
+             return !searchText || combined.includes(lower);
           }).map((p: any) => (
             <div 
-              key={p.id}
+              key={p.productId}
               className="px-3 py-2 cursor-pointer hover:bg-gray-100 text-sm text-black border-b border-gray-100 last:border-0"
               onMouseDown={() => {
                 setValue(`rows.${index}.productId`, p.productId);
-                setSearchText(`${p.productName}`);
+                setSearchText(`${p.productName}${p.artworkNo ? ` (${p.artworkNo})` : ''}`);
                 handleProductChange(index, p.productId);
                 setIsOpen(false);
               }}
             >
               <div className="font-bold">{p.productName}</div>
-              <div className="text-xs text-gray-600">Stock: {p.closingBalance || 0} Reg | {p.nonMovingBalance || 0} Non-Mov</div>
+              <div className="text-xs text-gray-500">
+                {p.customerName} {p.artworkNo ? `• Artwork: ${p.artworkNo}` : ''}
+              </div>
+              <div className="text-xs text-gray-600">
+                Stock: <span className={p.closingBalance > 0 ? "font-semibold text-emerald-600" : "text-gray-500"}>{p.closingBalance || 0} Reg</span> | <span className={p.nonMovingBalance > 0 ? "font-semibold text-orange-600" : "text-gray-500"}>{p.nonMovingBalance || 0} Non-Mov</span>
+              </div>
             </div>
           ))}
-          {finishGoods.filter((p: any) => {
+          {items.filter((p: any) => {
              const lower = searchText.toLowerCase();
-             return !searchText || p.productName?.toLowerCase().includes(lower);
+             const combined = `${p.productName || ''} ${p.artworkNo || ''} ${p.customerName || ''}`.toLowerCase();
+             return !searchText || combined.includes(lower);
           }).length === 0 && (
              <div className="px-3 py-2 text-sm text-gray-500 italic text-center">No matching products found.</div>
           )}

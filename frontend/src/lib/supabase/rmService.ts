@@ -1,232 +1,154 @@
 import { supabase } from './config';
 import { logActivity } from './activityLogService';
+import type { RawMaterial, RawMaterialTransaction } from '../types/models';
 
-// Supabase-backed replacement for the Firestore `rm_records` collection.
-// Table: public.rm_records (RLS enabled, SELECT + INSERT + UPDATE + DELETE
-// granted directly - no RPC needed, these are simple single-row operations
-// with no cross-table transactions).
-//
-// Field mapping (Postgres column -> frontend shape):
-//   firestore_document_id -> id
-//   rm_name                -> rmName
-//   opn                    -> opn
-//   rate                   -> rate
-//   total_in               -> totalIn
-//   total_out              -> totalOut
-//   cl_bal                 -> clBal
-//   opn_stock_value        -> opnStockValue
-//   purchase_value_stock   -> purchaseValueStock
-//   consumption_stock      -> consumptionStock
-//   closing_stock_value    -> closingStockValue
-//   day_wise               -> dayWise
-//   created_by/updated_by  -> createdBy/updatedBy
-//   created_at/updated_at  -> createdAt/updatedAt
+export const getRawMaterials = async (): Promise<RawMaterial[]> => {
+  const { data, error } = await supabase
+    .from('raw_materials')
+    .select('*')
+    .order('name');
 
-export interface RMRecord {
-  id?: string;
-  rmName: string;
-  opn: number;
-  rate: number;
-  totalIn: number;
-  totalOut: number;
-  clBal: number;
-  opnStockValue: number;
-  purchaseValueStock: number;
-  consumptionStock: number;
-  closingStockValue: number;
-  // dayWise is an object mapping day number (1-31) to { in: number, out: number }
-  dayWise: Record<string, { in: number, out: number }>;
-  createdAt?: any;
-  updatedAt?: any;
-  createdBy?: string;
-  updatedBy?: string;
-}
-
-const SELECT_COLUMNS = [
-  'firestore_document_id',
-  'rm_name',
-  'opn',
-  'rate',
-  'total_in',
-  'total_out',
-  'cl_bal',
-  'opn_stock_value',
-  'purchase_value_stock',
-  'consumption_stock',
-  'closing_stock_value',
-  'day_wise',
-  'created_by',
-  'updated_by',
-  'created_at',
-  'updated_at',
-].join(', ');
-
-function toNumber(value: number | string | null | undefined): number {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : 0;
+  if (error) {
+    console.error('Error fetching raw materials:', error);
+    throw error;
   }
 
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
+  return (data || []).map(mapRawMaterialRow);
+};
+
+export const getRawMaterialTransactions = async (rawMaterialId?: string): Promise<RawMaterialTransaction[]> => {
+  let query = supabase.from('raw_material_transactions').select('*');
+  
+  if (rawMaterialId) {
+    query = query.eq('raw_material_id', rawMaterialId);
   }
 
-  return 0;
-}
+  const { data, error } = await query.order('date', { ascending: false }).order('created_at', { ascending: false });
 
-const mapRow = (row: any): RMRecord => ({
-  id: row.firestore_document_id,
-  rmName: row.rm_name ?? '',
-  opn: toNumber(row.opn),
-  rate: toNumber(row.rate),
-  totalIn: toNumber(row.total_in),
-  totalOut: toNumber(row.total_out),
-  clBal: toNumber(row.cl_bal),
-  opnStockValue: toNumber(row.opn_stock_value),
-  purchaseValueStock: toNumber(row.purchase_value_stock),
-  consumptionStock: toNumber(row.consumption_stock),
-  closingStockValue: toNumber(row.closing_stock_value),
-  dayWise: row.day_wise ?? {},
+  if (error) {
+    console.error('Error fetching RM transactions:', error);
+    throw error;
+  }
+
+  return (data || []).map(mapTransactionRow);
+};
+
+export const addRawMaterialTransaction = async (
+  transaction: Omit<RawMaterialTransaction, 'id' | 'createdAt' | 'updatedAt' | 'remainingBalance'>,
+  user: string
+): Promise<void> => {
+  // 1. Fetch current balance
+  const { data: rmData, error: rmError } = await supabase
+    .from('raw_materials')
+    .select('closing_balance, in_qty, out_qty')
+    .eq('id', transaction.rawMaterialId)
+    .single();
+
+  if (rmError) throw rmError;
+
+  const currentBal = Number(rmData.closing_balance) || 0;
+  const currentIn = Number(rmData.in_qty) || 0;
+  const currentOut = Number(rmData.out_qty) || 0;
+
+  // 2. Calculate new balance
+  const remainingBalance = transaction.type === 'IN' 
+    ? currentBal + transaction.quantity 
+    : currentBal - transaction.quantity;
+
+  const newIn = transaction.type === 'IN' ? currentIn + transaction.quantity : currentIn;
+  const newOut = transaction.type === 'OUT' ? currentOut + transaction.quantity : currentOut;
+
+  // 3. Insert Transaction
+  const { error: txError } = await supabase.from('raw_material_transactions').insert({
+    raw_material_id: transaction.rawMaterialId,
+    type: transaction.type,
+    quantity: transaction.quantity,
+    remaining_balance: remainingBalance,
+    date: transaction.date,
+    reference_no: transaction.referenceNo,
+    performed_by: user,
+    created_by: user,
+    updated_by: user
+  });
+
+  if (txError) throw txError;
+
+  // 4. Update Main Record
+  const { error: updateError } = await supabase
+    .from('raw_materials')
+    .update({ 
+      closing_balance: remainingBalance,
+      in_qty: newIn,
+      out_qty: newOut,
+      updated_by: user
+    })
+    .eq('id', transaction.rawMaterialId);
+
+  if (updateError) throw updateError;
+
+  await logActivity({
+    user,
+    action: `Added ${transaction.type} transaction for RM`,
+    entity: 'raw_materials',
+    referenceId: transaction.rawMaterialId,
+  });
+};
+
+export const createRawMaterial = async (
+  record: Omit<RawMaterial, 'id' | 'createdAt' | 'updatedAt' | 'inQty' | 'outQty' | 'closingBalance'>,
+  user: string
+): Promise<string> => {
+  const { data, error } = await supabase.from('raw_materials').insert({
+    name: record.name,
+    opening_qty: record.openingQty,
+    closing_balance: record.openingQty,
+    rate: record.rate,
+    created_by: user,
+    updated_by: user,
+  }).select('id').single();
+
+  if (error) {
+    console.error('Error creating RM:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: `Created Raw Material: ${record.name}`,
+    entity: 'raw_materials',
+    referenceId: data.id,
+  });
+
+  return data.id;
+};
+
+const mapRawMaterialRow = (row: any): RawMaterial => ({
+  id: row.id,
+  name: row.name,
+  openingQty: Number(row.opening_qty) || 0,
+  inQty: Number(row.in_qty) || 0,
+  outQty: Number(row.out_qty) || 0,
+  closingBalance: Number(row.closing_balance) || 0,
+  rate: Number(row.rate) || 0,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   createdBy: row.created_by,
   updatedBy: row.updated_by,
+  isArchived: row.is_archived || false,
 });
 
-/**
- * Fetches all RM records, ordered newest-first - mirrors the previous
- * Firestore `query(collection, orderBy('createdAt', 'desc'))` behavior.
- */
-export const getRMRecords = async (): Promise<RMRecord[]> => {
-  const { data, error } = await supabase
-    .from('rm_records')
-    .select(SELECT_COLUMNS)
-    .order('created_at', { ascending: false, nullsFirst: false });
-
-  if (error) {
-    console.error('Error fetching RM records:', error);
-    throw error;
-  }
-
-  return (data || []).map(mapRow);
-};
-
-/**
- * Creates a new RM record. Mirrors the previous Firestore `addDoc` behavior:
- * audit fields are populated and the same activity log entry is written.
- * The primary key has no DB default, so a UUID is generated client-side.
- */
-export const createRMRecord = async (
-  record: Omit<RMRecord, 'id' | 'createdAt' | 'updatedAt'>,
-  user: string
-): Promise<string> => {
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
-
-  const columns = {
-    rm_name: record.rmName,
-    opn: record.opn,
-    rate: record.rate,
-    total_in: record.totalIn,
-    total_out: record.totalOut,
-    cl_bal: record.clBal,
-    opn_stock_value: record.opnStockValue,
-    purchase_value_stock: record.purchaseValueStock,
-    consumption_stock: record.consumptionStock,
-    closing_stock_value: record.closingStockValue,
-    day_wise: record.dayWise ?? {},
-  };
-
-  const row = {
-    firestore_document_id: id,
-    ...columns,
-    created_by: user,
-    updated_by: user,
-    created_at: now,
-    updated_at: now,
-  };
-
-  const rawData = { ...record, id, createdBy: user, updatedBy: user, createdAt: now, updatedAt: now };
-
-  const { error } = await supabase.from('rm_records').insert({ ...row, raw_data: rawData });
-
-  if (error) {
-    console.error('Error creating RM record:', error);
-    throw error;
-  }
-
-  await logActivity({
-    user,
-    action: `Created RM record for ${record.rmName}`,
-    entity: 'rm_records',
-    referenceId: id,
-  });
-
-  return id;
-};
-
-/**
- * Updates an RM record. Mirrors the previous Firestore `updateDoc` behavior:
- * only the fields present on `record` are touched (a true partial update),
- * plus updatedBy/updatedAt, and the same activity log entry is written.
- */
-export const updateRMRecord = async (
-  id: string,
-  record: Partial<Omit<RMRecord, 'id' | 'createdAt' | 'createdBy'>>,
-  user: string
-): Promise<void> => {
-  const now = new Date().toISOString();
-  const columns: Record<string, any> = {
-    updated_by: user,
-    updated_at: now,
-  };
-
-  if (record.rmName !== undefined) columns.rm_name = record.rmName;
-  if (record.opn !== undefined) columns.opn = record.opn;
-  if (record.rate !== undefined) columns.rate = record.rate;
-  if (record.totalIn !== undefined) columns.total_in = record.totalIn;
-  if (record.totalOut !== undefined) columns.total_out = record.totalOut;
-  if (record.clBal !== undefined) columns.cl_bal = record.clBal;
-  if (record.opnStockValue !== undefined) columns.opn_stock_value = record.opnStockValue;
-  if (record.purchaseValueStock !== undefined) columns.purchase_value_stock = record.purchaseValueStock;
-  if (record.consumptionStock !== undefined) columns.consumption_stock = record.consumptionStock;
-  if (record.closingStockValue !== undefined) columns.closing_stock_value = record.closingStockValue;
-  if (record.dayWise !== undefined) columns.day_wise = record.dayWise;
-
-  const { error } = await supabase
-    .from('rm_records')
-    .update(columns)
-    .eq('firestore_document_id', id);
-
-  if (error) {
-    console.error('Error updating RM record:', error);
-    throw error;
-  }
-
-  await logActivity({
-    user,
-    action: `Updated RM record for ${record.rmName || id}`,
-    entity: 'rm_records',
-    referenceId: id,
-  });
-};
-
-/**
- * Deletes an RM record. Mirrors the previous Firestore `deleteDoc` behavior
- * (a genuine hard delete - rm_records has no isArchived/soft-delete concept).
- */
-export const deleteRMRecord = async (id: string, rmName: string, user: string): Promise<void> => {
-  const { error } = await supabase.from('rm_records').delete().eq('firestore_document_id', id);
-
-  if (error) {
-    console.error('Error deleting RM record:', error);
-    throw error;
-  }
-
-  await logActivity({
-    user,
-    action: `Deleted RM record for ${rmName}`,
-    entity: 'rm_records',
-    referenceId: id,
-  });
-};
+const mapTransactionRow = (row: any): RawMaterialTransaction => ({
+  id: row.id,
+  rawMaterialId: row.raw_material_id,
+  type: row.type as 'IN' | 'OUT',
+  quantity: Number(row.quantity) || 0,
+  remainingBalance: Number(row.remaining_balance) || 0,
+  date: row.date,
+  referenceNo: row.reference_no,
+  performedBy: row.performed_by,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  createdBy: row.created_by,
+  updatedBy: row.updated_by,
+  isArchived: row.is_archived || false,
+});

@@ -204,6 +204,29 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
     );
   }, [allocations]);
 
+  const hasUnauthorizedGSM = useMemo(() => {
+    return allocations.some(alloc => {
+      const reqLayer = layerRequirements.find((l: any) => l.originalIndex === alloc.layerIndex);
+      if (!reqLayer) return false;
+      const reqGSM = Number(reqLayer.gsm);
+      
+      return alloc.reels.some((r: any) => {
+        const reelGSM = Number(r.gsm);
+        if (reqGSM === reelGSM) return false;
+        
+        // Allowed interchanges
+        if (reqGSM === 100 && reelGSM === 120) return false;
+        if (reqGSM === 120 && reelGSM === 100) return false;
+        if (reqGSM === 220 && reelGSM === 230) return false;
+        if (reqGSM === 230 && reelGSM === 220) return false;
+        
+        return true; // Any other GSM difference is unauthorized
+      });
+    });
+  }, [allocations, layerRequirements]);
+
+  const requiresApproval = hasOversizeReel || hasUnauthorizedGSM;
+
   const handleConfirm = () => {
     const updatedLayers = (jobCard.productSnapshot.layers || []).map((layer: any, idx: number) => {
       const alloc = allocations.find(a => a.layerIndex === idx);
@@ -224,7 +247,7 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
     });
 
     // Phase 3: If oversize reels selected and NOT admin, require approval
-    if (hasOversizeReel && !isAdmin) {
+    if (requiresApproval && !isAdmin) {
       setShowApprovalModal(true);
       return;
     }
@@ -757,16 +780,16 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
 
       <div className="p-4 border-t border-border flex flex-col gap-3 bg-card shrink-0">
         {/* Phase 3: Oversize Warning Banner */}
-        {hasOversizeReel && !isAdmin && (
+        {requiresApproval && !isAdmin && (
           <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-lg px-4 py-2.5 text-sm text-orange-800">
             <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-            <span>Oversize reel selected. Saving will require <strong>Admin Approval</strong> before production can proceed.</span>
+            <span>Unauthorized specs (Oversize &gt; 1&quot; or unapproved GSM) selected. Saving will require <strong>Admin Approval</strong> before production can proceed.</span>
           </div>
         )}
-        {hasOversizeReel && isAdmin && (
+        {requiresApproval && isAdmin && (
           <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-sm text-blue-800">
             <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-            <span>Oversize reel selected. Admin override — you can save directly without approval.</span>
+            <span>Unauthorized specs selected. Admin override — you can save directly without approval.</span>
           </div>
         )}
         <div className="flex justify-between">
@@ -785,13 +808,13 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
               disabled={isSubmitting || (!isFullyAllocated && !isAdmin)}
               className={cn(
                 "px-6 py-2 text-sm font-medium rounded-md text-white disabled:opacity-50 flex items-center shadow-lg transition-all",
-                hasOversizeReel && !isAdmin
+                requiresApproval && !isAdmin
                   ? "bg-orange-500 hover:bg-orange-600 shadow-orange-500/20"
                   : "bg-green-600 hover:bg-green-700 shadow-green-600/20"
               )}
             >
               {isSubmitting ? <CircleDashed className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
-              {hasOversizeReel && !isAdmin ? 'Request Approval & Save' : 'Confirm & Save Job Card'}
+              {requiresApproval && !isAdmin ? 'Request Approval & Save' : 'Confirm & Save Job Card'}
             </button>
           </div>
         </div>

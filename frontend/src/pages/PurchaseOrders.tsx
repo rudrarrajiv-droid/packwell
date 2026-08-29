@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Plus, Search, FileText, ShoppingCart, Activity, XCircle, ArrowUpDown, ArrowUp, ArrowDown, Users, List, ChevronLeft, Link, FileSpreadsheet } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { deletePurchaseOrder, getAllPOTransactions, getPurchaseOrders, type PurchaseOrder } from '../lib/supabase/purchaseOrderService';
+import { deletePurchaseOrder, getAllPOTransactions, getPurchaseOrders, type PurchaseOrder, getPurchaseOrderBalance } from '../lib/supabase/purchaseOrderService';
 import { exportPurchaseOrdersToExcel } from '../utils/exportUtils';
 import AddPOModal from './po-management/AddPOModal';
 import POInModal from './po-management/POInModal';
@@ -10,8 +10,10 @@ import LinkedJobCardsModal from './po-management/LinkedJobCardsModal';
 import ExcelImportPreviewModal from './po-management/ExcelImportPreviewModal';
 import EditPOModal from './po-management/EditPOModal';
 import { cn } from '../lib/utils';
-import { Edit2, Trash2 } from 'lucide-react';
+import { Edit2, Trash2, Download, FileX2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import BulkClosePOModal from './po-management/BulkClosePOModal';
+import { downloadPOTemplate } from '../utils/exportUtils';
 
 type SortField = 'poNo' | 'poDate' | 'deliveryDate' | 'customerName' | 'orderQty' | 'inQty' | 'outQty' | 'closingBal' | 'value';
 type SortDir = 'asc' | 'desc';
@@ -40,7 +42,7 @@ const formatDate = (dateStr: string | undefined | null): string => {
 const getCalculatedStatus = (po: PurchaseOrder) => {
   if (po.status === 'CANCELLED') return 'CANCELLED';
 
-  const closingBal = po.orderQty + (po.inQty || 0) - (po.outQty || 0);
+  const closingBal = getPurchaseOrderBalance(po);
   
   // 1. Completed
   if (closingBal <= 0) return 'COMPLETED';
@@ -68,6 +70,7 @@ export default function PurchaseOrders() {
   const [historyPo, setHistoryPo] = useState<PurchaseOrder | null>(null);
   const [linkedPo, setLinkedPo] = useState<PurchaseOrder | null>(null);
   const [editPo, setEditPo] = useState<PurchaseOrder | null>(null);
+  const [isBulkCloseModalOpen, setIsBulkCloseModalOpen] = useState(false);
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -177,11 +180,11 @@ export default function PurchaseOrders() {
 
       // Derived fields for sorting
       if (sortField === 'closingBal') {
-        aVal = a.orderQty + (a.inQty || 0) - (a.outQty || 0);
-        bVal = b.orderQty + (b.inQty || 0) - (b.outQty || 0);
+        aVal = getPurchaseOrderBalance(a);
+        bVal = getPurchaseOrderBalance(b);
       } else if (sortField === 'value') {
-        const aBal = a.orderQty + (a.inQty || 0) - (a.outQty || 0);
-        const bBal = b.orderQty + (b.inQty || 0) - (b.outQty || 0);
+        const aBal = getPurchaseOrderBalance(a);
+        const bBal = getPurchaseOrderBalance(b);
         aVal = aBal * a.rate;
         bVal = bBal * b.rate;
       }
@@ -208,7 +211,7 @@ export default function PurchaseOrders() {
     purchaseOrders.forEach(po => {
       if (!po.customerId || !po.customerName) return;
       
-      const closingBal = po.orderQty + (po.inQty || 0) - (po.outQty || 0);
+      const closingBal = getPurchaseOrderBalance(po);
       const poValue = po.orderQty * po.rate;
       const pendingValue = closingBal * po.rate;
 
@@ -360,7 +363,7 @@ export default function PurchaseOrders() {
   // Dynamic Totals based on Filtered Data (for All POs view)
   const totals = useMemo(() => {
     return displayData.reduce((acc, po) => {
-      const closingBal = po.orderQty + (po.inQty || 0) - (po.outQty || 0);
+      const closingBal = getPurchaseOrderBalance(po);
       const value = closingBal * po.rate;
       const initialValue = po.orderQty * po.rate;
       
@@ -432,11 +435,25 @@ export default function PurchaseOrders() {
               </button>
             </div>
             <button 
+              onClick={downloadPOTemplate}
+              className="bg-secondary text-secondary-foreground hover:bg-secondary/80 px-4 py-2 rounded-lg font-bold flex items-center shadow-sm transition-all"
+            >
+              <Download className="w-5 h-5 mr-2" />
+              TEMPLATE
+            </button>
+            <button 
               onClick={() => setIsImportModalOpen(true)}
               className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold flex items-center shadow-md shadow-green-600/20 transition-all hover:shadow-lg hover:-translate-y-0.5"
             >
               <FileSpreadsheet className="w-5 h-5 mr-2" />
               IMPORT EXCEL
+            </button>
+            <button 
+              onClick={() => setIsBulkCloseModalOpen(true)}
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold flex items-center shadow-md shadow-red-600/20 transition-all hover:shadow-lg hover:-translate-y-0.5"
+            >
+              <FileX2 className="w-5 h-5 mr-2" />
+              NIL POs
             </button>
             <button 
               onClick={() => setIsAddModalOpen(true)}
@@ -764,7 +781,7 @@ export default function PurchaseOrders() {
                 </tr>
               ) : (
                 displayData.map((po) => {
-                  const closingBal = po.orderQty + (po.inQty || 0) - (po.outQty || 0);
+                  const closingBal = getPurchaseOrderBalance(po);
                   const value = closingBal * po.rate;
                   const calculatedStatus = getCalculatedStatus(po);
                   return (
@@ -988,6 +1005,13 @@ export default function PurchaseOrders() {
             setEditPo(null);
             refetch();
           }}
+        />
+      )}
+
+      {isBulkCloseModalOpen && (
+        <BulkClosePOModal
+          activePOs={purchaseOrders}
+          onClose={() => setIsBulkCloseModalOpen(false)}
         />
       )}
     </div>
