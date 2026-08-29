@@ -37,7 +37,7 @@ export default function FinishGoods() {
   const { data: transactions = [], isLoading: loadingTx } = useQuery({
     queryKey: ['finishGoodTransactions'],
     queryFn: () => getFinishGoodTransactions() as Promise<any[]>,
-    enabled: activeTab === 'REPORT' || activeTab === 'CUSTOMER_LEDGER' || isHistoryOpen
+    enabled: true
   });
 
   const filteredFG = useMemo(() => {

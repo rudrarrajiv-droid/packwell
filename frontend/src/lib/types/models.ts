@@ -123,12 +123,13 @@ export interface FinishGood extends BaseModel {
 export interface FinishGoodTransaction extends BaseModel {
   finishGoodId: string;
   type: 'IN' | 'OUT';
-  category: 'REGULAR' | 'REJECTED' | 'DISPATCH' | 'NON-MOVING'; // REGULAR/REJECTED for IN, DISPATCH/NON-MOVING for OUT
+  category: 'REGULAR' | 'REJECTED' | 'DISPATCH' | 'NON-MOVING' | 'ADJUSTMENT' | 'CORRECTION' | string;
   quantity: number;
   remainingBalance: number;
   date: string;
   referenceNo?: string; // Job Card No for IN, Invoice No for OUT
   performedBy: string;
+  remarks?: string;
   
   // Logistics Fields for OUT
   invoiceNo?: string;
