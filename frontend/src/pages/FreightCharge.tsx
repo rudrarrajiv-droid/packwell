@@ -66,9 +66,9 @@ export default function FreightCharge() {
       if (tx.vehicleSize) sizes.add(tx.vehicleSize);
 
       if (!invoiceMap.has(tx.invoiceNo!)) {
-        // Find customer name from finishGoods or rawData
+        // Find customer name: transaction specific customer takes top priority, then finishGoods
         const fg = finishGoods.find(item => item.productId === tx.finishGoodId || item.id === tx.finishGoodId);
-        const resolvedCustomer = fg?.customerName || (tx as any).raw_data?.customerName || (tx as any).customerName || 'Trading / Other Party';
+        const resolvedCustomer = tx.customerName || (tx as any).raw_data?.customerName || fg?.customerName || 'Trading / Other Party';
         
         if (resolvedCustomer && resolvedCustomer !== 'Unknown') {
           customers.add(resolvedCustomer);

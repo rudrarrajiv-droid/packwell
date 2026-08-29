@@ -130,6 +130,8 @@ export interface FinishGoodTransaction extends BaseModel {
   referenceNo?: string; // Job Card No for IN, Invoice No for OUT
   performedBy: string;
   remarks?: string;
+  customerName?: string;
+  productName?: string;
   
   // Logistics Fields for OUT
   invoiceNo?: string;

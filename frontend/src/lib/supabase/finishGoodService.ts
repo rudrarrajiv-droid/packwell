@@ -24,7 +24,7 @@ export interface FinishGoodTransaction {
   id: string;
   finishGoodId: string;
   type: 'IN' | 'OUT';
-  category: 'REGULAR' | 'REJECTED' | 'DISPATCH' | 'NON-MOVING';
+  category: 'REGULAR' | 'REJECTED' | 'DISPATCH' | 'NON-MOVING' | 'ADJUSTMENT' | 'CORRECTION' | string;
   quantity: number;
   remainingBalance?: number;
   rate?: number;
@@ -32,6 +32,9 @@ export interface FinishGoodTransaction {
   referenceId?: string | null;
   referenceNo?: string | null;
   invoiceNo?: string | null;
+  customerName?: string | null;
+  productName?: string | null;
+  remarks?: string | null;
   place?: string | null;
   transporterName?: string | null;
   vehicleNo?: string | null;
@@ -256,6 +259,9 @@ function mapFinishGoodTransactionRow(row: FinishGoodTransactionRow): FinishGoodT
     receivingConfirmedAt: row.receiving_confirmed_at ?? rawData.receivingConfirmedAt ?? null,
     receivingConfirmedBy: row.receiving_confirmed_by ?? rawData.receivingConfirmedBy ?? null,
     performedBy: row.performed_by ?? rawData.performedBy ?? null,
+    customerName: (row as any).customer_name ?? rawData.customerName ?? null,
+    productName: (row as any).product_name ?? rawData.productName ?? null,
+    remarks: (row as any).remarks ?? rawData.remarks ?? null,
     createdAt: row.created_at ?? rawData.createdAt ?? null,
     updatedAt: row.updated_at ?? rawData.updatedAt ?? null,
     createdBy: row.created_by ?? rawData.createdBy ?? null,
