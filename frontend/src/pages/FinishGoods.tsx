@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { PackageCheck, Search, ArrowDownToLine, ArrowUpFromLine, FileText, History, Calendar, FileSpreadsheet, Edit, AlertTriangle } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { PackageCheck, Search, ArrowDownToLine, ArrowUpFromLine, FileText, History, Calendar, FileSpreadsheet, Edit, Sliders, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import BulkInModal from './finish-goods/BulkInModal';
@@ -9,6 +9,7 @@ import FinishGoodHistoryModal from './finish-goods/FinishGoodHistoryModal';
 import ExcelImportModal from './finish-goods/ExcelImportModal';
 import ItemLedgerModal from './finish-goods/ItemLedgerModal';
 import CustomerLedgerTab from './finish-goods/CustomerLedgerTab';
+import FinishGoodAdjustmentModal from './finish-goods/FinishGoodAdjustmentModal';
 import { getFinishGoods, getFinishGoodTransactions } from '../lib/supabase/finishGoodService';
 
 export default function FinishGoods() {
@@ -21,8 +22,12 @@ export default function FinishGoods() {
   const [isBulkOutOpen, setIsBulkOutOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
+  const [isAdjustmentOpen, setIsAdjustmentOpen] = useState(false);
+  const [adjustmentItem, setAdjustmentItem] = useState<any>(null);
   const [selectedFinishGood, setSelectedFinishGood] = useState<any>(null);
   const [itemToFix, setItemToFix] = useState<any>(null);
+
+  const queryClient = useQueryClient();
 
   const { data: fgList = [], isLoading, refetch } = useQuery({
     queryKey: ['finishGoods'],
@@ -98,64 +103,63 @@ export default function FinishGoods() {
     
     // Filter tx for the specific date
     const txForDate = transactions.filter(tx => {
-      if (!tx.date) return false;
-      return tx.date.startsWith(reportDate);
+      const d = (tx.date || tx.createdAt || '').split('T')[0];
+      return d === reportDate;
     });
 
-    // Group by Product
-    const groups: Record<string, { 
-      productId: string, 
-      productName: string, 
-      customerName: string, 
-      inQty: number, 
-      outQty: number 
-    }> = {};
-    
+    // Group by finishGoodId
+    const map = new Map<string, { inQty: number; outQty: number; productName: string; customerName: string }>();
+
     txForDate.forEach(tx => {
-      const fg = fgList.find(f => f.id === tx.finishGoodId);
-      if (!fg) return;
-      
-      if (!groups[fg.id]) {
-        groups[fg.id] = { 
-          productId: fg.id, 
-          productName: fg.productName, 
-          customerName: fg.customerName,
-          inQty: 0, 
-          outQty: 0 
-        };
+      const fgId = tx.finishGoodId;
+      if (!fgId) return;
+
+      const fg = fgList.find(f => f.id === fgId || f.productId === fgId);
+      const prodName = fg?.productName || tx.productName || 'Unknown Product';
+      const custName = fg?.customerName || tx.customerName || 'Unknown Customer';
+
+      if (!map.has(fgId)) {
+        map.set(fgId, { inQty: 0, outQty: 0, productName: prodName, customerName: custName });
       }
-      
+
+      const entry = map.get(fgId)!;
+      const q = Number(tx.quantity) || 0;
       if (tx.type === 'IN') {
-        groups[fg.id].inQty += Number(tx.quantity) || 0;
+        entry.inQty += q;
       } else if (tx.type === 'OUT') {
-        groups[fg.id].outQty += Number(tx.quantity) || 0;
+        entry.outQty += q;
       }
     });
 
-    return Object.values(groups).sort((a, b) => a.customerName.localeCompare(b.customerName));
-  }, [transactions, fgList, reportDate, activeTab]);
+    return Array.from(map.values()).sort((a, b) => a.customerName.localeCompare(b.customerName));
+  }, [transactions, reportDate, activeTab, fgList]);
 
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col gap-4 p-4 md:p-6 max-w-7xl mx-auto w-full">
-      {/* Header & Dashboard Stats */}
+      {/* Header with Title and Overall Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center">
             <PackageCheck className="w-8 h-8 mr-3 text-primary" />
             Finish Goods Inventory
           </h1>
-          <p className="text-muted-foreground mt-1">Manage finished products and dispatch</p>
+          <p className="text-muted-foreground mt-1">Track and manage manufactured products inventory</p>
         </div>
-        
-        <div className="flex gap-4 items-stretch justify-end">
-          <div className="bg-primary/10 border border-primary/20 p-4 rounded-xl flex-1 max-w-[200px] flex flex-col justify-center items-end">
-            <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Total Regular Value</div>
-            <div className="text-xl font-black text-primary">₹{totalRegValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+        <div className="flex justify-end items-center gap-4">
+          <div className="bg-primary/10 border border-primary/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
+            <div className="text-right">
+              <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Regular Stock Valuation</div>
+              <div className="text-xl font-black text-primary">₹{totalRegValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+            </div>
           </div>
-          <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-xl flex-1 max-w-[200px] flex flex-col justify-center items-end">
-            <div className="text-xs font-semibold text-orange-600 uppercase tracking-wider mb-1">Total Non-Moving Value</div>
-            <div className="text-xl font-black text-orange-600">₹{totalNonValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
-          </div>
+          {totalNonValue > 0 && (
+            <div className="bg-orange-500/10 border border-orange-500/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
+              <div className="text-right">
+                <div className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Non-Moving Valuation</div>
+                <div className="text-xl font-black text-orange-600 dark:text-orange-400">₹{totalNonValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -251,6 +255,7 @@ export default function FinishGoods() {
                 'inQty': 'IN',
                 'outQty': 'OUT',
                 'closingBalance': 'Closing Balance',
+                'nonMovingBalance': 'Non-Moving Balance',
                 'rate': 'Rate',
               }}
             />
@@ -338,6 +343,7 @@ export default function FinishGoods() {
                   <th className="px-6 py-4 font-medium text-right text-orange-600">Non-Moving</th>
                   <th className="px-6 py-4 font-medium text-right">Rate</th>
                   <th className="px-6 py-4 font-medium text-right">Total Value</th>
+                  <th className="px-6 py-4 font-medium text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -351,7 +357,7 @@ export default function FinishGoods() {
                   return (
                     <tr 
                       key={item.id} 
-                      className={`transition-colors cursor-pointer ${isNegative ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-muted/50'}`}
+                      className={`transition-colors cursor-pointer ${isNegative ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/20' : 'hover:bg-muted/50'}`}
                       onClick={() => setSelectedFinishGood(item)}
                     >
                       <td className={`px-6 py-4 font-bold ${isNegative ? 'text-red-700' : 'text-foreground'}`}>{item.customerName}</td>
@@ -361,32 +367,46 @@ export default function FinishGoods() {
                       <td className="px-6 py-4 text-right font-bold text-red-600">{item.outQty || 0}</td>
                       <td className={`px-6 py-4 text-right font-black text-base ${isNegative ? 'text-red-700' : 'text-blue-700'}`}>
                         {isNegative && <AlertTriangle className="inline-block w-4 h-4 mr-1 text-red-500 mb-1" />}
-                        {closingBal}
+                        {closingBal.toLocaleString()}
                       </td>
-                      <td className="px-6 py-4 text-right font-bold text-orange-600">{nonMovingBal}</td>
+                      <td className="px-6 py-4 text-right font-bold text-orange-600">{nonMovingBal.toLocaleString()}</td>
                       <td className="px-6 py-4 text-right font-medium text-muted-foreground">₹{rate.toFixed(3)}</td>
                       <td className={`px-6 py-4 text-right font-bold ${isNegative ? 'text-red-700' : 'text-foreground'}`}>₹{totalVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
-                      <td className="px-6 py-4 text-center">
-                        {isNegative && (
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setItemToFix(item);
-                              setIsBulkInOpen(true);
+                      <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1.5">
+                          {/* Rate & Qty Adjustment Button */}
+                          <button
+                            onClick={() => {
+                              setAdjustmentItem(item);
+                              setIsAdjustmentOpen(true);
                             }}
-                            className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-md shadow-sm transition-colors"
-                            title="Fix Negative Stock (Use Bulk IN)"
+                            title="Update Rate & Qty Adjustment"
+                            className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-1 text-xs font-semibold"
                           >
-                            <Edit className="w-4 h-4" />
+                            <Sliders className="w-4 h-4" />
+                            <span className="hidden xl:inline">Adjust</span>
                           </button>
-                        )}
+
+                          {isNegative && (
+                            <button 
+                              onClick={() => {
+                                setItemToFix(item);
+                                setIsBulkInOpen(true);
+                              }}
+                              className="bg-red-600 hover:bg-red-700 text-white p-1.5 rounded-lg shadow-sm transition-colors text-xs font-semibold"
+                              title="Fix Negative Stock (Use Bulk IN)"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
                 {filteredFG.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-6 py-12 text-center text-muted-foreground">
+                    <td colSpan={10} className="px-6 py-12 text-center text-muted-foreground">
                       <FileText className="w-12 h-12 mx-auto text-muted mb-3 opacity-20" />
                       <p>No {activeTab === 'EMPTY' ? 'empty' : 'active'} finished goods found.</p>
                     </td>
@@ -451,8 +471,24 @@ export default function FinishGoods() {
           }}
         />
       )}
+
+      {/* Rate & Qty Adjustment Modal */}
+      <FinishGoodAdjustmentModal
+        isOpen={isAdjustmentOpen}
+        onClose={() => {
+          setIsAdjustmentOpen(false);
+          setAdjustmentItem(null);
+        }}
+        onSuccess={() => {
+          setIsAdjustmentOpen(false);
+          setAdjustmentItem(null);
+          refetch();
+          queryClient.invalidateQueries({ queryKey: ['finishGoods'] });
+          queryClient.invalidateQueries({ queryKey: ['finishGoodTransactions'] });
+        }}
+        item={adjustmentItem}
+      />
       
     </div>
   );
 }
-

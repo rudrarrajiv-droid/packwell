@@ -902,3 +902,46 @@ export const deleteFreightRecord = async (
     throw error;
   }
 };
+
+export interface FinishGoodAdjustmentPayload {
+  finishGoodId: string;
+  rate?: number;
+  closingBalance?: number;
+  nonMovingBalance?: number;
+  openingQty?: number;
+  remarks?: string;
+}
+
+export const adjustFinishGoodStockAndRate = async (
+  payload: FinishGoodAdjustmentPayload,
+  user: string
+) => {
+  try {
+    const { data, error } = await supabase.rpc('adjust_finish_good_stock_and_rate', {
+      p_finish_good_id: payload.finishGoodId,
+      p_new_rate: payload.rate !== undefined ? payload.rate : null,
+      p_new_closing_balance: payload.closingBalance !== undefined ? payload.closingBalance : null,
+      p_new_non_moving_balance: payload.nonMovingBalance !== undefined ? payload.nonMovingBalance : null,
+      p_new_opening_qty: payload.openingQty !== undefined ? payload.openingQty : null,
+      p_remarks: payload.remarks || 'Stock/Rate Adjustment',
+      p_user: user || 'System'
+    });
+
+    if (error) {
+      console.error('Error adjusting finish good stock and rate:', error);
+      throw error;
+    }
+
+    await logActivity({
+      user,
+      action: `Adjusted Stock/Rate for Finish Good ${payload.finishGoodId}`,
+      entity: 'finishGoods',
+      referenceId: payload.finishGoodId,
+    });
+
+    return data;
+  } catch (error) {
+    console.error('Error adjusting finish good stock and rate:', error);
+    throw error;
+  }
+};
