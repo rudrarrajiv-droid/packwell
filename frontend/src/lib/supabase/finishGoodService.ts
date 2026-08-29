@@ -776,3 +776,129 @@ export const updateFinishGoodTransactionDate = async (
     throw error;
   }
 };
+
+export interface FreightRecordPayload {
+  invoiceNo: string;
+  newInvoiceNo?: string;
+  date: string;
+  customerName?: string;
+  transporterName?: string;
+  place?: string;
+  vehicleNo?: string;
+  vehicleSize?: string;
+  freight: number;
+  holding?: number;
+  point?: string | number;
+  others?: string | number;
+  receivingStatus?: string;
+}
+
+export const updateFreightRecord = async (
+  payload: FreightRecordPayload,
+  user: string
+) => {
+  try {
+    const { data, error } = await supabase.rpc('update_finish_good_freight_record', {
+      p_invoice_no: payload.invoiceNo,
+      p_new_invoice_no: payload.newInvoiceNo || payload.invoiceNo,
+      p_date: payload.date,
+      p_customer_name: payload.customerName || '',
+      p_transporter_name: payload.transporterName || '',
+      p_place: payload.place || '',
+      p_vehicle_no: payload.vehicleNo || '',
+      p_vehicle_size: payload.vehicleSize || '',
+      p_freight: payload.freight || 0,
+      p_holding: payload.holding || 0,
+      p_point: String(payload.point || '0'),
+      p_others: String(payload.others || '0'),
+      p_receiving_status: payload.receivingStatus || 'PENDING',
+      p_user: user || 'System'
+    });
+
+    if (error) {
+      console.error('Error updating freight record:', error);
+      throw error;
+    }
+
+    await logActivity({
+      user,
+      action: `Updated Freight Charges for Invoice ${payload.invoiceNo}`,
+      entity: 'finishGoodTransactions',
+      referenceId: payload.invoiceNo,
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Error updating freight record:', error);
+    throw error;
+  }
+};
+
+export const addFreightRecord = async (
+  payload: FreightRecordPayload,
+  user: string
+) => {
+  try {
+    const { data, error } = await supabase.rpc('add_finish_good_freight_record', {
+      p_invoice_no: payload.invoiceNo,
+      p_date: payload.date,
+      p_customer_name: payload.customerName || '',
+      p_transporter_name: payload.transporterName || '',
+      p_place: payload.place || '',
+      p_vehicle_no: payload.vehicleNo || '',
+      p_vehicle_size: payload.vehicleSize || '',
+      p_freight: payload.freight || 0,
+      p_holding: payload.holding || 0,
+      p_point: String(payload.point || '0'),
+      p_others: String(payload.others || '0'),
+      p_receiving_status: payload.receivingStatus || 'PENDING',
+      p_user: user || 'System'
+    });
+
+    if (error) {
+      console.error('Error adding freight record:', error);
+      throw error;
+    }
+
+    await logActivity({
+      user,
+      action: `Added Freight Record for Invoice ${payload.invoiceNo}`,
+      entity: 'finishGoodTransactions',
+      referenceId: payload.invoiceNo,
+    });
+
+    return data;
+  } catch (error) {
+    console.error('Error adding freight record:', error);
+    throw error;
+  }
+};
+
+export const deleteFreightRecord = async (
+  invoiceNo: string,
+  user: string
+) => {
+  try {
+    const { data, error } = await supabase.rpc('delete_finish_good_freight_record', {
+      p_invoice_no: invoiceNo,
+      p_user: user || 'System'
+    });
+
+    if (error) {
+      console.error('Error deleting freight record:', error);
+      throw error;
+    }
+
+    await logActivity({
+      user,
+      action: `Deleted Freight Record for Invoice ${invoiceNo}`,
+      entity: 'finishGoodTransactions',
+      referenceId: invoiceNo,
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Error deleting freight record:', error);
+    throw error;
+  }
+};
