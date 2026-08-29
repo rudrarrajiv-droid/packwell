@@ -249,17 +249,33 @@ async function getRawReelRow(id: string): Promise<ReelRow> {
 }
 
 export const getReels = async (): Promise<Reel[]> => {
-  const { data, error } = await supabase
-    .from('reels')
-    .select(REEL_SELECT_COLUMNS)
-    .eq('is_archived', false);
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error('Error fetching reels:', error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('reels')
+      .select(REEL_SELECT_COLUMNS)
+      .eq('is_archived', false)
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error('Error fetching reels:', error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map((row) => mapReelRow(row as unknown as ReelRow));
+  return allData.map((row) => mapReelRow(row as unknown as ReelRow));
 };
 
 // Maps whatever reel-shaped fields are present on the input object to the
@@ -374,17 +390,33 @@ export const getFrozenReels = async (): Promise<Reel[]> => {
 };
 
 export const getReelTransactions = async (): Promise<ReelTransaction[]> => {
-  const { data, error } = await supabase
-    .from('reel_transactions')
-    .select(REEL_TRANSACTION_SELECT_COLUMNS)
-    .eq('is_archived', false);
+  let allData: any[] = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error('Error fetching reel transactions:', error);
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from('reel_transactions')
+      .select(REEL_TRANSACTION_SELECT_COLUMNS)
+      .eq('is_archived', false)
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error('Error fetching reel transactions:', error);
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data);
+    }
+
+    if (!data || data.length < step) {
+      break;
+    }
+    from += step;
   }
 
-  return (data || []).map((row) => mapReelTransactionRow(row as unknown as ReelTransactionRow));
+  return allData.map((row) => mapReelTransactionRow(row as unknown as ReelTransactionRow));
 };
 
 export const getReelTransactionsByReelId = async (reelId: string): Promise<ReelTransaction[]> => {
