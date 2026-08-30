@@ -354,6 +354,63 @@ export const getPendingPOsForCustomerAndProducts = async (customerId: string, pr
   return (data || []).map((row) => mapPurchaseOrderRow(row as unknown as PurchaseOrderRow));
 };
 
+export interface ExistingPOInfo {
+  exists: boolean;
+  poNo?: string;
+  customerId?: string;
+  customerName?: string;
+  poDate?: string;
+  consignee?: string;
+  items: Array<{
+    id?: string;
+    productId: string;
+    productName: string;
+    orderQty: number;
+    rate: number;
+    deliveryDate: string;
+  }>;
+}
+
+export const getExistingPOInfo = async (poNo: string): Promise<ExistingPOInfo | null> => {
+  const normalizedPoNo = poNo.trim();
+  if (!normalizedPoNo) return null;
+
+  const { data, error } = await supabase
+    .from('purchase_orders')
+    .select(PURCHASE_ORDER_SELECT_COLUMNS)
+    .eq('po_no', normalizedPoNo)
+    .eq('is_archived', false);
+
+  if (error) {
+    console.error('Error checking existing PO info:', error);
+    return null;
+  }
+
+  if (!data || data.length === 0) {
+    return { exists: false, items: [] };
+  }
+
+  const mapped = data.map((row) => mapPurchaseOrderRow(row as unknown as PurchaseOrderRow));
+  const first = mapped[0];
+
+  return {
+    exists: true,
+    poNo: first.poNo,
+    customerId: first.customerId,
+    customerName: first.customerName,
+    poDate: first.poDate,
+    consignee: first.consignee,
+    items: mapped.map(m => ({
+      id: m.id,
+      productId: m.productId,
+      productName: m.productName,
+      orderQty: m.orderQty,
+      rate: m.rate,
+      deliveryDate: m.deliveryDate
+    }))
+  };
+};
+
 export const purchaseOrderNumberExists = async (poNo: string): Promise<boolean> => {
   const normalizedPoNo = poNo.trim();
 

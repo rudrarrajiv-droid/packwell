@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Plus, Trash2, Loader2, Search, ChevronDown, Sparkles, Building2, Package, Check } from 'lucide-react';
+import { X, Plus, Trash2, Loader2, Search, ChevronDown, Sparkles, Building2, Package, Check, Info } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getProducts, createProduct } from '../../lib/supabase/productService';
 import { getCustomers, createCustomer } from '../../lib/supabase/customerService';
-import { createPurchaseOrders, purchaseOrderNumberExists, getPendingPOsForCustomerAndProducts, bulkCloseCustomerPOs, getPurchaseOrderBalance, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
+import { createPurchaseOrders, purchaseOrderNumberExists, getExistingPOInfo, type ExistingPOInfo, getPendingPOsForCustomerAndProducts, bulkCloseCustomerPOs, getPurchaseOrderBalance, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn, getCustomerDisplayLabel } from '../../lib/utils';
 import RMStatusPanel from './RMStatusPanel';
@@ -534,17 +534,30 @@ type POItem = {
   deliveryDate: string;
 };
 
-export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
+export default function AddPOModal({ 
+  onClose, 
+  onSuccess,
+  initialPoNo,
+  initialCustomerId
+}: { 
+  onClose: () => void; 
+  onSuccess: () => void;
+  initialPoNo?: string;
+  initialCustomerId?: string;
+}) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   
   const [commonData, setCommonData] = useState({
-    poNo: '',
+    poNo: initialPoNo || '',
     poDate: new Date().toISOString().split('T')[0],
-    customerId: '',
+    customerId: initialCustomerId || '',
     customerName: '',
     consignee: '',
   });
+
+  const [existingPO, setExistingPO] = useState<ExistingPOInfo | null>(null);
+  const [isCheckingPO, setIsCheckingPO] = useState(false);
 
   const [items, setItems] = useState<POItem[]>([
     { id: Math.random().toString(36).substring(7), productId: '', rate: '', orderQty: '', deliveryDate: '' }
@@ -594,6 +607,40 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
       setLocalProducts(dbProducts);
     }
   }, [dbProducts]);
+
+  // Check if PO exists when poNo changes
+  useEffect(() => {
+    const trimmed = commonData.poNo.trim();
+    if (!trimmed) {
+      setExistingPO(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsCheckingPO(true);
+      try {
+        const info = await getExistingPOInfo(trimmed);
+        if (info?.exists) {
+          setExistingPO(info);
+          setCommonData(prev => ({
+            ...prev,
+            customerId: prev.customerId || info.customerId || '',
+            customerName: prev.customerName || info.customerName || '',
+            poDate: info.poDate ? info.poDate.split('T')[0] : prev.poDate,
+            consignee: prev.consignee || info.consignee || ''
+          }));
+        } else {
+          setExistingPO(null);
+        }
+      } catch (err) {
+        console.error('Error checking existing PO:', err);
+      } finally {
+        setIsCheckingPO(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [commonData.poNo]);
 
   const handleCustomerCreated = (newCust: any) => {
     setLocalCustomers(prev => [newCust, ...prev]);
@@ -719,15 +766,6 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
     setIsSubmitting(true);
 
     try {
-      // 1. Duplicate check for this PO No in the database
-      const poExists = await purchaseOrderNumberExists(commonData.poNo.trim());
-
-      if (poExists) {
-        setErrors({ poNo: "This Purchase Order number already exists in the system." });
-        setIsSubmitting(false);
-        return;
-      }
-
       const customer = localCustomers.find(c => c.id === commonData.customerId || c.name === commonData.customerId);
       const customerName = customer?.name || commonData.customerName || commonData.customerId;
       const customerId = customer?.id || commonData.customerId;
@@ -773,8 +811,11 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
       const productIds = Array.from(new Set(items.map(i => i.productId).filter(Boolean)));
       const oldPOs = await getPendingPOsForCustomerAndProducts(customerId, productIds);
 
-      if (oldPOs.length > 0) {
-        setPendingOldPOs(oldPOs);
+      // Exclude the current PO itself so we don't ask to NIL the PO we are appending items to
+      const filteredOldPOs = oldPOs.filter(p => p.poNo?.trim() !== commonData.poNo.trim());
+
+      if (filteredOldPOs.length > 0) {
+        setPendingOldPOs(filteredOldPOs);
         setValidatedDataToSave(purchaseOrdersToCreate);
         setShowConfirmNil(true);
         setIsSubmitting(false);
@@ -784,8 +825,8 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
       await proceedWithSave(purchaseOrdersToCreate, false);
 
     } catch (error: any) {
-      console.error("Error checking POs:", error);
-      setErrors({ general: `A critical database error occurred. ${error?.message || ''}` });
+      console.error("Error saving PO:", error);
+      setErrors({ general: `A critical database error occurred: ${error?.message || ''}` });
       setIsSubmitting(false);
     }
   };
@@ -862,19 +903,24 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
                   <label className="block text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">
                     PO No. <span className="text-red-500">*</span>
                   </label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. PO-55000089"
-                    className={cn(
-                      "w-full px-3 py-2 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold",
-                      errors.poNo ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
+                  <div className="relative">
+                    <input 
+                      type="text" 
+                      placeholder="e.g. PO-55000089"
+                      className={cn(
+                        "w-full px-3 py-2 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold",
+                        errors.poNo ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
+                      )}
+                      value={commonData.poNo}
+                      onChange={e => {
+                        setCommonData({...commonData, poNo: e.target.value});
+                        if (errors.poNo) setErrors({...errors, poNo: ''});
+                      }}
+                    />
+                    {isCheckingPO && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin absolute right-2.5 top-3 text-muted-foreground" />
                     )}
-                    value={commonData.poNo}
-                    onChange={e => {
-                      setCommonData({...commonData, poNo: e.target.value});
-                      if (errors.poNo) setErrors({...errors, poNo: ''});
-                    }}
-                  />
+                  </div>
                   {errors.poNo && <p className="text-red-500 text-[10px] mt-1 font-bold">{errors.poNo}</p>}
                 </div>
                 
@@ -927,6 +973,20 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
                    />
                 </div>
               </div>
+
+              {existingPO?.exists && (
+                <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl text-blue-900 dark:text-blue-200 text-xs flex items-start gap-2.5 animate-fade-in">
+                  <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-bold text-blue-950 dark:text-blue-100">
+                      Existing PO Found ({existingPO.customerName}) — {existingPO.items.length} item{existingPO.items.length > 1 ? 's' : ''} already in this PO
+                    </p>
+                    <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5">
+                      Any new item(s) you enter below will be seamlessly <strong>added to this existing PO</strong> without overwriting previous items.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Line Items List */}
@@ -1068,12 +1128,14 @@ export default function AddPOModal({ onClose, onSuccess }: { onClose: () => void
               form="add-po-form"
               type="submit" 
               disabled={isSubmitting}
-              className="bg-primary text-primary-foreground px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md disabled:opacity-50 flex items-center"
+              className="bg-primary text-primary-foreground px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md disabled:opacity-50 flex items-center gap-1.5"
             >
               {isSubmitting ? (
                 <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving PO...</>
+              ) : existingPO?.exists ? (
+                <><Plus className="w-4 h-4" /> Add {items.length} {items.length === 1 ? 'Item' : 'Items'} to PO {commonData.poNo}</>
               ) : (
-                `Save PO with ${items.length} ${items.length === 1 ? 'Item' : 'Items'}`
+                <><Plus className="w-4 h-4" /> Save PO with {items.length} {items.length === 1 ? 'Item' : 'Items'}</>
               )}
             </button>
           </div>

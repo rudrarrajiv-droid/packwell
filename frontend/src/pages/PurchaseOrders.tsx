@@ -78,6 +78,7 @@ const getCalculatedStatus = (po: PurchaseOrder) => {
 export default function PurchaseOrders() {
   const { user } = useAuth();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [addPoTarget, setAddPoTarget] = useState<{ poNo?: string; customerId?: string } | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [inActionPo, setInActionPo] = useState<PurchaseOrder | null>(null);
   const [historyPo, setHistoryPo] = useState<PurchaseOrder | null>(null);
@@ -859,6 +860,13 @@ export default function PurchaseOrders() {
                             IN
                           </button>
                           <button
+                            onClick={() => setAddPoTarget({ poNo: po.poNo, customerId: po.customerId })}
+                            className="p-1 hover:bg-primary/10 text-primary rounded transition-colors"
+                            title="Add New Item to this PO"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                          <button
                             onClick={() => setEditPo(po)}
                             className="p-1 hover:bg-orange-100 text-orange-600 rounded transition-colors"
                             title="Edit Purchase Order"
@@ -996,11 +1004,17 @@ export default function PurchaseOrders() {
       )}
 
       {/* ----------- ADD MODALS ----------- */}
-      {isAddModalOpen && (
+      {(isAddModalOpen || addPoTarget) && (
         <AddPOModal 
-          onClose={() => setIsAddModalOpen(false)}
+          initialPoNo={addPoTarget?.poNo}
+          initialCustomerId={addPoTarget?.customerId}
+          onClose={() => {
+            setIsAddModalOpen(false);
+            setAddPoTarget(null);
+          }}
           onSuccess={() => {
             setIsAddModalOpen(false);
+            setAddPoTarget(null);
             refetch();
           }}
         />
