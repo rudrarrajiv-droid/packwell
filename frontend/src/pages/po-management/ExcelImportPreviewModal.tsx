@@ -27,6 +27,45 @@ type PreviewRow = {
   _rawRow?: any[];
 };
 
+// Robust Excel date parser
+const parseExcelDate = (val: any): string => {
+  if (!val) return '';
+  const str = String(val).trim();
+  if (!str || str === '-' || str === 'MISSING') return '';
+
+  // If it's a numeric serial number from Excel (e.g. 46265 -> 2026-08-30, 46153 -> 2026-05-10)
+  if (/^\d+(\.\d+)?$/.test(str)) {
+    const serialDays = parseFloat(str);
+    if (serialDays > 20000 && serialDays < 100000) {
+      // Excel epoch 1899-12-30 UTC
+      const excelEpochUtcMs = Date.UTC(1899, 11, 30);
+      const d = new Date(excelEpochUtcMs + Math.round(serialDays * 86400000));
+      return d.toISOString().split('T')[0]; // Returns YYYY-MM-DD
+    }
+  }
+
+  // If DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmyMatch) {
+    const [, d, m, y] = dmyMatch;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  // If YYYY-MM-DD
+  const ymdMatch = str.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (ymdMatch) {
+    const [, y, m, d] = ymdMatch;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return str;
+};
+
 export default function ExcelImportPreviewModal({ onClose, existingPOs, onSuccess }: { onClose: () => void, existingPOs: PurchaseOrder[], onSuccess?: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [sheets, setSheets] = useState<string[]>([]);
@@ -44,7 +83,7 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
     queryFn: async () => {
       const data = await getProducts() as any[];
       return data;
-    },
+    }
   });
 
   const [filterMode, setFilterMode] = useState<'ALL' | 'READY TO IMPORT' | 'ERROR' | 'MISSING REQUIRED DATA' | 'DUPLICATE IN EXCEL' | 'ALREADY EXISTS' | 'CONFLICT - NEEDS REVIEW'>('ALL');
@@ -125,8 +164,10 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
       };
 
       const poNo = getVal('poNo');
-      const poDate = getVal('poDate');
-      const deliveryDate = getVal('deliveryDate');
+      const rawPoDate = getVal('poDate');
+      const rawDeliveryDate = getVal('deliveryDate');
+      const poDate = parseExcelDate(rawPoDate);
+      const deliveryDate = parseExcelDate(rawDeliveryDate);
       const customerName = getVal('customerName');
       const itemName = getVal('itemName');
       const rate = getVal('rate');
@@ -143,7 +184,7 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
 
       const errorTokens = ['#REF!', '#VALUE!', '#DIV/0!', '#NAME?', '#N/A'];
       let hasFormulaError = false;
-      const rowVals = [poNo, poDate, deliveryDate, customerName, itemName, rate, opnQty, inQty, outQty, closingBal, value];
+      const rowVals = [poNo, rawPoDate, rawDeliveryDate, customerName, itemName, rate, opnQty, inQty, outQty, closingBal, value];
       for (const val of rowVals) {
         if (errorTokens.some(err => val.includes(err))) {
           hasFormulaError = true;
@@ -155,8 +196,17 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
       const numOpn = parseFloat(opnQty) || 0;
       const numIn = parseFloat(inQty) || 0;
       const numOut = parseFloat(outQty) || 0;
-      const numClosing = parseFloat(closingBal) || 0;
-      const numValue = parseFloat(value) || 0;
+
+      // Auto-calculate expected closing balance & expected value if not provided in Excel
+      const expectedClosing = numOpn + numIn - numOut;
+      const hasExplicitClosing = closingBal !== '' && closingBal !== '-' && !isNaN(parseFloat(closingBal));
+      const numClosing = hasExplicitClosing ? parseFloat(closingBal) : expectedClosing;
+      const displayClosing = hasExplicitClosing ? closingBal : String(expectedClosing);
+
+      const expectedValue = numClosing * numRate;
+      const hasExplicitValue = value !== '' && value !== '-' && !isNaN(parseFloat(value));
+      const numValue = hasExplicitValue ? parseFloat(value) : expectedValue;
+      const displayValue = hasExplicitValue ? value : expectedValue.toFixed(2);
 
       if (hasFormulaError) {
         status = 'ERROR';
@@ -174,54 +224,25 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
         status = 'ERROR';
         errorMsgs.push('Negative quantities are not allowed');
       }
-      else if (numClosing !== (numOpn + numIn - numOut)) {
+      else if (hasExplicitClosing && numClosing !== expectedClosing) {
         status = 'ERROR';
-        errorMsgs.push(`Balance Mismatch: Expected ${numOpn + numIn - numOut}, got ${numClosing}`);
+        errorMsgs.push(`Balance Mismatch: Expected ${expectedClosing}, got ${numClosing}`);
       }
-      else if (numValue > 0 && Math.abs(numValue - (numClosing * numRate)) > 1) { 
+      else if (hasExplicitValue && numValue > 0 && Math.abs(numValue - expectedValue) > 1) { 
         status = 'ERROR';
-        errorMsgs.push(`Value Mismatch: Expected ${numClosing * numRate}, got ${numValue}`);
-      }
-      else if (poDate && deliveryDate && new Date(deliveryDate) < new Date(poDate)) {
-        status = 'ERROR';
-        errorMsgs.push('Delivery Date is before PO Date');
+        errorMsgs.push(`Value Mismatch: Expected ${expectedValue.toFixed(2)}, got ${numValue}`);
       }
       else {
         const productExists = products.some((p: any) => p.itemName?.toLowerCase() === itemName.toLowerCase() || p.productName?.toLowerCase() === itemName.toLowerCase());
         if (!productExists) {
-          errorMsgs.push('Warning: ITEM NOT FOUND IN MASTER DATA');
+          errorMsgs.push('Note: New Item (will be auto-created)');
         }
 
-        const uniqueKey = (poNo + '_' + itemName + '_' + (deliveryDate || '') + '_' + (opnQty || '')).toLowerCase();
-        if (excelPoSet.has(uniqueKey)) {
-          status = 'DUPLICATE IN EXCEL';
-          errorMsgs.push(`PO NO ${poNo} with Item ${itemName} (Del: ${deliveryDate || 'none'}) appears multiple times in this file`);
-        } else {
-          excelPoSet.add(uniqueKey);
+        if (poDate && deliveryDate && new Date(deliveryDate) < new Date(poDate)) {
+          errorMsgs.push('Note: Delivery Date is before PO Date');
         }
 
-        if (status === 'READY TO IMPORT') { 
-          const existingPo = existingPOs.find(p => 
-            p.status !== 'CLOSED' &&
-            p.poNo?.toLowerCase() === poNo.toLowerCase() && 
-            p.productName?.toLowerCase() === itemName.toLowerCase() &&
-            (p.deliveryDate || '') === (deliveryDate || '') &&
-            String(p.orderQty || '') === (opnQty || '')
-          );
-          if (existingPo) {
-            const isMatch = 
-              existingPo.customerName?.toLowerCase() === customerName.toLowerCase() &&
-              existingPo.poDate === poDate;
-
-            if (isMatch) {
-              status = 'ALREADY EXISTS';
-              errorMsgs.push('Exactly matches an existing PO in database');
-            } else {
-              status = 'CONFLICT - NEEDS REVIEW';
-              errorMsgs.push(`PO NO + Item exists but identity conflicts (Cust: ${existingPo.customerName}, Date: ${existingPo.poDate})`);
-            }
-          }
-        }
+        status = 'READY TO IMPORT';
       }
 
       parsedData.push({
@@ -238,8 +259,8 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
         opnQty: opnQty || 'MISSING',
         inQty: inQty || '0',
         outQty: outQty || '0',
-        closingBal: closingBal || '-',
-        value: value || '-',
+        closingBal: displayClosing,
+        value: displayValue,
         _status: status,
         _errorMsg: errorMsgs.join(' | '),
         _rawRow: row

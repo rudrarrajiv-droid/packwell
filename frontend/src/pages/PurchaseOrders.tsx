@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Search, FileText, ShoppingCart, Activity, XCircle, ArrowUpDown, ArrowUp, ArrowDown, Users, List, ChevronLeft, Link, FileSpreadsheet } from 'lucide-react';
+import { Plus, Search, FileText, ShoppingCart, Activity, XCircle, ArrowUpDown, ArrowUp, ArrowDown, Users, List, ChevronLeft, Link, FileSpreadsheet, Scale } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { deletePurchaseOrder, getAllPOTransactions, getPurchaseOrders, type PurchaseOrder, getPurchaseOrderBalance } from '../lib/supabase/purchaseOrderService';
 import { exportPurchaseOrdersToExcel } from '../utils/exportUtils';
 import AddPOModal from './po-management/AddPOModal';
 import POInModal from './po-management/POInModal';
 import POHistoryModal from './po-management/POHistoryModal';
+import POAdjustModal from './po-management/POAdjustModal';
 import LinkedJobCardsModal from './po-management/LinkedJobCardsModal';
 import ExcelImportPreviewModal from './po-management/ExcelImportPreviewModal';
 import EditPOModal from './po-management/EditPOModal';
@@ -15,9 +16,18 @@ import { useAuth } from '../contexts/AuthContext';
 import BulkClosePOModal from './po-management/BulkClosePOModal';
 import { downloadPOTemplate } from '../utils/exportUtils';
 
-type SortField = 'poNo' | 'poDate' | 'deliveryDate' | 'customerName' | 'orderQty' | 'inQty' | 'outQty' | 'closingBal' | 'value';
+type SortField = 'statusPriority' | 'poNo' | 'poDate' | 'deliveryDate' | 'customerName' | 'orderQty' | 'inQty' | 'outQty' | 'closingBal' | 'value';
 type SortDir = 'asc' | 'desc';
 type ViewMode = 'ALL' | 'SUMMARY' | 'DETAIL' | 'MONTHLY';
+
+// Sequence Priority: 1. Overdue/Delayed -> 2. Pending -> 3. Partially Completed -> 4. Cancelled -> 5. Completed
+const STATUS_PRIORITY_RANK: Record<string, number> = {
+  'OVERDUE / DELAYED': 1,
+  'PENDING': 2,
+  'PARTIALLY COMPLETED': 3,
+  'CANCELLED': 4,
+  'COMPLETED': 5
+};
 
 // Helper: format YYYY-MM-DD or any date string to DD/MM/YY safely
 const formatDate = (dateStr: string | undefined | null): string => {
@@ -45,15 +55,18 @@ const getCalculatedStatus = (po: PurchaseOrder) => {
   const closingBal = getPurchaseOrderBalance(po);
   
   // 1. Completed
-  if (closingBal <= 0) return 'COMPLETED';
+  if (po.status === 'CLOSED' || closingBal <= 0) return 'COMPLETED';
 
   // 2. Overdue / Delayed
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const delDate = new Date(po.deliveryDate);
-  delDate.setHours(0, 0, 0, 0);
-
-  if (delDate < today) return 'OVERDUE / DELAYED';
+  if (po.deliveryDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const delDate = new Date(po.deliveryDate);
+    if (!isNaN(delDate.getTime())) {
+      delDate.setHours(0, 0, 0, 0);
+      if (delDate < today) return 'OVERDUE / DELAYED';
+    }
+  }
 
   // 3. Partially Completed
   if ((po.outQty || 0) > 0) return 'PARTIALLY COMPLETED';
@@ -70,6 +83,7 @@ export default function PurchaseOrders() {
   const [historyPo, setHistoryPo] = useState<PurchaseOrder | null>(null);
   const [linkedPo, setLinkedPo] = useState<PurchaseOrder | null>(null);
   const [editPo, setEditPo] = useState<PurchaseOrder | null>(null);
+  const [adjustPo, setAdjustPo] = useState<PurchaseOrder | null>(null);
   const [isBulkCloseModalOpen, setIsBulkCloseModalOpen] = useState(false);
 
   // Filters State
@@ -81,9 +95,9 @@ export default function PurchaseOrders() {
   const [deliveryDateFrom, setDeliveryDateFrom] = useState('');
   const [deliveryDateTo, setDeliveryDateTo] = useState('');
   
-  // Sorting State
-  const [sortField, setSortField] = useState<SortField>('poDate');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Sorting State - default to status priority sequence: Overdue -> Pending -> Partially Completed -> Cancelled -> Completed
+  const [sortField, setSortField] = useState<SortField>('statusPriority');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   // View State (Phase 9 & 12)
   const [viewMode, setViewMode] = useState<ViewMode>('ALL');
@@ -112,6 +126,8 @@ export default function PurchaseOrders() {
     purchaseOrders.forEach(po => {
       if (po.customerId && po.customerName) {
         map.set(po.customerId, po.customerName);
+      } else if (po.customerName) {
+        map.set(po.customerName, po.customerName);
       }
     });
     return Array.from(map.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
@@ -173,8 +189,25 @@ export default function PurchaseOrders() {
       return true;
     });
 
-    // Sort
+    // Sort by Status Priority sequence by default or by chosen column
     filtered.sort((a, b) => {
+      const statusA = getCalculatedStatus(a);
+      const statusB = getCalculatedStatus(b);
+      const rankA = STATUS_PRIORITY_RANK[statusA] ?? 99;
+      const rankB = STATUS_PRIORITY_RANK[statusB] ?? 99;
+
+      if (sortField === 'statusPriority') {
+        if (rankA !== rankB) return sortDir === 'asc' ? rankA - rankB : rankB - rankA;
+        // Secondary sort within same status: earliest delivery date first, then newest PO date
+        const delA = new Date(a.deliveryDate).getTime() || 0;
+        const delB = new Date(b.deliveryDate).getTime() || 0;
+        if (delA !== delB) return delA - delB;
+
+        const poDateA = new Date(a.poDate).getTime() || 0;
+        const poDateB = new Date(b.poDate).getTime() || 0;
+        return poDateB - poDateA;
+      }
+
       let aVal: any = a[sortField as keyof PurchaseOrder];
       let bVal: any = b[sortField as keyof PurchaseOrder];
 
@@ -191,6 +224,9 @@ export default function PurchaseOrders() {
 
       if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+      
+      // Secondary tie-breaker by status rank
+      if (rankA !== rankB) return rankA - rankB;
       return 0;
     });
 
@@ -764,7 +800,9 @@ export default function PurchaseOrders() {
                 <th className={cn(thClass, "text-right text-orange-600/70")} onClick={() => handleSort('value')}>
                   <div className="flex items-center justify-end">14. VALUE <SortIcon field="value" /></div>
                 </th>
-                <th className="px-3 py-3 border-b border-border text-center">STATUS</th>
+                <th className={cn(thClass, "text-center")} onClick={() => handleSort('statusPriority')}>
+                  <div className="flex items-center justify-center">STATUS <SortIcon field="statusPriority" /></div>
+                </th>
                 <th className="px-3 py-3 border-b border-border text-center">ACTION</th>
               </tr>
             </thead>
@@ -833,6 +871,13 @@ export default function PurchaseOrders() {
                             title="Delete Purchase Order"
                           >
                             <Trash2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setAdjustPo(po)}
+                            className="p-1 hover:bg-amber-100 text-amber-600 rounded transition-colors"
+                            title="Adjust / Audit PO Balance / Make NIL"
+                          >
+                            <Scale className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => setHistoryPo(po)}
@@ -976,6 +1021,18 @@ export default function PurchaseOrders() {
         <POHistoryModal
           po={historyPo}
           onClose={() => setHistoryPo(null)}
+          onRefreshParent={refetch}
+        />
+      )}
+
+      {adjustPo && (
+        <POAdjustModal
+          po={adjustPo}
+          onClose={() => setAdjustPo(null)}
+          onSuccess={() => {
+            setAdjustPo(null);
+            refetch();
+          }}
         />
       )}
 

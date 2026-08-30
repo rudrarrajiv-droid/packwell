@@ -679,29 +679,203 @@ export const deletePurchaseOrder = async (id: string, user: string): Promise<boo
   return true;
 };
 
-export const bulkCloseCustomerPOs = async (poIds: string[], user: string): Promise<boolean> => {
+export const bulkCloseCustomerPOs = async (
+  poIds: string[], 
+  user: string,
+  options?: { date?: string; remarks?: string }
+): Promise<boolean> => {
   if (!poIds.length) return true;
 
   const now = new Date().toISOString();
-  
-  const { error } = await supabase
+  const txDate = options?.date || now.split('T')[0];
+  const remarks = options?.remarks || 'NIL PO / Bulk Close Adjustment';
+
+  // 1. Fetch current PO details to know pending balances
+  const { data: pos, error: fetchErr } = await supabase
     .from('purchase_orders')
-    .update({ 
-      status: 'CLOSED', 
-      updated_at: now, 
-      updated_by: user 
-    })
+    .select('firestore_document_id, po_no, order_qty, in_qty, out_qty, status, raw_data')
     .in('firestore_document_id', poIds);
 
-  if (error) {
-    console.error('Error bulk closing purchase orders:', error);
-    throw error;
+  if (fetchErr) {
+    console.error('Error fetching POs for bulk closing:', fetchErr);
+    throw fetchErr;
+  }
+
+  const txRows: any[] = [];
+
+  for (const row of (pos || [])) {
+    const orderQty = toNumber(row.order_qty);
+    const inQty = toNumber(row.in_qty);
+    const outQty = toNumber(row.out_qty);
+    const pendingBal = orderQty + inQty - outQty;
+
+    // If there is pending balance remaining, generate an OUT adjustment transaction to bring balance to 0!
+    if (pendingBal > 0) {
+      txRows.push({
+        firestore_document_id: crypto.randomUUID(),
+        po_id: row.firestore_document_id,
+        type: 'OUT',
+        quantity: pendingBal,
+        transaction_date: txDate,
+        remarks: remarks,
+        performed_by: user,
+        created_at: now,
+        raw_data: {}
+      });
+
+      const newOut = outQty + pendingBal;
+      const rawData = { 
+        ...(row.raw_data || {}), 
+        outQty: newOut, 
+        status: 'CLOSED', 
+        updatedAt: now, 
+        updatedBy: user 
+      };
+
+      await supabase
+        .from('purchase_orders')
+        .update({
+          out_qty: newOut,
+          status: 'CLOSED',
+          updated_at: now,
+          updated_by: user,
+          raw_data: rawData
+        })
+        .eq('firestore_document_id', row.firestore_document_id);
+    } else {
+      const rawData = { 
+        ...(row.raw_data || {}), 
+        status: 'CLOSED', 
+        updatedAt: now, 
+        updatedBy: user 
+      };
+
+      await supabase
+        .from('purchase_orders')
+        .update({
+          status: 'CLOSED',
+          updated_at: now,
+          updated_by: user,
+          raw_data: rawData
+        })
+        .eq('firestore_document_id', row.firestore_document_id);
+    }
+  }
+
+  // Insert all OUT adjustment transaction records
+  if (txRows.length > 0) {
+    const { error: txError } = await supabase.from('po_transactions').insert(txRows);
+    if (txError) {
+      console.error('Error inserting NIL PO transactions:', txError);
+    }
   }
 
   await logActivity({
     user,
-    action: `Bulk Closed ${poIds.length} POs`,
+    action: `Bulk Closed (NIL) ${poIds.length} POs with OUT adjustment transactions`,
     entity: 'purchaseOrders',
+  });
+
+  return true;
+};
+
+export const adjustPurchaseOrderStock = async ({
+  poId,
+  targetBalance,
+  date,
+  remarks,
+  user
+}: {
+  poId: string;
+  targetBalance: number;
+  date: string;
+  remarks?: string;
+  user: string;
+}): Promise<boolean> => {
+  const { data: row, error: fetchErr } = await supabase
+    .from('purchase_orders')
+    .select(PURCHASE_ORDER_SELECT_COLUMNS)
+    .eq('firestore_document_id', poId)
+    .single();
+
+  if (fetchErr) throw fetchErr;
+  if (!row) throw new Error('Purchase Order not found');
+
+  const po = mapPurchaseOrderRow(row as unknown as PurchaseOrderRow);
+  const currentBal = po.orderQty + (po.inQty || 0) - (po.outQty || 0);
+  const difference = targetBalance - currentBal;
+
+  const now = new Date().toISOString();
+  const txDate = date || now.split('T')[0];
+  const auditRemarks = remarks || (targetBalance === 0 ? 'NIL PO Balance Adjustment' : `PO Balance Adjustment (Target: ${targetBalance})`);
+
+  let newIn = po.inQty || 0;
+  let newOut = po.outQty || 0;
+
+  if (difference < 0) {
+    // Need to reduce balance -> add to OUT
+    const outDiff = Math.abs(difference);
+    newOut += outDiff;
+
+    const { error: txError } = await supabase.from('po_transactions').insert({
+      firestore_document_id: crypto.randomUUID(),
+      po_id: poId,
+      type: 'OUT',
+      quantity: outDiff,
+      transaction_date: txDate,
+      remarks: auditRemarks,
+      performed_by: user,
+      created_at: now,
+      raw_data: {}
+    });
+    if (txError) throw txError;
+  } else if (difference > 0) {
+    // Need to increase balance -> add to IN
+    newIn += difference;
+
+    const { error: txError } = await supabase.from('po_transactions').insert({
+      firestore_document_id: crypto.randomUUID(),
+      po_id: poId,
+      type: 'IN',
+      quantity: difference,
+      transaction_date: txDate,
+      remarks: auditRemarks,
+      performed_by: user,
+      created_at: now,
+      raw_data: {}
+    });
+    if (txError) throw txError;
+  }
+
+  const newStatus = targetBalance === 0 ? 'CLOSED' : (newOut > 0 ? 'PARTIAL' : 'OPEN');
+  const rawData = {
+    ...((row as any)?.raw_data || {}),
+    inQty: newIn,
+    outQty: newOut,
+    status: newStatus,
+    updatedAt: now,
+    updatedBy: user
+  };
+
+  const { error: updateErr } = await supabase
+    .from('purchase_orders')
+    .update({
+      in_qty: newIn,
+      out_qty: newOut,
+      status: newStatus,
+      updated_at: now,
+      updated_by: user,
+      raw_data: rawData
+    })
+    .eq('firestore_document_id', poId);
+
+  if (updateErr) throw updateErr;
+
+  await logActivity({
+    user,
+    action: `Adjusted PO ${po.poNo} balance from ${currentBal} to ${targetBalance} (Diff: ${difference})`,
+    entity: 'purchaseOrders',
+    referenceId: poId
   });
 
   return true;

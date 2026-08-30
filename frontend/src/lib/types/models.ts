@@ -161,6 +161,7 @@ export interface ActivityLog {
 
 export interface RawMaterial extends BaseModel {
   name: string;
+  unit?: string;
   openingQty: number;
   inQty: number;
   outQty: number;
@@ -170,11 +171,15 @@ export interface RawMaterial extends BaseModel {
 
 export interface RawMaterialTransaction extends BaseModel {
   rawMaterialId: string;
-  type: 'IN' | 'OUT';
+  type: 'IN' | 'OUT' | 'ADJUSTMENT';
   quantity: number;
+  rate?: number;
+  amount?: number;
   remainingBalance: number;
   date: string;
   referenceNo?: string;
+  supplierName?: string;
+  remarks?: string;
   performedBy: string;
 }
 
