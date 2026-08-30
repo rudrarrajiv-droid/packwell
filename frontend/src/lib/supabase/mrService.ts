@@ -84,3 +84,51 @@ export const saveMonthlyExpense = async (
     });
   }
 };
+
+export const saveBatchMonthlyExpenses = async (
+  reportId: string,
+  dataMap: Record<string, number>,
+  user: string
+) => {
+  const { data: existingList } = await supabase
+    .from('monthly_expenses')
+    .select('id, name')
+    .eq('monthly_report_id', reportId);
+
+  const existingMap = new Map<string, string>();
+  (existingList || []).forEach(item => {
+    existingMap.set(item.name, item.id);
+  });
+
+  const operations: Promise<any>[] = [];
+  const inserts: any[] = [];
+
+  Object.entries(dataMap).forEach(([name, amount]) => {
+    if (existingMap.has(name)) {
+      const id = existingMap.get(name)!;
+      operations.push(
+        Promise.resolve(
+          supabase
+            .from('monthly_expenses')
+            .update({ amount, updated_by: user })
+            .eq('id', id)
+        )
+      );
+    } else {
+      inserts.push({
+        monthly_report_id: reportId,
+        name,
+        amount,
+        created_by: user,
+        updated_by: user,
+      });
+    }
+  });
+
+  if (inserts.length > 0) {
+    operations.push(Promise.resolve(supabase.from('monthly_expenses').insert(inserts)));
+  }
+
+  await Promise.all(operations);
+};
+
