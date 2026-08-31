@@ -104,31 +104,40 @@ export default function MasterData() {
 
   // Derived Filtering
   const filteredCustomers = useMemo(() => {
-    return customers.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+    const searchLower = (search || '').toLowerCase().trim();
+    return customers.filter(c => (c?.name || '').toLowerCase().includes(searchLower));
   }, [customers, search]);
 
   const filteredProducts = useMemo(() => {
+    const searchLower = (search || '').toLowerCase().trim();
     let filtered = products.filter(p => {
+      if (!p) return false;
       // General Search
-      const searchMatch = p.itemName.toLowerCase().includes(search.toLowerCase()) ||
-                          p.artworkNo.toLowerCase().includes(search.toLowerCase()) ||
-                          p.customerName.toLowerCase().includes(search.toLowerCase());
+      const itemName = (p.itemName || '').toLowerCase();
+      const artworkNo = (p.artworkNo || '').toLowerCase();
+      const customerName = (p.customerName || '').toLowerCase();
+      
+      const searchMatch = !searchLower ||
+                          itemName.includes(searchLower) ||
+                          artworkNo.includes(searchLower) ||
+                          customerName.includes(searchLower);
       
       // Smart Filters
-      const matchReelSize = filterReelSize ? p.reelSize === Number(filterReelSize) : true;
-      const matchCutSize = filterCutSize ? p.cutSize === Number(filterCutSize) : true;
-      const matchFlute = filterFlute ? p.flute === filterFlute : true;
+      const matchReelSize = filterReelSize ? Number(p.reelSize) === Number(filterReelSize) : true;
+      const matchCutSize = filterCutSize ? Number(p.cutSize) === Number(filterCutSize) : true;
+      const matchFlute = filterFlute ? (p.flute || '') === filterFlute : true;
       
       // BF and GSM can be on ANY layer
-      const matchBF = filterBF ? p.layers.some(l => String(l.bf) === filterBF) : true;
-      const matchGSM = filterGSM ? p.layers.some(l => String(l.gsm) === filterGSM) : true;
+      const layers = Array.isArray(p.layers) ? p.layers : [];
+      const matchBF = filterBF ? layers.some(l => l && String(l.bf || '') === filterBF) : true;
+      const matchGSM = filterGSM ? layers.some(l => l && String(l.gsm || '') === filterGSM) : true;
 
       return searchMatch && matchReelSize && matchCutSize && matchFlute && matchBF && matchGSM;
     });
 
     const enriched = filtered.map(p => {
       // Find the corresponding finish good to get the latest rate
-      const fg = finishGoods.find(fg => fg.productId === p.id);
+      const fg = Array.isArray(finishGoods) ? finishGoods.find(fg => fg && fg.productId === p.id) : undefined;
       const customerRate = fg?.rate ? Number(fg.rate) : 0;
       const actualCosting = p.actualCosting ? Number(p.actualCosting) : 0;
       const difference = actualCosting - customerRate;
@@ -143,22 +152,26 @@ export default function MasterData() {
       if (!aNeg && bNeg) return 1;
 
       // 2. Customer Name
-      const custDiff = a.customerName.localeCompare(b.customerName);
+      const custA = (a.customerName || '').trim();
+      const custB = (b.customerName || '').trim();
+      const custDiff = custA.localeCompare(custB);
       if (custDiff !== 0) return custDiff;
 
       // 3. Item Name
-      return a.itemName.localeCompare(b.itemName);
+      const itemA = (a.itemName || '').trim();
+      const itemB = (b.itemName || '').trim();
+      return itemA.localeCompare(itemB);
     });
 
     return enriched;
   }, [products, finishGoods, search, filterReelSize, filterBF, filterGSM, filterFlute, filterCutSize]);
 
   // Unique values for filter dropdowns
-  const uniqueReelSizes = Array.from(new Set(products.map(p => p.reelSize))).sort((a,b)=>a-b);
-  const uniqueCutSizes = Array.from(new Set(products.map(p => p.cutSize))).sort((a,b)=>a-b);
-  const uniqueFlutes = Array.from(new Set(products.map(p => p.flute).filter(Boolean)));
-  const uniqueBFs = Array.from(new Set(products.flatMap(p => p.layers.map(l => l.bf)).filter(Boolean)));
-  const uniqueGSMs = Array.from(new Set(products.flatMap(p => p.layers.map(l => l.gsm)).filter(Boolean))).sort((a,b)=>Number(a)-Number(b));
+  const uniqueReelSizes = Array.from(new Set(products.map(p => p?.reelSize).filter((v): v is number => v !== undefined && v !== null && !isNaN(Number(v))))).sort((a,b)=>Number(a)-Number(b));
+  const uniqueCutSizes = Array.from(new Set(products.map(p => p?.cutSize).filter((v): v is number => v !== undefined && v !== null && !isNaN(Number(v))))).sort((a,b)=>Number(a)-Number(b));
+  const uniqueFlutes = Array.from(new Set(products.map(p => p?.flute).filter(Boolean)));
+  const uniqueBFs = Array.from(new Set(products.flatMap(p => (Array.isArray(p?.layers) ? p.layers : []).map(l => l?.bf)).filter(Boolean)));
+  const uniqueGSMs = Array.from(new Set(products.flatMap(p => (Array.isArray(p?.layers) ? p.layers : []).map(l => l?.gsm)).filter(Boolean))).sort((a,b)=>Number(a)-Number(b));
 
   const handleEditCustomer = (customer: Customer) => {
     setEditingCustomer(customer);
@@ -287,7 +300,7 @@ export default function MasterData() {
               <ExportButtons 
                 data={tab === 'customers' ? filteredCustomers : filteredProducts.map(p => ({
                   ...p,
-                  paper: (p as any).paper || (p.layers ? p.layers.length : '')
+                  paper: (p as any).paper || (Array.isArray(p?.layers) ? p.layers.length : '')
                 }))} 
                 filenamePrefix={tab === 'customers' ? 'Customers' : 'Products'}
                 title={tab === 'customers' ? 'Customer Directory' : 'Product Master'}
@@ -345,7 +358,7 @@ export default function MasterData() {
           </div>
           
           {/* Customer Specific Product Count (Phase 19.2) */}
-          {tab === 'products' && search && customers.some(c => c.name.toLowerCase() === search.toLowerCase()) && (
+          {tab === 'products' && search && customers.some(c => (c?.name || '').toLowerCase() === search.toLowerCase()) && (
             <div className="bg-secondary/30 px-4 py-3 rounded-md border border-border flex gap-8 items-center max-w-fit shadow-sm">
                <div>
                  <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block mb-0.5">Selected Customer</span>
@@ -604,12 +617,12 @@ function ProductsTable({
                   />
                 </td>
               )}
-              <td className="px-6 py-4 font-bold text-primary">{p.artworkNo}</td>
-              <td className="px-6 py-4 font-semibold text-foreground">{p.itemName}</td>
-              <td className="px-6 py-4 text-muted-foreground">{p.customerName}</td>
-              <td className="px-6 py-4">{p.length}×{p.width}×{p.height}</td>
-              <td className="px-6 py-4">{p.ply} Ply {p.flute ? `/ ${p.flute}` : ''}</td>
-              <td className="px-6 py-4">{p.reelSize}" / {p.cutSize}"</td>
+              <td className="px-6 py-4 font-bold text-primary">{p.artworkNo || '-'}</td>
+              <td className="px-6 py-4 font-semibold text-foreground">{p.itemName || '-'}</td>
+              <td className="px-6 py-4 text-muted-foreground">{p.customerName || '-'}</td>
+              <td className="px-6 py-4">{p.length && p.width && p.height ? `${p.length}×${p.width}×${p.height}` : '-'}</td>
+              <td className="px-6 py-4">{p.ply ? `${p.ply} Ply ${p.flute ? `/ ${p.flute}` : ''}` : '-'}</td>
+              <td className="px-6 py-4">{p.reelSize || p.cutSize ? `${p.reelSize || '-'}" / ${p.cutSize || '-'}"` : '-'}</td>
               {showCosting && (
                 <>
                   <td className="px-6 py-4 font-medium">₹{Number(p.actualCosting || 0).toFixed(3)}</td>
@@ -625,7 +638,7 @@ function ProductsTable({
                   className="flex items-center text-xs text-primary hover:underline"
                 >
                   {expanded === p.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  <span className="ml-1">Layers ({p.layers?.length || 0})</span>
+                  <span className="ml-1">Layers ({Array.isArray(p.layers) ? p.layers.length : 0})</span>
                 </button>
               </td>
               <td className="px-6 py-4 text-right flex justify-end gap-2">
@@ -641,7 +654,7 @@ function ProductsTable({
                 )}
               </td>
             </tr>
-            {expanded === p.id && p.layers?.length > 0 && (
+            {expanded === p.id && Array.isArray(p.layers) && p.layers.length > 0 && (
               <tr>
                 <td colSpan={selectedProducts ? (showCosting ? 12 : 9) : (showCosting ? 11 : 8)} className="px-6 py-3 bg-secondary/30 border-b border-border/50 shadow-inner">
                   <div className="flex gap-4">
@@ -650,10 +663,10 @@ function ProductsTable({
                       <div className="flex gap-3 flex-wrap">
                         {p.layers.map((l: any, i: number) => (
                           <div key={i} className="bg-card border border-border rounded-md px-3 py-2 text-xs shadow-sm">
-                            <span className="font-semibold text-foreground">{l.layerName}</span>
-                            {l.paperType && <span className="ml-2 text-muted-foreground">{l.paperType}</span>}
-                            {l.bf && <span className="ml-2 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded">BF: {l.bf}</span>}
-                            {l.gsm && <span className="ml-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded">GSM: {l.gsm}</span>}
+                            <span className="font-semibold text-foreground">{l?.layerName || `Layer ${i+1}`}</span>
+                            {l?.paperType && <span className="ml-2 text-muted-foreground">{l.paperType}</span>}
+                            {l?.bf && <span className="ml-2 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded">BF: {l.bf}</span>}
+                            {l?.gsm && <span className="ml-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded">GSM: {l.gsm}</span>}
                           </div>
                         ))}
                       </div>

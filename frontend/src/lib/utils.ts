@@ -13,13 +13,15 @@ export function cn(...inputs: ClassValue[]) {
  * appended, e.g. "SHAKTI APIFOODS (created 2026-08-01)".
  */
 export function getCustomerDisplayLabel(
-  customer: { name: string; createdAt?: any },
-  allCustomers: { name: string }[]
+  customer: { name?: string; createdAt?: any } | null | undefined,
+  allCustomers: { name?: string }[] = []
 ): string {
+  if (!customer) return '';
   const name = (customer.name || '').trim();
+  if (!name) return 'Unnamed Customer';
   const normalized = name.toLowerCase();
-  const duplicateCount = allCustomers.filter(
-    c => (c.name || '').trim().toLowerCase() === normalized
+  const duplicateCount = (allCustomers || []).filter(
+    c => c && (c.name || '').trim().toLowerCase() === normalized
   ).length;
 
   if (duplicateCount <= 1) return name;
