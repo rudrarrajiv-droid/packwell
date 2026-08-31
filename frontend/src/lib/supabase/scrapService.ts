@@ -46,6 +46,41 @@ export const createScrapEntry = async (
   return 'success';
 };
 
+export const updateScrapEntry = async (
+  id: string,
+  entry: Partial<Omit<ScrapEntry, 'id' | 'createdAt'>>,
+  user: string
+): Promise<void> => {
+  const updatePayload: Record<string, any> = {
+    updated_by: user,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (entry.date !== undefined) updatePayload.date = entry.date;
+  if (entry.description !== undefined) updatePayload.description = entry.description;
+  if (entry.weight !== undefined) updatePayload.weight = entry.weight;
+  if (entry.rate !== undefined) updatePayload.rate = entry.rate;
+  if (entry.totalValue !== undefined) updatePayload.total_value = entry.totalValue;
+  if (entry.paymentType !== undefined) updatePayload.payment_type = entry.paymentType;
+
+  const { error } = await supabase
+    .from('scrap_entries')
+    .update(updatePayload)
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error updating scrap entry:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: `Updated scrap entry for ${entry.date || id}`,
+    entity: 'scrap_entries',
+    referenceId: id,
+  });
+};
+
 export const deleteScrapEntry = async (id: string, user: string): Promise<void> => {
   const { error } = await supabase.from('scrap_entries').delete().eq('id', id);
 

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Trash2, Search, Plus, Loader2, AlertCircle, RefreshCw, Archive, X, Printer } from 'lucide-react';
-import { getScrapEntries, createScrapEntry, deleteScrapEntry } from '../lib/supabase/scrapService';
+import { Trash2, Search, Plus, Loader2, AlertCircle, Archive, X, Printer, Edit2 } from 'lucide-react';
+import { getScrapEntries, createScrapEntry, updateScrapEntry, deleteScrapEntry } from '../lib/supabase/scrapService';
 import type { ScrapEntry } from '../lib/types/models';
 import { useAuth } from '../contexts/AuthContext';
 import ExportButtons from '../components/ExportButtons';
@@ -19,9 +19,18 @@ export default function Scrap() {
   const [weight, setWeight] = useState<number | ''>('');
   const [rate, setRate] = useState<number | ''>('');
   const [paymentType, setPaymentType] = useState<'CASH' | 'BILLING'>('CASH');
-  
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Edit Scrap Form State
+  const [editingEntry, setEditingEntry] = useState<ScrapEntry | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editWeight, setEditWeight] = useState<number | ''>('');
+  const [editRate, setEditRate] = useState<number | ''>('');
+  const [editPaymentType, setEditPaymentType] = useState<'CASH' | 'BILLING'>('CASH');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const { data: scrapList = [], isLoading, refetch } = useQuery({
     queryKey: ['scrapEntries'],
@@ -47,6 +56,12 @@ export default function Scrap() {
     const r = Number(rate) || 0;
     return w * r;
   }, [weight, rate]);
+
+  const editTotalValueCalc = useMemo(() => {
+    const w = Number(editWeight) || 0;
+    const r = Number(editRate) || 0;
+    return w * r;
+  }, [editWeight, editRate]);
 
   const handleCreateScrap = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,6 +93,47 @@ export default function Scrap() {
       setError(err.message || 'Failed to create scrap entry');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleOpenEdit = (entry: ScrapEntry) => {
+    setEditingEntry(entry);
+    setEditDate(entry.date);
+    setEditDescription(entry.description || '');
+    setEditWeight(entry.weight);
+    setEditRate(entry.rate);
+    setEditPaymentType(entry.paymentType);
+    setEditError(null);
+  };
+
+  const handleUpdateScrap = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEntry || !editingEntry.id) return;
+
+    if (!editWeight || Number(editWeight) <= 0 || !editRate || Number(editRate) <= 0) {
+      setEditError("Please enter valid weight and rate.");
+      return;
+    }
+
+    setIsUpdating(true);
+    setEditError(null);
+    try {
+      await updateScrapEntry(editingEntry.id, {
+        date: editDate,
+        description: editDescription,
+        weight: Number(editWeight),
+        rate: Number(editRate),
+        totalValue: editTotalValueCalc,
+        paymentType: editPaymentType,
+      }, user?.name || 'System');
+
+      setEditingEntry(null);
+      refetch();
+    } catch (err: any) {
+      console.error(err);
+      setEditError(err.message || 'Failed to update scrap entry');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -208,6 +264,13 @@ export default function Scrap() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleOpenEdit(entry)}
+                            className="p-1.5 text-blue-500 hover:bg-blue-500/10 rounded-lg transition-colors tooltip-trigger"
+                            title="Edit"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => entry.id && handleDelete(entry.id)}
                             className="p-1.5 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors tooltip-trigger"
@@ -347,6 +410,127 @@ export default function Scrap() {
                 >
                   {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                   Save Entry
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Scrap Modal */}
+      {editingEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-background w-full max-w-md rounded-xl shadow-xl border border-border flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h2 className="text-xl font-semibold">Edit Scrap Entry</h2>
+              <button onClick={() => setEditingEntry(null)} className="p-2 hover:bg-muted rounded-full transition-colors">
+                <X className="w-5 h-5 text-muted-foreground" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleUpdateScrap} className="p-6">
+              {editError && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-2 text-red-500">
+                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  <p className="text-sm">{editError}</p>
+                </div>
+              )}
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Description</label>
+                  <input
+                    type="text"
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder="e.g. Paper Waste, Cardboard"
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-colors"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Weight (kg)</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      required
+                      value={editWeight}
+                      onChange={(e) => setEditWeight(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Rate (₹)</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      required
+                      value={editRate}
+                      onChange={(e) => setEditRate(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-colors"
+                    />
+                  </div>
+                </div>
+                
+                <div className="p-3 bg-secondary/50 rounded-lg flex justify-between items-center border border-border">
+                  <span className="text-sm font-medium text-muted-foreground">Total Value:</span>
+                  <span className="font-bold text-lg text-foreground">₹ {editTotalValueCalc.toLocaleString('en-IN')}</span>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">Payment Type</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        value="CASH"
+                        checked={editPaymentType === 'CASH'}
+                        onChange={() => setEditPaymentType('CASH')}
+                        className="text-orange-500 focus:ring-orange-500"
+                      />
+                      <span>Cash</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        value="BILLING"
+                        checked={editPaymentType === 'BILLING'}
+                        onChange={() => setEditPaymentType('BILLING')}
+                        className="text-orange-500 focus:ring-orange-500"
+                      />
+                      <span>Billing</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingEntry(null)}
+                  className="px-4 py-2 border border-border rounded-lg hover:bg-muted transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors font-medium flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Update Entry
                 </button>
               </div>
             </form>
