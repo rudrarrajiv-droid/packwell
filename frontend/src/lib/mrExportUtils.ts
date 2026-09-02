@@ -2,7 +2,12 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as xlsx from 'xlsx';
 
-interface MRExportParams {
+export interface MRExpenseItem {
+  name: string;
+  amount: number;
+}
+
+export interface MRExportParams {
   monthFormattedTitle: string;
   paperStats: Record<string, { opnQty: number; opnAmt: number; purQty: number; purAmt: number; conQty: number; conAmt: number; cloQty: number; cloAmt: number }>;
   paperTotals: { opnQty: number; opnAmt: number; purQty: number; purAmt: number; conQty: number; conAmt: number; cloQty: number; cloAmt: number };
@@ -27,6 +32,9 @@ interface MRExportParams {
   grandDiffWOGST: number;
   grandDiffWGST: number;
   visibleExpenses: string[];
+  expenseBreakup?: MRExpenseItem[];
+  currentMonthPurchaseWOGST?: number;
+  currentMonthPurchaseWGST?: number;
   totalExpenses: number;
   netProfit: number;
   profitMarginPercent: string;
@@ -63,9 +71,9 @@ export const exportMRToPDF = (params: MRExportParams) => {
   doc.rect(10, 10, pageWidth - 20, 12, 'S');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
+  doc.setFontSize(13);
   doc.setTextColor(15, 23, 42);
-  doc.text(`PROFIT & LOSS REPORT FOR THE M/O ${params.monthFormattedTitle.toUpperCase()}`, pageWidth / 2, 18, { align: 'center' });
+  doc.text(`PROFIT & LOSS REPORT FOR THE M/O ${params.monthFormattedTitle.toUpperCase()}`, pageWidth / 2, 17.5, { align: 'center' });
 
   // 2. Table 1: Paper Inventory
   const paperRows = Object.entries(params.paperStats).map(([type, s]) => [
@@ -93,7 +101,7 @@ export const exportMRToPDF = (params: MRExportParams) => {
   ];
 
   autoTable(doc, {
-    startY: 25,
+    startY: 24,
     margin: { left: 10, right: 10 },
     head: [
       [
@@ -113,18 +121,19 @@ export const exportMRToPDF = (params: MRExportParams) => {
     body: paperRows,
     foot: [paperTotalsRow],
     theme: 'grid',
-    styles: { fontSize: 8, cellPadding: 1.5, halign: 'right', textColor: [15, 23, 42] },
+    styles: { fontSize: 7.5, cellPadding: 1.1, halign: 'right', textColor: [15, 23, 42] },
     columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } },
-    headStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7.5, halign: 'center' },
-    footStyles: { fillColor: [255, 255, 0], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 8.5 }
+    headStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' },
+    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 8 }
   });
 
-  const nextY = (doc as any).lastAutoTable.finalY + 5;
-  const leftColWidth = 110;
-  const rightColX = 125;
-  const rightColWidth = pageWidth - rightColX - 10;
+  const nextY = (doc as any).lastAutoTable.finalY + 3.5;
+  const leftColWidth = 105;
+  const rightColX = 120;
 
-  // 3. Left Table: Revenue & Sales
+  // ================= LEFT COLUMN =================
+
+  // 3A. Left Table 1: Revenue & Sales
   const salesRows: any[] = params.visibleSaleParties.map(p => [
     p,
     fmt(params.manualData[`SALE:${p}:WOGST`] || 0),
@@ -145,45 +154,80 @@ export const exportMRToPDF = (params: MRExportParams) => {
     startY: nextY,
     margin: { left: 10, right: pageWidth - 10 - leftColWidth },
     head: [
-      [{ content: 'TOTAL SALE', colSpan: 3, styles: { halign: 'center', fillColor: [0, 229, 255], textColor: [15, 23, 42] } }],
+      [{ content: 'TOTAL SALE', colSpan: 3, styles: { halign: 'center', fillColor: [0, 229, 255], textColor: [15, 23, 42], fontStyle: 'bold' } }],
       ['Party / Category', 'Without GST', 'With GST']
     ],
     body: salesRows,
     foot: salesFoot,
     theme: 'grid',
-    styles: { fontSize: 7.5, cellPadding: 1.2, halign: 'right', textColor: [15, 23, 42] },
-    columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } },
-    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7.5, halign: 'center' },
-    footStyles: { fillColor: [255, 255, 0], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 8 }
+    styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 45 },
+      1: { halign: 'right', cellWidth: 30 },
+      2: { halign: 'right', cellWidth: 30 }
+    },
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' },
+    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 7.5 }
   });
 
-  const salesFinalY = (doc as any).lastAutoTable.finalY;
+  let leftFinalY = (doc as any).lastAutoTable.finalY;
 
-  // Stock Valuation Table below Sales
+  // 3B. Current Month Purchase (Matching MR Sheet UI)
+  if ((params.currentMonthPurchaseWOGST !== undefined && params.currentMonthPurchaseWOGST !== 0) ||
+      (params.currentMonthPurchaseWGST !== undefined && params.currentMonthPurchaseWGST !== 0)) {
+    autoTable(doc, {
+      startY: leftFinalY + 2.5,
+      margin: { left: 10, right: pageWidth - 10 - leftColWidth },
+      head: [
+        [{ content: 'CURRENT MONTH PURCHASE', colSpan: 3, styles: { halign: 'center', fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7 } }],
+        ['Particulars', 'Without GST', 'With GST']
+      ],
+      body: [
+        ['Purchase', fmt(params.currentMonthPurchaseWOGST || 0), fmt(params.currentMonthPurchaseWGST || 0)]
+      ],
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+      columnStyles: {
+        0: { halign: 'left', fontStyle: 'bold', cellWidth: 45 },
+        1: { halign: 'right', cellWidth: 30 },
+        2: { halign: 'right', cellWidth: 30 }
+      },
+      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' }
+    });
+    leftFinalY = (doc as any).lastAutoTable.finalY;
+  }
+
+  // 3C. Stock Valuation Table below Sales
   const stockRows = [
     ['Finish Goods Stock', fmt(params.fgStockValue)],
     ['Non-Moving Stock', fmt(params.nonMovingStockValue)],
     ['Work in Process (WIP)', fmt(params.wipStockValue)],
-    ['Paper Stock', fmt(params.paperStockValue)],
+    ['Paper Stock (Closing)', fmt(params.paperStockValue)],
     ['Raw Material Stock', fmt(params.rmStockValue)]
   ];
 
   autoTable(doc, {
-    startY: salesFinalY + 3,
+    startY: leftFinalY + 2.5,
     margin: { left: 10, right: pageWidth - 10 - leftColWidth },
     head: [
-      [{ content: 'INVENTORY ASSET VALUATION', colSpan: 2, styles: { halign: 'center', fillColor: [30, 41, 59], textColor: 255 } }]
+      [{ content: 'INVENTORY ASSET VALUATION', colSpan: 2, styles: { halign: 'center', fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' } }],
+      ['Category', 'Amount (Rs)']
     ],
     body: stockRows,
     foot: [['Grand Total Stock', fmt(params.grandTotalStock)]],
     theme: 'grid',
-    styles: { fontSize: 7.5, cellPadding: 1.2, halign: 'right', textColor: [15, 23, 42] },
-    columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
-    footStyles: { fillColor: [255, 255, 0], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 8 }
+    styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 65 },
+      1: { halign: 'right', cellWidth: 40 }
+    },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    footStyles: { fillColor: [220, 252, 231], textColor: [22, 101, 52], fontStyle: 'bold', fontSize: 7.5 }
   });
 
-  // 4. Right Table: Reconciliation & Expenses
+  // ================= RIGHT COLUMN =================
+
+  // 4A. Right Table 1: Purchase & Sister Reconciliation Matrix
   const reconRows: any[] = [
     ['Paper Used', fmt(params.paperUsedWOGST), fmt(params.paperUsedWGST), '--', '--'],
     ...params.partyPurchases.map(p => [
@@ -193,9 +237,12 @@ export const exportMRToPDF = (params: MRExportParams) => {
       fmtDiff(p.diffWOGST),
       fmtDiff(p.diffWGST)
     ]),
-    ['SCRAP(CASH)', fmt(params.scrapCashPurWOGST), fmt(params.scrapCashPurWGST), fmt(params.scrapCashDiffWOGST), fmt(params.scrapCashDiffWGST)],
+    ['SCRAP(CASH)', fmt(params.scrapCashPurWOGST), fmt(params.scrapCashPurWGST), fmt(params.scrapCashDiffWOGST), fmt(params.scrapCashDiffWGST)]
+  ];
+
+  const reconFoot = [
     [
-      'G. Total Purchase',
+      'G. TOTAL PURCHASE',
       fmt(params.gTotalPurchaseWOGST),
       fmt(params.gTotalPurchaseWGST),
       fmt(params.grandDiffWOGST),
@@ -203,44 +250,127 @@ export const exportMRToPDF = (params: MRExportParams) => {
     ]
   ];
 
-  // Add Operational Expenses rows
-  params.visibleExpenses.forEach((exp, idx) => {
-    const isLast = idx === params.visibleExpenses.length - 1;
-    reconRows.push([
-      exp,
-      '',
-      '',
-      fmt(params.manualData[`EXP:${exp}`] || 0),
-      isLast ? fmt(params.totalExpenses) : ''
-    ]);
-  });
-
   autoTable(doc, {
     startY: nextY,
     margin: { left: rightColX, right: 10 },
     head: [
       [
-        { content: 'Item / Particular', rowSpan: 2, styles: { halign: 'left', valign: 'middle' } },
-        { content: 'Without GST', styles: { halign: 'center', fillColor: [255, 255, 0], textColor: [15, 23, 42] } },
-        { content: 'With GST', styles: { halign: 'center', fillColor: [255, 255, 0], textColor: [15, 23, 42] } },
-        { content: 'Difference', colSpan: 2, styles: { halign: 'center', fillColor: [179, 136, 255], textColor: [30, 27, 75] } }
+        { content: 'PURCHASE & SISTER RECONCILIATION MATRIX', colSpan: 5, styles: { halign: 'center', fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' } }
       ],
       [
-        'Purchase', 'Purchase', 'Without GST', 'With GST'
+        { content: 'Item / Concern', styles: { halign: 'left' } },
+        { content: 'Purchase (W/o)', styles: { halign: 'right' } },
+        { content: 'Purchase (With)', styles: { halign: 'right' } },
+        { content: 'Diff (W/o GST)', styles: { halign: 'right', fillColor: [238, 242, 255] } },
+        { content: 'Diff (With GST)', styles: { halign: 'right', fillColor: [238, 242, 255] } }
       ]
     ],
     body: reconRows,
+    foot: reconFoot,
+    theme: 'grid',
+    styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 47 },
+      1: { halign: 'right', cellWidth: 30 },
+      2: { halign: 'right', cellWidth: 30 },
+      3: { halign: 'right', cellWidth: 30 },
+      4: { halign: 'right', cellWidth: 30 }
+    },
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' },
+    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 7.5 }
+  });
+
+  let rightFinalY = (doc as any).lastAutoTable.finalY;
+
+  // 4B. Right Table 2: Operational Expenses Breakup Table (Matching MR Sheet UI)
+  const expensesList: MRExpenseItem[] = (params.expenseBreakup && params.expenseBreakup.length > 0)
+    ? params.expenseBreakup
+    : params.visibleExpenses.map(exp => ({
+        name: exp,
+        amount: params.manualData[`EXP:${exp}`] || 0
+      }));
+
+  // Build paired 2-column expense grid rows (4 columns: Category, Amount, Category, Amount)
+  const expenseGridRows: any[] = [];
+  if (expensesList.length === 0) {
+    expenseGridRows.push(['No operational expenses recorded', '', '', '']);
+  } else {
+    for (let i = 0; i < expensesList.length; i += 2) {
+      const it1 = expensesList[i];
+      const it2 = expensesList[i + 1];
+      expenseGridRows.push([
+        it1.name,
+        fmt(it1.amount),
+        it2 ? it2.name : '',
+        it2 ? fmt(it2.amount) : ''
+      ]);
+    }
+  }
+
+  autoTable(doc, {
+    startY: rightFinalY + 2.5,
+    margin: { left: rightColX, right: 10 },
+    head: [
+      [
+        { content: `OPERATIONAL EXPENSES  (Total: Rs. ${fmt(params.totalExpenses)})`, colSpan: 4, styles: { halign: 'center', fillColor: [225, 29, 72], textColor: 255, fontStyle: 'bold' } }
+      ],
+      [
+        { content: 'Category / Particular', styles: { halign: 'left' } },
+        { content: 'Amount (Rs)', styles: { halign: 'right' } },
+        { content: 'Category / Particular', styles: { halign: 'left' } },
+        { content: 'Amount (Rs)', styles: { halign: 'right' } }
+      ]
+    ],
+    body: expenseGridRows,
     foot: [
       [
-        { content: 'NET PROFIT', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold', fontSize: 10 } },
-        { content: `Rs. ${fmt(params.netProfit)}`, colSpan: 2, styles: { halign: 'center', fontStyle: 'bold', fontSize: 10 } }
+        { content: 'TOTAL OPERATIONAL EXPENSES', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+        { content: `Rs. ${fmt(params.totalExpenses)}`, styles: { halign: 'right', fontStyle: 'bold' } }
       ]
     ],
     theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1.1, halign: 'right', textColor: [15, 23, 42] },
-    columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } },
-    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' },
-    footStyles: { fillColor: [255, 255, 0], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 9.5 }
+    styles: { fontSize: 6.8, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 51 },
+      1: { halign: 'right', cellWidth: 32 },
+      2: { halign: 'left', fontStyle: 'bold', cellWidth: 51 },
+      3: { halign: 'right', cellWidth: 33 }
+    },
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6.8, halign: 'center' },
+    footStyles: { fillColor: [255, 228, 230], textColor: [159, 18, 57], fontStyle: 'bold', fontSize: 7.2 }
+  });
+
+  rightFinalY = (doc as any).lastAutoTable.finalY;
+
+  // 4C. Right Table 3: Profit & Loss Final Summary & Net Profit
+  autoTable(doc, {
+    startY: rightFinalY + 2.5,
+    margin: { left: rightColX, right: 10 },
+    head: [
+      [
+        { content: `PROFIT & LOSS SUMMARY - ${params.monthFormattedTitle.toUpperCase()}`, colSpan: 2, styles: { halign: 'center', fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' } }
+      ]
+    ],
+    body: [
+      ['Gross Difference (Nett Sale - G. Total Purchase)', `Rs. ${fmt(params.grandDiffWOGST)}`],
+      ['Less: Total Operational Expenses', `(-) Rs. ${fmt(params.totalExpenses)}`]
+    ],
+    foot: [
+      [
+        { content: `NET PROFIT  (${params.profitMarginPercent}% Margin)`, styles: { halign: 'left', fontStyle: 'bold', fontSize: 8 } },
+        { content: `Rs. ${fmt(params.netProfit)}`, styles: { halign: 'right', fontStyle: 'bold', fontSize: 8.5 } }
+      ]
+    ],
+    theme: 'grid',
+    styles: { fontSize: 7, cellPadding: 1.1, textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 105 },
+      1: { halign: 'right', fontStyle: 'bold', cellWidth: 62 }
+    },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    footStyles: params.netProfit >= 0
+      ? { fillColor: [16, 185, 129], textColor: [255, 255, 255], fontStyle: 'bold' }
+      : { fillColor: [225, 29, 72], textColor: [255, 255, 255], fontStyle: 'bold' }
   });
 
   const dateStr = new Date().toISOString().split('T')[0];
@@ -306,8 +436,14 @@ export const exportMRToExcel = (params: MRExportParams) => {
 
   // Expenses
   data.push(['OPERATIONAL EXPENSES', 'AMOUNT (Rs)']);
-  params.visibleExpenses.forEach(exp => {
-    data.push([exp, params.manualData[`EXP:${exp}`] || 0]);
+  const excelExpenses: MRExpenseItem[] = (params.expenseBreakup && params.expenseBreakup.length > 0)
+    ? params.expenseBreakup
+    : params.visibleExpenses.map(exp => ({
+        name: exp,
+        amount: params.manualData[`EXP:${exp}`] || 0
+      }));
+  excelExpenses.forEach(item => {
+    data.push([item.name, item.amount]);
   });
   data.push(['TOTAL EXPENSES', params.totalExpenses]);
   data.push([]);

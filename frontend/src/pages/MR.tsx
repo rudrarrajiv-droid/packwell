@@ -609,6 +609,14 @@ export default function MR() {
     }
   }, [currentMonth]);
 
+  // Effective expense breakdown with live mapped values for export
+  const expenseBreakup = useMemo(() => {
+    return visibleExpenses.map(exp => ({
+      name: exp,
+      amount: getEffectiveExpenseValue(exp)
+    }));
+  }, [visibleExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods]);
+
   // Parameters pack for PDF and Excel export
   const exportParams = useMemo(() => ({
     monthFormattedTitle,
@@ -635,6 +643,9 @@ export default function MR() {
     grandDiffWOGST,
     grandDiffWGST,
     visibleExpenses,
+    expenseBreakup,
+    currentMonthPurchaseWOGST,
+    currentMonthPurchaseWGST,
     totalExpenses,
     netProfit,
     profitMarginPercent,
@@ -650,7 +661,8 @@ export default function MR() {
     netSaleWithoutGST, netSaleWithGST, paperUsedWOGST, paperUsedWGST, partyPurchases,
     scrapCashPurWOGST, scrapCashPurWGST, scrapCashDiffWOGST, scrapCashDiffWGST,
     gTotalPurchaseWOGST, gTotalPurchaseWGST, grandDiffWOGST, grandDiffWGST,
-    visibleExpenses, totalExpenses, netProfit, profitMarginPercent,
+    visibleExpenses, expenseBreakup, currentMonthPurchaseWOGST, currentMonthPurchaseWGST,
+    totalExpenses, netProfit, profitMarginPercent,
     fgStockValue, nonMovingStockValue, wipStockValue, paperStockValue, rmStockValue, grandTotalStock
   ]);
 
