@@ -479,15 +479,41 @@ export const executeFinishGoodOutwardTransaction = async (
       if (payload.poId) {
         const { data: poRow } = await supabase.from('purchase_orders').select('*').eq('firestore_document_id', payload.poId).single();
         if (poRow) openPOs.push(poRow);
-      } else {
-        const { data: poRows } = await supabase
-          .from('purchase_orders')
-          .select('*')
-          .eq('is_archived', false)
-          .eq('product_id_raw', payload.productId)
-          .in('status', ['OPEN', 'PARTIAL'])
-          .order('po_date', { ascending: true });
-        if (poRows) openPOs = poRows;
+      }
+
+      // Fetch other open POs for this exact item in case dispatch qty exceeds selected PO balance
+      const { data: allPoRows } = await supabase
+        .from('purchase_orders')
+        .select('*')
+        .eq('is_archived', false)
+        .in('status', ['OPEN', 'PARTIAL', 'open', 'partial'])
+        .order('po_date', { ascending: true, nullsFirst: false });
+      
+      if (allPoRows && allPoRows.length > 0) {
+        const targetId = (payload.productId || '').trim().toLowerCase();
+        const cleanTarget = targetId.replace(/palin/g, 'plain').replace(/[^a-z0-9]/g, '');
+        const targetDimMatch = targetId.match(/\d+[\s]*[x*×][\s]*\d+([\s]*[x*×][\s]*\d+)?/);
+        const targetDim = targetDimMatch ? targetDimMatch[0].replace(/[\s*×]/g, 'x') : '';
+
+        const siblingPOs = allPoRows.filter(p => {
+          if (payload.poId && p.firestore_document_id === payload.poId) return false; // already first
+          const bal = (Number(p.order_qty) || 0) + (Number(p.in_qty) || 0) - (Number(p.out_qty) || 0);
+          if (bal <= 0) return false;
+          const pName = (p.product_name || '').trim().toLowerCase();
+          const pRaw = (p.product_id_raw || '').trim().toLowerCase();
+          const pRes = (p.resolved_product_id || '').trim().toLowerCase();
+          const cleanPName = pName.replace(/palin/g, 'plain').replace(/[^a-z0-9]/g, '');
+          const pDimMatch = pName.match(/\d+[\s]*[x*×][\s]*\d+([\s]*[x*×][\s]*\d+)?/);
+          const pDim = pDimMatch ? pDimMatch[0].replace(/[\s*×]/g, 'x') : '';
+          
+          const isExact = p.firestore_document_id === payload.productId || pRaw === targetId || pRes === targetId || (pName && pName === targetId);
+          if (isExact) return true;
+          if (cleanTarget && cleanPName && cleanTarget === cleanPName) return true;
+          if (targetDim && pDim && targetDim === pDim) return true;
+          return false;
+        });
+
+        openPOs.push(...siblingPOs);
       }
 
       for (const po of openPOs) {
@@ -498,15 +524,10 @@ export const executeFinishGoodOutwardTransaction = async (
          const outQty = Number(po.out_qty) || 0;
          let currentBal = orderQty + inQty - outQty;
          if (currentBal < 0) currentBal = 0;
+         if (currentBal === 0) continue; 
          
-         if (currentBal === 0 && !payload.poId) continue; 
-         
-         let deduction = 0;
-         if (payload.poId) {
-            deduction = qtyToDeduct;
-         } else {
-            deduction = Math.min(qtyToDeduct, currentBal);
-         }
+         const deduction = Math.min(qtyToDeduct, currentBal);
+         if (deduction <= 0) continue;
          
          const newOutQty = outQty + deduction;
          const newBal = orderQty + inQty - newOutQty;

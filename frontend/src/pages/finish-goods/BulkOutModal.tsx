@@ -4,7 +4,7 @@ import { ArrowUpFromLine, X, CircleDashed, Plus, Trash2, AlertCircle } from 'luc
 import { useAuth } from '../../contexts/AuthContext';
 import { executeFinishGoodOutwardTransaction, getFinishGoods, getFinishGoodTransactions, type FinishGoodOutwardPayload, type LogisticsPayload } from '../../lib/supabase/finishGoodService';
 import { getProducts } from '../../lib/supabase/productService';
-import { getPurchaseOrders, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
+import { getPurchaseOrders, getPurchaseOrderBalance, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
 import BulkInModal from './BulkInModal';
 
 interface FGRow {
@@ -19,6 +19,27 @@ interface FGRow {
 interface BulkOutwardForm extends LogisticsPayload {
   rows: FGRow[];
 }
+
+const normalizeStr = (s?: string | null) => (s || '').trim().toLowerCase();
+
+// Extracts dimension pattern like "205x105x325" or "345x345x325"
+const extractDimensions = (s?: string | null) => {
+  if (!s) return '';
+  const match = s.toLowerCase().match(/\d+[\s]*[x*×][\s]*\d+([\s]*[x*×][\s]*\d+)?/);
+  if (match) {
+    return match[0].replace(/[\s*×]/g, 'x');
+  }
+  return '';
+};
+
+// Clean strings: remove punctuation, normalize palin/plain, remove spaces
+const cleanItemStr = (s?: string | null) => {
+  if (!s) return '';
+  return s
+    .toLowerCase()
+    .replace(/palin/g, 'plain') // common typo fix
+    .replace(/[^a-z0-9]/g, ''); // alphanumeric only
+};
 
 export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
   const { user } = useAuth();
@@ -38,7 +59,12 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
       setProducts(prodData || []);
       setFinishGoods(fgData || []);
       setHistoryDocs(txData || []);
-      setPurchaseOrders(poData.filter(po => po.status === 'OPEN' || po.status === 'PARTIAL'));
+      const activePOs = (poData || []).filter(po => {
+        const status = (po.status || '').toUpperCase();
+        const bal = getPurchaseOrderBalance(po);
+        return (status !== 'CLOSED' && status !== 'CANCELLED') || bal > 0;
+      });
+      setPurchaseOrders(activePOs);
     });
   };
 
@@ -86,10 +112,10 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
     return Array.from(map.values()).sort((a, b) => (a.productName || '').localeCompare(b.productName || ''));
   }, [products, finishGoods]);
 
-  const uniquePlaces = Array.from(new Set(historyDocs.map(d => d.place).filter(Boolean)));
-  const uniqueTransporters = Array.from(new Set(historyDocs.map(d => d.transporterName).filter(Boolean)));
-  const uniqueVehicleNos = Array.from(new Set(historyDocs.map(d => d.vehicleNo).filter(Boolean)));
-  const uniqueVehicleSizes = Array.from(new Set(historyDocs.map(d => d.vehicleSize).filter(Boolean)));
+  const uniquePlaces = useMemo(() => Array.from(new Set(historyDocs.map(d => d.place).filter(Boolean))), [historyDocs]);
+  const uniqueTransporters = useMemo(() => Array.from(new Set(historyDocs.map(d => d.transporterName).filter(Boolean))), [historyDocs]);
+  const uniqueVehicleNos = useMemo(() => Array.from(new Set(historyDocs.map(d => d.vehicleNo).filter(Boolean))), [historyDocs]);
+  const uniqueVehicleSizes = useMemo(() => Array.from(new Set(historyDocs.map(d => d.vehicleSize).filter(Boolean))), [historyDocs]);
 
   const { register, control, handleSubmit, watch, getValues, setValue } = useForm<BulkOutwardForm>({
     defaultValues: {
@@ -111,6 +137,78 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
     control,
     name: 'rows'
   });
+
+  // Strictly match POs for the selected product/item
+  const getMatchingPOsForProduct = (productId: string, productName?: string, customerName?: string) => {
+    const normFgProd = normalizeStr(productName);
+    const normFgCust = normalizeStr(customerName);
+    const cleanFgProd = cleanItemStr(productName);
+    const fgDim = extractDimensions(productName);
+
+    return purchaseOrders
+      .map(po => {
+        const bal = getPurchaseOrderBalance(po);
+        if (bal <= 0) return null;
+
+        const poProdName = po.productName || '';
+        const normPoProd = normalizeStr(poProdName);
+        const cleanPoProd = cleanItemStr(poProdName);
+        const normPoCust = normalizeStr(po.customerName);
+        const poDim = extractDimensions(poProdName);
+
+        let isMatch = false;
+        let score = 0;
+
+        // 1. Direct ID match
+        if (po.productId && (po.productId === productId || normalizeStr(po.productId) === normalizeStr(productId))) {
+          isMatch = true;
+          score += 100;
+        }
+
+        // 2. Exact Product Name match
+        if (normPoProd && normFgProd && normPoProd === normFgProd) {
+          isMatch = true;
+          score += 100;
+        }
+
+        // 3. Cleaned Product Name match (exact character equality)
+        if (cleanPoProd && cleanFgProd && cleanPoProd === cleanFgProd) {
+          isMatch = true;
+          score += 90;
+        }
+
+        // 4. Exact Dimension Match (e.g. 205x105x325 === 205x105x325)
+        if (fgDim && poDim && fgDim === poDim) {
+          const isSameCust = normFgCust && normPoCust && (normFgCust === normPoCust || normPoCust.includes(normFgCust) || normFgCust.includes(normPoCust));
+          if (isSameCust || cleanPoProd.includes('box') || cleanFgProd.includes('box')) {
+            isMatch = true;
+            score += 85;
+          }
+        }
+
+        if (!isMatch) return null;
+
+        // Customer match priority bonus
+        const isCustMatch = Boolean(normFgCust && normPoCust && (normFgCust === normPoCust || normPoCust.includes(normFgCust) || normFgCust.includes(normPoCust)));
+        if (isCustMatch) {
+          score += 50;
+        }
+
+        return {
+          po,
+          bal,
+          score,
+          isCustMatch
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        const timeA = a.po.poDate ? new Date(a.po.poDate).getTime() : 0;
+        const timeB = b.po.poDate ? new Date(b.po.poDate).getTime() : 0;
+        return timeA - timeB;
+      });
+  };
 
   // Initialize first row
   const initialized = useRef(false);
@@ -148,6 +246,21 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
     if (fg) {
       setValue(`rows.${index}.customerName`, fg.customerName || '');
       setValue(`rows.${index}.productName`, fg.productName || '');
+
+      // Automatically check and auto-select matching PO strictly for this item
+      const matchingPOs = getMatchingPOsForProduct(productId, fg.productName, fg.customerName);
+      if (matchingPOs.length > 0) {
+        setValue(`rows.${index}.poId`, matchingPOs[0].po.id || '');
+        if (!fg.customerName && matchingPOs[0].po.customerName) {
+          setValue(`rows.${index}.customerName`, matchingPOs[0].po.customerName);
+        }
+      } else {
+        setValue(`rows.${index}.poId`, '');
+      }
+    } else {
+      setValue(`rows.${index}.customerName`, '');
+      setValue(`rows.${index}.productName`, '');
+      setValue(`rows.${index}.poId`, '');
     }
   };
 
@@ -410,6 +523,7 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                       setValue={setValue} 
                       handleProductChange={handleProductChange} 
                       inputCls={inputCls} 
+                      value={currentProductId}
                     />
                   </div>
 
@@ -429,36 +543,60 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                     {(() => {
                       const rowFg = mergedProducts.find(fg => fg.productId === currentProductId);
                       if (!currentProductId || !rowFg) {
-                        return <select disabled className={inputCls + " bg-muted/30 text-xs"}><option>Select Product First</option></select>;
+                        return <select disabled className={inputCls + " bg-muted/30 text-xs text-muted-foreground"}><option>Select Item First</option></select>;
                       }
                       
-                      const availablePOs = purchaseOrders
-                        .filter(po => po.productId === currentProductId && po.customerName === rowFg.customerName)
-                        .sort((a, b) => new Date(a.poDate).getTime() - new Date(b.poDate).getTime());
+                      const matchingPOs = getMatchingPOsForProduct(currentProductId, rowFg.productName, rowFg.customerName);
                         
-                      if (availablePOs.length === 0) {
+                      if (matchingPOs.length === 0) {
                         return (
                           <div className="relative">
-                            <select {...register(`rows.${index}.poId` as const)} className={inputCls + " text-xs text-muted-foreground bg-muted/10 border-orange-200"}>
-                              <option value="">No Pending POs</option>
+                            <select disabled className={inputCls + " text-xs text-muted-foreground bg-muted/20 border-dashed"}>
+                              <option value="">No Pending PO</option>
                             </select>
                             <input type="hidden" {...register(`rows.${index}.poId` as const)} value="" />
                           </div>
                         );
                       }
-                      
+
+                      const chosenPoId = rows[index]?.poId;
+                      const selectedPo = purchaseOrders.find(p => p.id === chosenPoId);
+                      const selectedPoBal = selectedPo ? getPurchaseOrderBalance(selectedPo) : null;
+
                       return (
-                        <select {...register(`rows.${index}.poId` as const)} className={inputCls + " text-xs font-semibold text-blue-700"}>
-                          <option value="">-- Skip PO --</option>
-                          {availablePOs.map(po => {
-                            const pending = po.orderQty - po.outQty;
-                            return (
+                        <div>
+                          <select 
+                            {...register(`rows.${index}.poId` as const)} 
+                            onChange={(e) => {
+                              const chosenPoId = e.target.value;
+                              setValue(`rows.${index}.poId`, chosenPoId);
+                              if (chosenPoId) {
+                                const chosenPo = purchaseOrders.find(p => p.id === chosenPoId);
+                                if (chosenPo?.customerName) {
+                                  setValue(`rows.${index}.customerName`, chosenPo.customerName);
+                                }
+                              }
+                            }}
+                            className={inputCls + " text-xs font-semibold text-blue-700 bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 cursor-pointer"}
+                          >
+                            <option value="">-- Skip PO / None --</option>
+                            {matchingPOs.map(({ po, bal, isCustMatch }) => (
                               <option key={po.id} value={po.id!}>
-                                {po.poNo} ({pending} pending)
+                                {po.poNo} | Bal: {bal.toLocaleString()} pcs{isCustMatch ? ' ★' : ''}
                               </option>
-                            );
-                          })}
-                        </select>
+                            ))}
+                          </select>
+                          {selectedPoBal !== null && (
+                            <div className="text-[11px] font-bold text-blue-600 dark:text-blue-400 mt-1 flex items-center justify-between">
+                              <span>PO Bal: {selectedPoBal.toLocaleString()} pcs</span>
+                              {matchingPOs.length > 1 && (
+                                <span className="text-[10px] text-muted-foreground font-normal">
+                                  ({matchingPOs.length} POs available)
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       );
                     })()}
                   </div>
@@ -497,25 +635,41 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
                     </button>
                   </div>
 
-                  {/* Stock Indicator */}
+                  {/* Stock & PO Indicators */}
                   {currentProductId && (
-                    <div className="col-span-12 -mt-1 px-2 pb-1 flex items-center justify-between text-xs">
+                    <div className="col-span-12 -mt-1 px-2 pb-1 flex flex-wrap items-center justify-between gap-2 text-xs">
                       {(() => {
                         const fg = mergedProducts.find(p => p.productId === currentProductId);
                         if (!fg) return null;
                         const stock = rows[index]?.category === 'NON-MOVING' ? (fg.nonMovingBalance || 0) : (fg.closingBalance || 0);
                         const isShortage = rows[index]?.quantity && Number(rows[index]?.quantity) > stock;
                         
+                        const chosenPoId = rows[index]?.poId;
+                        const selectedPo = purchaseOrders.find(p => p.id === chosenPoId);
+                        const selectedPoBal = selectedPo ? getPurchaseOrderBalance(selectedPo) : null;
+                        const qtyNum = Number(rows[index]?.quantity) || 0;
+                        const isPoOverQty = selectedPoBal !== null && qtyNum > selectedPoBal;
+
                         return (
-                          <div className={`flex items-center gap-2 font-medium ${isShortage ? 'text-destructive font-bold' : 'text-muted-foreground'}`}>
-                            {isShortage && <AlertCircle className="w-3.5 h-3.5 inline text-destructive animate-pulse" />}
-                            <span>
-                              Available in {rows[index]?.category === 'NON-MOVING' ? 'Non-Moving' : 'Regular'}: {stock} pcs
-                            </span>
-                            {isShortage && (
-                              <span className="text-destructive font-bold bg-destructive/10 px-1.5 py-0.5 rounded">
-                                (Short by {Number(rows[index]?.quantity) - stock} pcs)
+                          <div className="flex flex-wrap items-center gap-3">
+                            <div className={`flex items-center gap-1.5 font-medium ${isShortage ? 'text-destructive font-bold' : 'text-muted-foreground'}`}>
+                              {isShortage && <AlertCircle className="w-3.5 h-3.5 inline text-destructive animate-pulse" />}
+                              <span>
+                                Available in {rows[index]?.category === 'NON-MOVING' ? 'Non-Moving' : 'Regular'}: {stock} pcs
                               </span>
+                              {isShortage && (
+                                <span className="text-destructive font-bold bg-destructive/10 px-1.5 py-0.5 rounded">
+                                  (Short by {Number(rows[index]?.quantity) - stock} pcs)
+                                </span>
+                              )}
+                            </div>
+
+                            {isPoOverQty && (
+                              <div className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded flex items-center gap-1.5">
+                                <span>
+                                  💡 <b>{selectedPoBal} pcs</b> PO {selectedPo?.poNo} se close hoga. Baaki <b>{qtyNum - selectedPoBal} pcs</b> ke liye aap <b>+ Add Another Row</b> karke 2nd PO select kar sakte hain ya auto-adjust hone de sakte hain.
+                                </span>
+                              </div>
                             )}
                           </div>
                         );
@@ -592,9 +746,23 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
   );
 }
 
-function ProductSearchSelect({ index, items, register, setValue, handleProductChange, inputCls }: any) {
-  const [searchText, setSearchText] = useState('');
+function ProductSearchSelect({ index, items, register, setValue, handleProductChange, inputCls, value }: any) {
+  const selectedProduct = items.find((p: any) => p.productId === value);
+  const [searchText, setSearchText] = useState(
+    selectedProduct ? `${selectedProduct.productName}${selectedProduct.artworkNo ? ` (${selectedProduct.artworkNo})` : ''}` : ''
+  );
   const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    if (value) {
+      const p = items.find((item: any) => item.productId === value);
+      if (p) {
+        setSearchText(`${p.productName}${p.artworkNo ? ` (${p.artworkNo})` : ''}`);
+      }
+    } else if (!searchText) {
+      setSearchText('');
+    }
+  }, [value, items]);
 
   return (
     <div className="relative">
@@ -616,7 +784,7 @@ function ProductSearchSelect({ index, items, register, setValue, handleProductCh
       <input type="hidden" {...register(`rows.${index}.productId` as const)} />
       
       {isOpen && (
-        <div className="absolute z-[100] mt-1 w-[150%] bg-white border border-gray-300 rounded-md shadow-xl max-h-60 overflow-y-auto">
+        <div className="absolute z-[100] mt-1 w-[150%] bg-white dark:bg-card border border-border rounded-md shadow-xl max-h-60 overflow-y-auto">
           {items.filter((p: any) => {
              const lower = searchText.toLowerCase();
              const combined = `${p.productName || ''} ${p.artworkNo || ''} ${p.customerName || ''}`.toLowerCase();
@@ -624,7 +792,7 @@ function ProductSearchSelect({ index, items, register, setValue, handleProductCh
           }).map((p: any) => (
             <div 
               key={p.productId}
-              className="px-3 py-2 cursor-pointer hover:bg-gray-100 text-sm text-black border-b border-gray-100 last:border-0"
+              className="px-3 py-2 cursor-pointer hover:bg-muted/80 text-sm text-foreground border-b border-border/40 last:border-0"
               onMouseDown={() => {
                 setValue(`rows.${index}.productId`, p.productId);
                 setSearchText(`${p.productName}${p.artworkNo ? ` (${p.artworkNo})` : ''}`);
@@ -633,11 +801,11 @@ function ProductSearchSelect({ index, items, register, setValue, handleProductCh
               }}
             >
               <div className="font-bold">{p.productName}</div>
-              <div className="text-xs text-gray-500">
+              <div className="text-xs text-muted-foreground">
                 {p.customerName} {p.artworkNo ? `• Artwork: ${p.artworkNo}` : ''}
               </div>
-              <div className="text-xs text-gray-600">
-                Stock: <span className={p.closingBalance > 0 ? "font-semibold text-emerald-600" : "text-gray-500"}>{p.closingBalance || 0} Reg</span> | <span className={p.nonMovingBalance > 0 ? "font-semibold text-orange-600" : "text-gray-500"}>{p.nonMovingBalance || 0} Non-Mov</span>
+              <div className="text-xs text-muted-foreground/80">
+                Stock: <span className={p.closingBalance > 0 ? "font-semibold text-emerald-600 dark:text-emerald-400" : ""}>{p.closingBalance || 0} Reg</span> | <span className={p.nonMovingBalance > 0 ? "font-semibold text-orange-600 dark:text-orange-400" : ""}>{p.nonMovingBalance || 0} Non-Mov</span>
               </div>
             </div>
           ))}
@@ -646,7 +814,7 @@ function ProductSearchSelect({ index, items, register, setValue, handleProductCh
              const combined = `${p.productName || ''} ${p.artworkNo || ''} ${p.customerName || ''}`.toLowerCase();
              return !searchText || combined.includes(lower);
           }).length === 0 && (
-             <div className="px-3 py-2 text-sm text-gray-500 italic text-center">No matching products found.</div>
+             <div className="px-3 py-2 text-sm text-muted-foreground italic text-center">No matching products found.</div>
           )}
         </div>
       )}

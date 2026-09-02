@@ -463,7 +463,7 @@ export default function MR() {
     return Array.from(new Set([...DEFAULT_EXPENSE_CATEGORIES, ...customExpenses]));
   }, [customExpenses]);
 
-  // SCRAP (CASH) REVENUE
+  // SCRAP (CASH) REVENUE (Displayed for visibility, not added to Nett Sale)
   const cashScrapRevenue = useMemo(() => {
     if (manualData['SALE:SCRAP(CASH):OVERRIDE'] !== undefined) {
       return manualData['SALE:SCRAP(CASH):OVERRIDE'];
@@ -490,7 +490,7 @@ export default function MR() {
     return allParties.filter(p => !visibleSaleParties.includes(p));
   }, [allParties, visibleSaleParties]);
 
-  // Sales totals
+  // Sales totals (Scrap is shown in table but NOT added to Nett Sale as requested)
   const tallyDataWOGST = manualData['SALE:TALLY DATA:WOGST'] || 0;
   const tallyDataWGST = manualData['SALE:TALLY DATA:WGST'] || 0;
   const creditNoteWOGST = manualData['SALE:CREDIT NOTE:WOGST'] || 0;
@@ -499,8 +499,8 @@ export default function MR() {
   const totalPartySaleWOGST = allParties.reduce((sum, party) => sum + (manualData[`SALE:${party}:WOGST`] || 0), 0);
   const totalPartySaleWGST = allParties.reduce((sum, party) => sum + (manualData[`SALE:${party}:WGST`] || 0), 0);
 
-  const netSaleWithoutGST = (totalPartySaleWOGST + cashScrapRevenue + tallyDataWOGST) - creditNoteWOGST;
-  const netSaleWithGST = (totalPartySaleWGST + cashScrapRevenue + tallyDataWGST) - creditNoteWGST;
+  const netSaleWithoutGST = (totalPartySaleWOGST + tallyDataWOGST) - creditNoteWOGST;
+  const netSaleWithGST = (totalPartySaleWGST + tallyDataWGST) - creditNoteWGST;
 
   const currentMonthPurchaseWOGST = manualData['PURCHASE:CURRENT_MONTH:WOGST'] || 0;
   const currentMonthPurchaseWGST = manualData['PURCHASE:CURRENT_MONTH:WGST'] || 0;
@@ -530,8 +530,8 @@ export default function MR() {
   const scrapCashDiffWGST = cashScrapRevenue - scrapCashPurWGST;
 
   // Grand Total Purchases:
-  const gTotalPurchaseWOGST = paperUsedWOGST + partyPurchases.reduce((acc, p) => acc + p.purWOGST, 0) + scrapCashPurWOGST;
-  const gTotalPurchaseWGST = paperUsedWGST + partyPurchases.reduce((acc, p) => acc + p.purWGST, 0) + scrapCashPurWGST;
+  const gTotalPurchaseWOGST = paperUsedWOGST + partyPurchases.reduce((acc, p) => acc + p.purWOGST, 0);
+  const gTotalPurchaseWGST = paperUsedWGST + partyPurchases.reduce((acc, p) => acc + p.purWGST, 0);
 
   // Differences:
   const grandDiffWOGST = netSaleWithoutGST - gTotalPurchaseWOGST;
@@ -1059,7 +1059,7 @@ export default function MR() {
                       );
                     })}
 
-                    {/* MANDATORY 1: SCRAP (CASH) */}
+                    {/* MANDATORY 1: SCRAP (CASH) (Displayed, not summed in Nett Sale) */}
                     <tr className="bg-emerald-50/40 print:bg-emerald-50">
                       <td className="px-4 py-2.5 font-bold text-emerald-800 flex items-center gap-1.5 print:py-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 print:hidden"></span>

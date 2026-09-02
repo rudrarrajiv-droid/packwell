@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Search, FileText, ShoppingCart, Activity, XCircle, ArrowUpDown, ArrowUp, ArrowDown, Users, List, ChevronLeft, Link, FileSpreadsheet, Scale } from 'lucide-react';
+import { Plus, Search, FileText, ShoppingCart, Activity, XCircle, ArrowUpDown, ArrowUp, ArrowDown, Users, List, ChevronLeft, Link, FileSpreadsheet, Scale, Boxes, Layers, ChevronDown, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { deletePurchaseOrder, getAllPOTransactions, getPurchaseOrders, type PurchaseOrder, getPurchaseOrderBalance } from '../lib/supabase/purchaseOrderService';
 import { exportPurchaseOrdersToExcel } from '../utils/exportUtils';
@@ -18,7 +18,7 @@ import { downloadPOTemplate } from '../utils/exportUtils';
 
 type SortField = 'statusPriority' | 'poNo' | 'poDate' | 'deliveryDate' | 'customerName' | 'orderQty' | 'inQty' | 'outQty' | 'closingBal' | 'value';
 type SortDir = 'asc' | 'desc';
-type ViewMode = 'ALL' | 'SUMMARY' | 'DETAIL' | 'MONTHLY';
+type ViewMode = 'ALL' | 'ITEM_WISE' | 'SUMMARY' | 'DETAIL' | 'MONTHLY';
 
 // Sequence Priority: 1. Overdue/Delayed -> 2. Pending -> 3. Partially Completed -> 4. Cancelled -> 5. Completed
 const STATUS_PRIORITY_RANK: Record<string, number> = {
@@ -233,6 +233,111 @@ export default function PurchaseOrders() {
 
     return filtered;
   }, [purchaseOrders, searchTerm, statusFilter, customerFilter, poDateFrom, poDateTo, deliveryDateFrom, deliveryDateTo, sortField, sortDir, viewMode, selectedCustomerId]);
+
+  // Item Wise Grouping Computation
+  const [showMultipleOnly, setShowMultipleOnly] = useState(false);
+  const [collapsedItems, setCollapsedItems] = useState<Set<string>>(new Set());
+
+  const toggleItemCollapse = (itemKey: string) => {
+    setCollapsedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemKey)) {
+        next.delete(itemKey);
+      } else {
+        next.add(itemKey);
+      }
+      return next;
+    });
+  };
+
+  const expandAllItems = (keys?: string[]) => {
+    setCollapsedItems(new Set());
+  };
+
+  const collapseAllItems = (keys: string[]) => {
+    setCollapsedItems(new Set(keys));
+  };
+
+  const itemWiseData = useMemo(() => {
+    const map = new Map<string, {
+      key: string;
+      productName: string;
+      artworkNo: string;
+      customerNames: Set<string>;
+      poCount: number;
+      totalOrderQty: number;
+      totalInQty: number;
+      totalOutQty: number;
+      totalClosingBal: number;
+      totalPoValue: number;
+      totalPendingValue: number;
+      pos: PurchaseOrder[];
+    }>();
+
+    displayData.forEach(po => {
+      const prodName = (po.productName || 'Unnamed Item').trim();
+      const artNo = (po.artworkNo || '').trim();
+      const groupKey = `${prodName.toLowerCase()}___${artNo.toLowerCase()}`;
+      const closingBal = getPurchaseOrderBalance(po);
+      const poVal = po.orderQty * po.rate;
+      const pendingVal = closingBal * po.rate;
+
+      if (!map.has(groupKey)) {
+        map.set(groupKey, {
+          key: groupKey,
+          productName: prodName,
+          artworkNo: artNo,
+          customerNames: new Set<string>(),
+          poCount: 0,
+          totalOrderQty: 0,
+          totalInQty: 0,
+          totalOutQty: 0,
+          totalClosingBal: 0,
+          totalPoValue: 0,
+          totalPendingValue: 0,
+          pos: []
+        });
+      }
+
+      const group = map.get(groupKey)!;
+      group.poCount += 1;
+      if (po.customerName) group.customerNames.add(po.customerName);
+      group.totalOrderQty += po.orderQty;
+      group.totalInQty += (po.inQty || 0);
+      group.totalOutQty += (po.outQty || 0);
+      group.totalClosingBal += closingBal;
+      group.totalPoValue += poVal;
+      group.totalPendingValue += pendingVal;
+      group.pos.push(po);
+    });
+
+    let groups = Array.from(map.values()).map(g => ({
+      ...g,
+      customerList: Array.from(g.customerNames),
+      hasMultiple: g.poCount > 1
+    }));
+
+    // Sort: items with multiple POs (>1) at top by default, then by total closing balance
+    groups.sort((a, b) => {
+      if (a.hasMultiple !== b.hasMultiple) {
+        return a.hasMultiple ? -1 : 1;
+      }
+      return b.totalClosingBal - a.totalClosingBal || a.productName.localeCompare(b.productName);
+    });
+
+    return groups;
+  }, [displayData]);
+
+  const multiPoItemsCount = useMemo(() => {
+    return itemWiseData.filter(g => g.hasMultiple).length;
+  }, [itemWiseData]);
+
+  const filteredItemGroups = useMemo(() => {
+    if (showMultipleOnly) {
+      return itemWiseData.filter(g => g.hasMultiple);
+    }
+    return itemWiseData;
+  }, [itemWiseData, showMultipleOnly]);
 
   // Phase 9: Customer Summaries Computation
   const { customerSummaries, summaryGrandTotals } = useMemo(() => {
@@ -459,6 +564,17 @@ export default function PurchaseOrders() {
                 <List className="w-4 h-4 mr-2" /> All POs
               </button>
               <button 
+                onClick={() => { setViewMode('ITEM_WISE'); setSelectedCustomerId(null); }}
+                className={cn("px-4 py-1.5 text-sm font-bold rounded-md flex items-center transition-all relative", viewMode === 'ITEM_WISE' ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+              >
+                <Boxes className="w-4 h-4 mr-2 text-primary" /> Item Wise (Grouping)
+                {multiPoItemsCount > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px] font-black rounded-full">
+                    {multiPoItemsCount} Multi
+                  </span>
+                )}
+              </button>
+              <button 
                 onClick={() => { setViewMode('SUMMARY'); setSelectedCustomerId(null); }}
                 className={cn("px-4 py-1.5 text-sm font-bold rounded-md flex items-center transition-all", viewMode === 'SUMMARY' ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
               >
@@ -502,6 +618,286 @@ export default function PurchaseOrders() {
           </div>
         </div>
       </div>
+
+      {/* ----------- ITEM WISE (GROUP BY ITEM) VIEW ----------- */}
+      {viewMode === 'ITEM_WISE' && (
+        <div className="flex flex-col h-full space-y-4 animate-fade-in">
+          
+          {/* Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {[
+              { label: 'TOTAL UNIQUE ITEMS', value: itemWiseData.length, color: 'text-foreground' },
+              { label: 'ITEMS WITH MULTI POs', value: multiPoItemsCount, color: 'text-amber-600 font-black' },
+              { label: 'TOTAL OPENING QTY', value: totals.openQty.toLocaleString(), color: 'text-foreground' },
+              { label: 'TOTAL IN QTY', value: totals.inQty.toLocaleString(), color: 'text-green-600' },
+              { label: 'TOTAL OUT QTY', value: totals.outQty.toLocaleString(), color: 'text-red-600' },
+              { label: 'TOTAL PENDING BAL', value: totals.closingBal.toLocaleString(), color: 'text-primary font-black' },
+            ].map((card, i) => (
+              <div key={i} className="bg-card p-4 rounded-xl border border-border shadow-sm flex flex-col justify-center items-center text-center relative overflow-hidden group hover:border-primary/50 transition-colors">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-primary/5 to-transparent rounded-bl-full -z-10 transition-transform group-hover:scale-150" />
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mb-1">{card.label}</p>
+                <p className={`text-xl font-black ${card.color}`}>{card.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Controls Bar */}
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-card p-4 rounded-xl border border-border shadow-sm">
+            <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+              <div className="relative w-full lg:w-[320px]">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search Item, Customer, PO No..."
+                  className="w-full pl-9 pr-4 py-2 text-sm rounded-lg border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/60"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+
+              {/* Toggle Multiple POs only */}
+              <div className="bg-muted p-1 rounded-lg flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setShowMultipleOnly(false)}
+                  className={cn("px-3 py-1.5 text-xs font-bold rounded-md transition-all", !showMultipleOnly ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}
+                >
+                  All Items ({itemWiseData.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowMultipleOnly(true)}
+                  className={cn("px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1", showMultipleOnly ? "bg-amber-500 text-white shadow-xs" : "text-muted-foreground hover:text-foreground")}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  Multiple POs Only ({multiPoItemsCount})
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full lg:w-auto justify-end">
+              <button
+                type="button"
+                onClick={() => expandAllItems()}
+                className="px-3 py-1.5 text-xs font-bold bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-lg transition-colors"
+              >
+                Expand All
+              </button>
+              <button
+                type="button"
+                onClick={() => collapseAllItems(itemWiseData.map(g => g.key))}
+                className="px-3 py-1.5 text-xs font-bold bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-lg transition-colors"
+              >
+                Collapse All
+              </button>
+              <button onClick={handleExport} className="px-3 py-1.5 bg-secondary text-secondary-foreground text-xs font-bold rounded-lg transition-colors hover:bg-secondary/80">
+                Export Excel
+              </button>
+            </div>
+          </div>
+
+          {/* Item Wise Groups List */}
+          <div className="space-y-4">
+            {filteredItemGroups.length === 0 ? (
+              <div className="bg-card p-12 rounded-xl border border-border text-center">
+                <Boxes className="w-12 h-12 mb-3 text-muted-foreground/30 mx-auto" />
+                <p className="text-base font-semibold text-muted-foreground">No Items Found</p>
+                <p className="text-xs text-muted-foreground mt-1">Try changing your search or filters.</p>
+              </div>
+            ) : (
+              filteredItemGroups.map((group) => {
+                const isCollapsed = collapsedItems.has(group.key);
+                return (
+                  <div key={group.key} className="bg-card rounded-xl border border-border shadow-sm overflow-hidden transition-all hover:border-primary/40">
+                    {/* Item Header Accordion Bar */}
+                    <div 
+                      onClick={() => toggleItemCollapse(group.key)}
+                      className="p-4 bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-border/60 select-none"
+                    >
+                      <div className="flex items-start md:items-center gap-3">
+                        <div className="p-2 rounded-lg bg-primary/10 text-primary mt-0.5 md:mt-0">
+                          {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-base font-black text-foreground">{group.productName}</h3>
+                            {group.artworkNo && (
+                              <span className="px-2 py-0.5 bg-muted border border-border text-muted-foreground font-mono text-xs rounded">
+                                Art: {group.artworkNo}
+                              </span>
+                            )}
+                            {group.hasMultiple ? (
+                              <span className="px-2.5 py-0.5 bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-400 font-bold rounded-full text-xs flex items-center gap-1">
+                                <Layers className="w-3 h-3" />
+                                {group.poCount} POs Combined
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-secondary text-muted-foreground font-semibold rounded-full text-[11px]">
+                                1 PO
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-muted-foreground">
+                            <span>Parties:</span>
+                            {group.customerList.map((cust, idx) => (
+                              <span key={idx} className="font-semibold text-foreground bg-background px-2 py-0.5 rounded border border-border/60 text-[11px]">
+                                {cust}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Summary Metrics for this Item */}
+                      <div className="flex flex-wrap items-center gap-3 lg:gap-5 self-end md:self-auto bg-background/80 px-4 py-2 rounded-lg border border-border/50">
+                        <div className="text-right">
+                          <p className="text-[10px] text-muted-foreground font-bold uppercase">Total Opn</p>
+                          <p className="text-sm font-bold text-foreground">{group.totalOrderQty.toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-green-600/80 font-bold uppercase">Total In</p>
+                          <p className="text-sm font-bold text-green-600">{group.totalInQty.toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-red-600/80 font-bold uppercase">Total Out</p>
+                          <p className="text-sm font-bold text-red-600">{group.totalOutQty.toLocaleString()}</p>
+                        </div>
+                        <div className="text-right pl-2 border-l border-border">
+                          <p className="text-[10px] text-primary font-bold uppercase">Pending Balance</p>
+                          <p className="text-base font-black text-primary">{group.totalClosingBal.toLocaleString()} pcs</p>
+                        </div>
+                        <div className="text-right pl-2 border-l border-border">
+                          <p className="text-[10px] text-orange-600/80 font-bold uppercase">Pending Value</p>
+                          <p className="text-sm font-black text-orange-600">₹{group.totalPendingValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Collapsible Table of POs for this item */}
+                    {!isCollapsed && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm whitespace-nowrap min-w-[1100px]">
+                          <thead className="bg-secondary/30 text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
+                            <tr>
+                              <th className="px-3 py-2.5 border-b border-border">PO NO.</th>
+                              <th className="px-3 py-2.5 border-b border-border">PO DATE</th>
+                              <th className="px-3 py-2.5 border-b border-border">DELIVERY DATE</th>
+                              <th className="px-3 py-2.5 border-b border-border">CUSTOMER</th>
+                              <th className="px-3 py-2.5 border-b border-border">CONSIGNEE</th>
+                              <th className="px-3 py-2.5 border-b border-border text-right">RATE</th>
+                              <th className="px-3 py-2.5 border-b border-border text-right">OPN QTY</th>
+                              <th className="px-3 py-2.5 border-b border-border text-right text-green-600">IN QTY</th>
+                              <th className="px-3 py-2.5 border-b border-border text-right text-red-600">OUT QTY</th>
+                              <th className="px-3 py-2.5 border-b border-border text-right font-bold">CLOSING BAL</th>
+                              <th className="px-3 py-2.5 border-b border-border text-right text-orange-600">VALUE</th>
+                              <th className="px-3 py-2.5 border-b border-border text-center">STATUS</th>
+                              <th className="px-3 py-2.5 border-b border-border text-center">ACTION</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/60">
+                            {group.pos.map((po) => {
+                              const closingBal = getPurchaseOrderBalance(po);
+                              const value = closingBal * po.rate;
+                              const calculatedStatus = getCalculatedStatus(po);
+                              return (
+                                <tr key={po.id} className="hover:bg-muted/20 transition-colors">
+                                  <td className="px-3 py-2 font-bold text-foreground">{po.poNo}</td>
+                                  <td className="px-3 py-2 text-muted-foreground">{formatDate(po.poDate)}</td>
+                                  <td className="px-3 py-2 text-muted-foreground">{formatDate(po.deliveryDate)}</td>
+                                  <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
+                                  <td className="px-3 py-2 text-muted-foreground truncate max-w-[150px]" title={po.consignee}>{po.consignee || '-'}</td>
+                                  <td className="px-3 py-2 text-right font-medium">₹{po.rate.toFixed(2)}</td>
+                                  <td className="px-3 py-2 text-right font-bold">{po.orderQty.toLocaleString()}</td>
+                                  <td className="px-3 py-2 text-right font-bold text-green-600">{(po.inQty || 0).toLocaleString()}</td>
+                                  <td className="px-3 py-2 text-right font-bold text-red-600">{(po.outQty || 0).toLocaleString()}</td>
+                                  <td className="px-3 py-2 text-right font-black text-foreground">{closingBal.toLocaleString()}</td>
+                                  <td className="px-3 py-2 text-right font-bold text-orange-600">₹{value.toLocaleString()}</td>
+                                  <td className="px-3 py-2 text-center">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${
+                                      calculatedStatus === 'PENDING' ? 'bg-blue-100 text-blue-700' :
+                                      calculatedStatus === 'PARTIALLY COMPLETED' ? 'bg-orange-100 text-orange-700' :
+                                      calculatedStatus === 'COMPLETED' ? 'bg-green-100 text-green-700' :
+                                      'bg-red-100 text-red-700'
+                                    }`}>
+                                      {calculatedStatus}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        onClick={() => setInActionPo(po)}
+                                        disabled={calculatedStatus === 'COMPLETED' || calculatedStatus === 'CANCELLED'}
+                                        className="bg-green-100 hover:bg-green-200 text-green-700 px-2.5 py-0.5 rounded text-xs font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                        title="Record IN Transaction"
+                                      >
+                                        IN
+                                      </button>
+                                      <button
+                                        onClick={() => setEditPo(po)}
+                                        className="p-1 hover:bg-orange-100 text-orange-600 rounded transition-colors"
+                                        title="Edit Purchase Order"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => setAdjustPo(po)}
+                                        className="p-1 hover:bg-amber-100 text-amber-600 rounded transition-colors"
+                                        title="Adjust / Audit PO Balance / Make NIL"
+                                      >
+                                        <Scale className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => setHistoryPo(po)}
+                                        className="p-1 hover:bg-blue-100 text-blue-600 rounded transition-colors"
+                                        title="View Transaction History"
+                                      >
+                                        <FileText className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => setLinkedPo(po)}
+                                        className="p-1 hover:bg-purple-100 text-purple-600 rounded transition-colors"
+                                        title="View Linked Job Cards"
+                                      >
+                                        <Link className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDelete(po)}
+                                        className="p-1 hover:bg-red-100 text-red-600 rounded transition-colors"
+                                        title="Delete Purchase Order"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          {group.hasMultiple && (
+                            <tfoot className="bg-muted/40 font-bold border-t border-border">
+                              <tr>
+                                <td colSpan={6} className="px-3 py-2 text-right text-xs uppercase text-muted-foreground">
+                                  TOTAL FOR {group.productName} ({group.poCount} POs):
+                                </td>
+                                <td className="px-3 py-2 text-right text-foreground font-bold">{group.totalOrderQty.toLocaleString()}</td>
+                                <td className="px-3 py-2 text-right text-green-600 font-bold">{group.totalInQty.toLocaleString()}</td>
+                                <td className="px-3 py-2 text-right text-red-600 font-bold">{group.totalOutQty.toLocaleString()}</td>
+                                <td className="px-3 py-2 text-right text-foreground font-black">{group.totalClosingBal.toLocaleString()}</td>
+                                <td className="px-3 py-2 text-right text-orange-600 font-bold">₹{group.totalPendingValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                                <td colSpan={2}></td>
+                              </tr>
+                            </tfoot>
+                          )}
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ----------- CUSTOMER SUMMARY VIEW ----------- */}
       {viewMode === 'SUMMARY' && (
@@ -831,7 +1227,31 @@ export default function PurchaseOrders() {
                       <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
                       <td className="px-3 py-2 text-muted-foreground truncate max-w-[150px]" title={po.consignee}>{po.consignee || '-'}</td>
                       <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{po.artworkNo || '-'}</td>
-                      <td className="px-3 py-2 font-medium truncate max-w-[150px]" title={po.productName}>{po.productName}</td>
+                      <td className="px-3 py-2 font-medium max-w-[200px]" title={po.productName}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate">{po.productName}</span>
+                          {(() => {
+                            const group = itemWiseData.find(g => g.productName.toLowerCase() === (po.productName || '').trim().toLowerCase());
+                            if (group && group.hasMultiple) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSearchTerm(po.productName);
+                                    setViewMode('ITEM_WISE');
+                                  }}
+                                  className="px-1.5 py-0.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-700 dark:text-amber-300 rounded text-[10px] font-bold shrink-0 transition-colors"
+                                  title={`This item has ${group.poCount} POs. Click to view grouped!`}
+                                >
+                                  {group.poCount} POs
+                                </button>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+                      </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{po.size}</td>
                       <td className="px-3 py-2 text-right font-medium">₹{po.rate.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right font-bold">{po.orderQty}</td>
