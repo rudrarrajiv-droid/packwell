@@ -3,19 +3,73 @@ import { Calendar, Users, IndianRupee, Loader2, X, FileDown } from 'lucide-react
 import * as XLSX from 'xlsx';
 import { getEmployees, type Employee } from '../../lib/supabase/employeeService';
 import { getAttendanceByDateRange, type AttendanceRecord } from '../../lib/supabase/attendanceService';
+import MonthlyActivityMatrix from './MonthlyActivityMatrix';
 
 export default function MonthlyReportTab() {
-  const [fromDate, setFromDate] = useState<string>(new Date().toISOString().substring(0, 10));
-  const [toDate, setToDate] = useState<string>(new Date().toISOString().substring(0, 10));
+  // Default to current month range (1st to last day of month)
+  const getCurrentMonthRange = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+    return {
+      start: `${y}-${m}-01`,
+      end: `${y}-${m}-${String(lastDay).padStart(2, '0')}`
+    };
+  };
+
+  const initialRange = getCurrentMonthRange();
+  const [fromDate, setFromDate] = useState<string>(initialRange.start);
+  const [toDate, setToDate] = useState<string>(initialRange.end);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'ALL' | 'COMPANY' | 'WAGES_DINESH' | 'WAGES_VIKAS'>('ALL');
-  const [viewMode, setViewMode] = useState<'DATE' | 'EMPLOYEE'>('DATE');
+  const [viewMode, setViewMode] = useState<'DATE' | 'EMPLOYEE' | 'MATRIX'>('MATRIX');
+  const [showAllEmployeesInMatrix, setShowAllEmployeesInMatrix] = useState<boolean>(false);
   const [selectedEmployeeForLedger, setSelectedEmployeeForLedger] = useState<Employee | null>(null);
 
   useEffect(() => {
     fetchData();
+  }, [fromDate, toDate]);
+
+  const setThisMonth = () => {
+    const range = getCurrentMonthRange();
+    setFromDate(range.start);
+    setToDate(range.end);
+  };
+
+  const setLastMonth = () => {
+    const now = new Date();
+    const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    const mNum = now.getMonth() === 0 ? 12 : now.getMonth();
+    const m = String(mNum).padStart(2, '0');
+    const lastDay = new Date(y, mNum, 0).getDate();
+    setFromDate(`${y}-${m}-01`);
+    setToDate(`${y}-${m}-${String(lastDay).padStart(2, '0')}`);
+  };
+
+  // Generate date list between fromDate and toDate (1 to 31)
+  const datesInRange = useMemo(() => {
+    if (!fromDate || !toDate) return [];
+    const dates: string[] = [];
+    const [sy, sm, sd] = fromDate.split('-').map(Number);
+    const [ey, em, ed] = toDate.split('-').map(Number);
+    if (isNaN(sy) || isNaN(sm) || isNaN(sd) || isNaN(ey) || isNaN(em) || isNaN(ed)) return [];
+
+    const cur = new Date(sy, sm - 1, sd);
+    const end = new Date(ey, em - 1, ed);
+
+    let count = 0;
+    while (cur <= end && count < 62) {
+      const y = cur.getFullYear();
+      const m = String(cur.getMonth() + 1).padStart(2, '0');
+      const d = String(cur.getDate()).padStart(2, '0');
+      dates.push(`${y}-${m}-${d}`);
+      cur.setDate(cur.getDate() + 1);
+      count++;
+    }
+    return dates;
   }, [fromDate, toDate]);
 
   const fetchData = async () => {
@@ -123,8 +177,221 @@ export default function MonthlyReportTab() {
     }));
   }, [records, filteredEmployees]);
 
+  const exportMatrixExcel = () => {
+    if (datesInRange.length === 0) {
+      alert("Please select a valid date range.");
+      return;
+    }
+
+    const recordMap: Record<string, Record<string, AttendanceRecord>> = {};
+    records.forEach(r => {
+      if (!recordMap[r.employeeId]) recordMap[r.employeeId] = {};
+      recordMap[r.employeeId][r.date] = r;
+    });
+
+    const activeEmps = filteredEmployees
+      .map(emp => {
+        const empRecordsMap = recordMap[emp.id || ''] || {};
+        let totalPresent = 0;
+        let totalOTHours = 0;
+        let totalRefreshment = 0;
+        let totalDaysAmount = 0;
+        let totalOTAmount = 0;
+
+        datesInRange.forEach(d => {
+          const rec = empRecordsMap[d];
+          if (rec) {
+            totalPresent += rec.present || 0;
+            totalOTHours += rec.otHours || 0;
+            totalRefreshment += rec.refreshment || 0;
+            totalDaysAmount += rec.perDayAmount || 0;
+            totalOTAmount += rec.otAmount || 0;
+          }
+        });
+
+        const grossSalary = Math.round(totalDaysAmount) + Math.round(totalOTAmount) + Math.round(totalRefreshment);
+
+        return {
+          ...emp,
+          recordsByDate: empRecordsMap,
+          totalPresent,
+          totalOTHours,
+          totalRefreshment: Math.round(totalRefreshment),
+          totalDaysAmount: Math.round(totalDaysAmount),
+          totalOTAmount: Math.round(totalOTAmount),
+          grossSalary,
+        };
+      })
+      .filter(emp => {
+        if (!showAllEmployeesInMatrix && emp.totalPresent === 0 && emp.totalOTHours === 0) {
+          return false;
+        }
+        return true;
+      });
+
+    if (activeEmps.length === 0) {
+      alert("No employee data available to export for this period.");
+      return;
+    }
+
+    const dateTotals: Record<string, { present: number; ot: number; ref: number }> = {};
+    datesInRange.forEach(d => {
+      let p = 0;
+      let ot = 0;
+      let ref = 0;
+      activeEmps.forEach(emp => {
+        const rec = emp.recordsByDate[d];
+        if (rec) {
+          p += rec.present || 0;
+          ot += rec.otHours || 0;
+          ref += rec.refreshment || 0;
+        }
+      });
+      dateTotals[d] = { present: p, ot, ref: Math.round(ref) };
+    });
+
+    const grandTotals = activeEmps.reduce(
+      (acc, emp) => ({
+        totalPresent: acc.totalPresent + emp.totalPresent,
+        totalOTHours: acc.totalOTHours + emp.totalOTHours,
+        totalRefreshment: acc.totalRefreshment + emp.totalRefreshment,
+        totalDaysAmount: acc.totalDaysAmount + emp.totalDaysAmount,
+        totalOTAmount: acc.totalOTAmount + emp.totalOTAmount,
+        grossSalary: acc.grossSalary + emp.grossSalary,
+      }),
+      { totalPresent: 0, totalOTHours: 0, totalRefreshment: 0, totalDaysAmount: 0, totalOTAmount: 0, grossSalary: 0 }
+    );
+
+    const headerRow1: (string | number)[] = ['Sr.', 'Employee Name', 'Category', 'Designation', 'Basic Salary'];
+    const headerRow2: (string | number)[] = ['', '', '', '', ''];
+
+    datesInRange.forEach(dateStr => {
+      const dateObj = new Date(dateStr + 'T00:00:00');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const dayName = dateObj.toLocaleDateString('en-GB', { weekday: 'short' });
+      const label = `${day}/${month} (${dayName})`;
+
+      headerRow1.push(label, '', '');
+      headerRow2.push('Duty', 'OT (Hrs)', 'Refreshment (₹)');
+    });
+
+    headerRow1.push('Total Days', 'Total OT (Hrs)', 'Total Ref (₹)', 'Days Amount (₹)', 'OT Amount (₹)', 'Gross Salary (₹)');
+    headerRow2.push('', '', '', '', '', '');
+
+    const dataRows: (string | number)[][] = [headerRow1, headerRow2];
+
+    activeEmps.forEach((emp, index) => {
+      const row: (string | number)[] = [
+        index + 1,
+        emp.name,
+        emp.category === 'COMPANY' ? 'Company' : `Wages (${emp.contractorName || ''})`,
+        emp.designation || '',
+        emp.basicSalary || 0,
+      ];
+
+      datesInRange.forEach(dateStr => {
+        const rec = emp.recordsByDate[dateStr];
+        let dutyStr = '-';
+        let otVal: string | number = '-';
+        let refVal: string | number = '-';
+
+        if (rec) {
+          if (rec.present === 1) dutyStr = 'P';
+          else if (rec.present === 0.5) dutyStr = 'HD';
+          else if (rec.present === 0) dutyStr = 'A';
+
+          if (rec.otHours > 0) otVal = rec.otHours;
+          if (rec.refreshment > 0) refVal = rec.refreshment;
+        }
+
+        row.push(dutyStr, otVal, refVal);
+      });
+
+      row.push(
+        emp.totalPresent,
+        emp.totalOTHours,
+        emp.totalRefreshment,
+        emp.totalDaysAmount,
+        emp.totalOTAmount,
+        emp.grossSalary
+      );
+
+      dataRows.push(row);
+    });
+
+    const totalRow: (string | number)[] = ['TOTAL', '', '', '', ''];
+    datesInRange.forEach(d => {
+      const dt = dateTotals[d] || { present: 0, ot: 0, ref: 0 };
+      totalRow.push(dt.present || 0, dt.ot || 0, dt.ref || 0);
+    });
+    totalRow.push(
+      grandTotals.totalPresent,
+      grandTotals.totalOTHours,
+      grandTotals.totalRefreshment,
+      grandTotals.totalDaysAmount,
+      grandTotals.totalOTAmount,
+      grandTotals.grossSalary
+    );
+    dataRows.push(totalRow);
+
+    const worksheet = XLSX.utils.aoa_to_sheet(dataRows);
+
+    const merges: XLSX.Range[] = [
+      { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } },
+      { s: { r: 0, c: 1 }, e: { r: 1, c: 1 } },
+      { s: { r: 0, c: 2 }, e: { r: 1, c: 2 } },
+      { s: { r: 0, c: 3 }, e: { r: 1, c: 3 } },
+      { s: { r: 0, c: 4 }, e: { r: 1, c: 4 } },
+    ];
+
+    datesInRange.forEach((_, i) => {
+      const startCol = 5 + i * 3;
+      merges.push({ s: { r: 0, c: startCol }, e: { r: 0, c: startCol + 2 } });
+    });
+
+    const summaryStartCol = 5 + datesInRange.length * 3;
+    for (let c = 0; c < 6; c++) {
+      merges.push({ s: { r: 0, c: summaryStartCol + c }, e: { r: 1, c: summaryStartCol + c } });
+    }
+
+    const lastRowIdx = dataRows.length - 1;
+    merges.push({ s: { r: lastRowIdx, c: 0 }, e: { r: lastRowIdx, c: 4 } });
+
+    worksheet['!merges'] = merges;
+
+    const cols: { wch: number }[] = [
+      { wch: 6 },
+      { wch: 22 },
+      { wch: 15 },
+      { wch: 16 },
+      { wch: 12 },
+    ];
+
+    datesInRange.forEach(() => {
+      cols.push({ wch: 7 }, { wch: 8 }, { wch: 10 });
+    });
+
+    cols.push(
+      { wch: 11 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 15 }
+    );
+
+    worksheet['!cols'] = cols;
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Activity Matrix');
+    XLSX.writeFile(workbook, `Monthly_Activity_Matrix_${fromDate}_to_${toDate}_${filter}.xlsx`);
+  };
+
   const handleExportExcel = () => {
-    if (viewMode === 'EMPLOYEE') {
+    if (viewMode === 'MATRIX') {
+      exportMatrixExcel();
+    } else if (viewMode === 'EMPLOYEE') {
       if (reportData.length === 0) {
         alert("No data available to export for this period.");
         return;
@@ -178,8 +445,14 @@ export default function MonthlyReportTab() {
           <p className="text-sm text-muted-foreground">Aggregated view of employee attendance and salary for selected period</p>
         </div>
         
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center bg-muted/50 p-1 rounded-lg border border-border">
+            <button
+              onClick={() => setViewMode('MATRIX')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'MATRIX' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Activity Matrix (1-31)
+            </button>
             <button
               onClick={() => setViewMode('DATE')}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'DATE' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -190,7 +463,7 @@ export default function MonthlyReportTab() {
               onClick={() => setViewMode('EMPLOYEE')}
               className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'EMPLOYEE' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
-              Employee Wise
+              Employee Summary
             </button>
           </div>
           <button
@@ -200,6 +473,22 @@ export default function MonthlyReportTab() {
             <FileDown className="w-5 h-5 mr-2" />
             Export Excel
           </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={setThisMonth}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-md bg-muted hover:bg-muted/80 text-foreground border border-border transition-colors shadow-sm"
+            >
+              This Month
+            </button>
+            <button
+              type="button"
+              onClick={setLastMonth}
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-md bg-muted hover:bg-muted/80 text-foreground border border-border transition-colors shadow-sm"
+            >
+              Last Month
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground font-medium">From:</span>
             <input 
@@ -237,13 +526,24 @@ export default function MonthlyReportTab() {
         ))}
       </div>
 
-      <div className="bg-card border border-border rounded-lg shadow-sm flex-1 overflow-hidden flex flex-col min-h-0">
-        <div className="overflow-x-auto flex-1 custom-scrollbar">
-          {viewMode === 'DATE' ? (
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-muted-foreground bg-muted/50 sticky top-0 z-10 shadow-sm">
-                <tr>
-                  <th className={thClass}>Date</th>
+      {viewMode === 'MATRIX' ? (
+        <MonthlyActivityMatrix
+          dates={datesInRange}
+          employees={filteredEmployees}
+          records={records}
+          isLoading={isLoading}
+          onSelectEmployee={(emp) => setSelectedEmployeeForLedger(emp)}
+          showAllEmployees={showAllEmployeesInMatrix}
+          onToggleShowAll={setShowAllEmployeesInMatrix}
+        />
+      ) : (
+        <div className="bg-card border border-border rounded-lg shadow-sm flex-1 overflow-hidden flex flex-col min-h-0">
+          <div className="overflow-x-auto flex-1 custom-scrollbar">
+            {viewMode === 'DATE' ? (
+              <table className="w-full text-sm text-left">
+                <thead className="text-xs text-muted-foreground bg-muted/50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className={thClass}>Date</th>
                   <th className={thClass}>Company Count</th>
                   <th className={thClass}>Dinesh Count</th>
                   <th className={thClass}>Vikas Count</th>
@@ -403,6 +703,7 @@ export default function MonthlyReportTab() {
           )}
         </div>
       </div>
+      )}
 
       {/* Ledger Modal */}
       {selectedEmployeeForLedger && (

@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Save, Calendar, Clock, Loader2, IndianRupee, RefreshCw } from 'lucide-react';
+import { Save, Calendar, Clock, Loader2, IndianRupee, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEmployees, type Employee } from '../../lib/supabase/employeeService';
 import { getAttendanceByDate, saveDailyAttendance, type AttendanceRecord } from '../../lib/supabase/attendanceService';
+
+interface DailyAttendanceFormState {
+  present: number;
+  otHours: string | number;
+  refreshment: string | number;
+}
 
 export default function DailyEntryTab() {
   const { user } = useAuth();
@@ -11,7 +17,7 @@ export default function DailyEntryTab() {
   // "loadedDate" = what the data was actually loaded for
   const [loadedDate, setLoadedDate] = useState<string>('');
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [attendance, setAttendance] = useState<Record<string, Partial<AttendanceRecord>>>({});
+  const [attendance, setAttendance] = useState<Record<string, DailyAttendanceFormState>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [filter, setFilter] = useState<'ALL' | 'COMPANY' | 'WAGES_DINESH' | 'WAGES_VIKAS'>('ALL');
@@ -36,7 +42,7 @@ export default function DailyEntryTab() {
       setLoadedDate(dateToLoad);
       
       // Initialize form state
-      const attState: Record<string, Partial<AttendanceRecord>> = {};
+      const attState: Record<string, DailyAttendanceFormState> = {};
       
       emps.forEach(emp => {
         const existing = records.find(r => r.employeeId === emp.id);
@@ -64,7 +70,7 @@ export default function DailyEntryTab() {
     }
   };
 
-  const handleInputChange = (empId: string, field: keyof AttendanceRecord, value: number) => {
+  const handleInputChange = (empId: string, field: 'present', value: number) => {
     setAttendance(prev => ({
       ...prev,
       [empId]: {
@@ -74,13 +80,65 @@ export default function DailyEntryTab() {
     }));
   };
 
-  const calculateAmounts = (emp: Employee, att: Partial<AttendanceRecord>) => {
+  const handleOTChange = (empId: string, inputVal: string) => {
+    // Only allow digits and up to 1 decimal place (e.g. 3.5, 2.5, 1, 4.5, 7.5, 8)
+    let val = inputVal.replace(/[^0-9.]/g, '');
+    const parts = val.split('.');
+    if (parts.length > 2) {
+      val = `${parts[0]}.${parts.slice(1).join('')}`;
+    }
+    if (parts.length === 2 && parts[1].length > 1) {
+      val = `${parts[0]}.${parts[1].substring(0, 1)}`;
+    }
+
+    const numVal = parseFloat(val) || 0;
+
+    setAttendance(prev => {
+      const current = prev[empId] || { present: 0, otHours: 0, refreshment: 0 };
+      const prevOT = parseFloat(String(current.otHours || 0)) || 0;
+      const currentRef = Number(current.refreshment) || 0;
+
+      let newRef: string | number = current.refreshment;
+      // Auto formula: Agar OT hours 6 se jyada hai (> 6) to 60 rupees refreshment automatic add ho jaye
+      if (numVal > 6 && (prevOT <= 6 || currentRef === 0)) {
+        newRef = 60;
+      } else if (numVal <= 6 && currentRef === 60 && prevOT > 6) {
+        // Agar OT wapas 6 ya usse kam ho jaye to auto 60 hata kar 0 karein
+        newRef = 0;
+      }
+
+      return {
+        ...prev,
+        [empId]: {
+          ...current,
+          otHours: val,
+          refreshment: newRef,
+        }
+      };
+    });
+  };
+
+  const handleRefreshmentChange = (empId: string, inputVal: string) => {
+    // Allows user to manually change or delete refreshment
+    const val = inputVal.replace(/[^0-9]/g, '');
+    setAttendance(prev => ({
+      ...prev,
+      [empId]: {
+        ...prev[empId],
+        refreshment: val,
+      }
+    }));
+  };
+
+  const calculateAmounts = (emp: Employee, att: { present?: number; otHours?: any; refreshment?: any }) => {
     const dateObj = new Date(loadedDate || pendingDate);
     const daysInMonth = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
     const perDayRate = emp.basicSalary / daysInMonth;
-    const perDayAmount = perDayRate * (att.present || 0);
+    const presentVal = Number(att?.present) || 0;
+    const perDayAmount = perDayRate * presentVal;
     const perHourRate = perDayRate / 8;
-    const otAmount = perHourRate * (att.otHours || 0);
+    const otVal = parseFloat(String(att?.otHours || 0)) || 0;
+    const otAmount = perHourRate * otVal;
     return { perDayAmount, otAmount };
   };
 
@@ -90,10 +148,14 @@ export default function DailyEntryTab() {
     employees.forEach(emp => {
       const att = attendance[emp.id!] || { present: 0, otHours: 0, refreshment: 0 };
       const { perDayAmount, otAmount } = calculateAmounts(emp, att);
-      totalPresent += (att.present || 0);
-      if ((att.present || 0) === 0) totalAbsent++;
-      totalOT += (att.otHours || 0);
-      totalAmount += perDayAmount + otAmount + (att.refreshment || 0);
+      const presentVal = Number(att.present) || 0;
+      const otVal = parseFloat(String(att.otHours || 0)) || 0;
+      const refVal = Number(att.refreshment) || 0;
+
+      totalPresent += presentVal;
+      if (presentVal === 0) totalAbsent++;
+      totalOT += otVal;
+      totalAmount += perDayAmount + otAmount + refVal;
     });
     return { totalPresent, totalAbsent, totalOT, totalAmount };
   }, [attendance, employees]);
@@ -110,15 +172,19 @@ export default function DailyEntryTab() {
       
       employees.forEach(emp => {
         const att = attendance[emp.id!];
-        if (att && (att.present! > 0 || att.otHours! > 0 || att.refreshment! > 0)) {
+        const presentVal = Number(att?.present) || 0;
+        const otVal = parseFloat(String(att?.otHours || 0)) || 0;
+        const refVal = Number(att?.refreshment) || 0;
+
+        if (att && (presentVal > 0 || otVal > 0 || refVal > 0)) {
           const { perDayAmount, otAmount } = calculateAmounts(emp, att);
           
           recordsToSave.push({
             employeeId: emp.id!,
             date: loadedDate,
-            present: att.present || 0,
-            otHours: att.otHours || 0,
-            refreshment: att.refreshment || 0,
+            present: presentVal,
+            otHours: otVal,
+            refreshment: refVal,
             perDayAmount,
             otAmount
           });
@@ -256,7 +322,7 @@ export default function DailyEntryTab() {
                 <th className={thClass}>Employee Name</th>
                 <th className={thClass}>Designation</th>
                 <th className={thClass}>Basic Salary</th>
-                <th className={thClass}>Present (0, 0.5, 1)</th>
+                <th className={thClass}>Attendance</th>
                 <th className={thClass}>OT Hours</th>
                 <th className={thClass}>Refreshment (₹)</th>
                 <th className={thClass}>Auto Calculation</th>
@@ -286,10 +352,11 @@ export default function DailyEntryTab() {
                 filteredEmployees.map((emp, idx) => {
                   const att = attendance[emp.id!] || { present: 0, otHours: 0, refreshment: 0 };
                   const { perDayAmount, otAmount } = calculateAmounts(emp, att);
-                  const rowTotal = perDayAmount + otAmount + (att.refreshment || 0);
+                  const currentRef = parseFloat(String(att.refreshment || 0)) || 0;
+                  const rowTotal = perDayAmount + otAmount + currentRef;
 
                   return (
-                    <tr key={emp.id} className={`transition-colors ${(att.present || 0) === 0 ? 'bg-red-50/30' : 'hover:bg-muted/50'}`}>
+                    <tr key={emp.id} className={`transition-colors ${(Number(att.present) || 0) === 0 ? 'bg-red-50/20' : 'hover:bg-muted/50'}`}>
                       <td className="px-3 py-2 border-b border-border text-muted-foreground text-xs font-mono">
                         {emp.employeeCode ?? (idx + 1)}
                       </td>
@@ -304,42 +371,54 @@ export default function DailyEntryTab() {
                       
                       <td className={tdClass}>
                         <select 
-                          className="w-28 px-2 py-1.5 border border-input rounded-md bg-background text-sm"
-                          value={att.present}
+                          className={`w-28 px-2 py-1.5 border rounded-md text-sm font-medium transition-colors ${
+                            Number(att.present) === 1 
+                              ? 'bg-green-50 border-green-300 text-green-800 dark:bg-green-950/50 dark:text-green-300 dark:border-green-800 font-semibold' 
+                              : 'bg-background border-input text-muted-foreground'
+                          }`}
+                          value={att.present !== undefined ? att.present : 0}
                           onChange={(e) => handleInputChange(emp.id!, 'present', Number(e.target.value))}
                         >
-                          <option value="1">Full Day (1)</option>
-                          <option value="0.5">Half Day (0.5)</option>
-                          <option value="0">Absent (0)</option>
+                          <option value="0">Absent</option>
+                          <option value="1">Present</option>
                         </select>
                       </td>
                       
                       <td className={tdClass}>
                         <div className="flex items-center w-24">
-                          <Clock className="w-4 h-4 text-muted-foreground mr-2" />
+                          <Clock className="w-4 h-4 text-muted-foreground mr-1.5 shrink-0" />
                           <input 
-                            type="number" 
-                            min="0"
-                            step="0.5"
-                            className="w-full px-2 py-1.5 border border-input rounded-md bg-background text-sm"
-                            value={att.otHours || ''}
-                            onChange={(e) => handleInputChange(emp.id!, 'otHours', Number(e.target.value))}
+                            type="text"
+                            inputMode="decimal"
+                            className="w-full px-2 py-1.5 border border-input rounded-md bg-background text-sm font-medium text-center focus:outline-none focus:ring-1 focus:ring-primary"
+                            value={att.otHours !== undefined && att.otHours !== null ? att.otHours : ''}
+                            onChange={(e) => handleOTChange(emp.id!, e.target.value)}
                             placeholder="0"
                           />
                         </div>
                       </td>
                       
                       <td className={tdClass}>
-                        <div className="flex items-center w-24">
-                          <IndianRupee className="w-4 h-4 text-muted-foreground mr-2" />
+                        <div className="flex items-center w-28 relative">
+                          <IndianRupee className="w-4 h-4 text-muted-foreground mr-1 shrink-0" />
                           <input 
-                            type="number" 
-                            min="0"
-                            className="w-full px-2 py-1.5 border border-input rounded-md bg-background text-sm"
-                            value={att.refreshment || ''}
-                            onChange={(e) => handleInputChange(emp.id!, 'refreshment', Number(e.target.value))}
-                            placeholder="70"
+                            type="text"
+                            inputMode="numeric"
+                            className="w-full px-2 py-1.5 border border-input rounded-md bg-background text-sm font-medium text-center pr-6 focus:outline-none focus:ring-1 focus:ring-primary"
+                            value={att.refreshment !== undefined && att.refreshment !== null ? att.refreshment : ''}
+                            onChange={(e) => handleRefreshmentChange(emp.id!, e.target.value)}
+                            placeholder="0"
                           />
+                          {Boolean(att.refreshment && Number(att.refreshment) > 0) && (
+                            <button
+                              type="button"
+                              onClick={() => handleRefreshmentChange(emp.id!, '0')}
+                              className="absolute right-1.5 text-muted-foreground hover:text-red-500 p-0.5 rounded transition-colors"
+                              title="Remove refreshment (₹0)"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                       
@@ -355,7 +434,7 @@ export default function DailyEntryTab() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Ref:</span>
-                            <span className="font-medium text-foreground">₹{(att.refreshment || 0).toFixed(2)}</span>
+                            <span className="font-medium text-foreground">₹{currentRef.toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between border-t border-border pt-1 mt-1 font-bold">
                             <span>Total:</span>
