@@ -75,6 +75,15 @@ const getCalculatedStatus = (po: PurchaseOrder) => {
   return 'PENDING';
 };
 
+// Rate in 3 decimals, Value rounded off with no decimals
+const formatRate = (rate: number | undefined | null) => {
+  return Number(rate || 0).toFixed(3);
+};
+
+const formatValue = (val: number | undefined | null) => {
+  return Math.round(Number(val || 0)).toLocaleString('en-IN');
+};
+
 export default function PurchaseOrders() {
   const { user } = useAuth();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -172,9 +181,22 @@ export default function PurchaseOrders() {
         if (!matches) return false;
       }
 
-      // 2. Status Filter
+      // 2. Status & Running Filter
+      const closingBal = getPurchaseOrderBalance(po);
       const calculatedStatus = getCalculatedStatus(po);
-      if (statusFilter && calculatedStatus !== statusFilter) return false;
+
+      if (!statusFilter) {
+        // Default: Only running POs (closing balance > 0 and not CLOSED or CANCELLED)
+        if (closingBal <= 0 || po.status === 'CLOSED' || po.status === 'CANCELLED') return false;
+      } else if (statusFilter === 'ALL') {
+        // Explicitly show all POs (including closed/completed)
+      } else if (statusFilter === 'RUNNING') {
+        // Explicitly running POs with closing balance
+        if (closingBal <= 0 || po.status === 'CLOSED' || po.status === 'CANCELLED') return false;
+      } else {
+        // Filter by calculated status (PENDING, PARTIALLY COMPLETED, COMPLETED, OVERDUE / DELAYED, CANCELLED)
+        if (calculatedStatus !== statusFilter) return false;
+      }
 
       // 3. Customer Filter
       if (customerFilter && po.customerId !== customerFilter) return false;
@@ -477,8 +499,14 @@ export default function PurchaseOrders() {
       }
 
       // 3. Status Filter
-      const calculatedStatus = getCalculatedStatus(po);
-      if (statusFilter && calculatedStatus !== statusFilter) return false;
+      if (statusFilter && statusFilter !== 'ALL') {
+        const calculatedStatus = getCalculatedStatus(po);
+        if (statusFilter === 'RUNNING') {
+          if (po.monthlyClosingBal <= 0) return false;
+        } else if (calculatedStatus !== statusFilter) {
+          return false;
+        }
+      }
 
       // 4. Customer Filter
       if (customerFilter && po.customerId !== customerFilter) return false;
@@ -768,7 +796,7 @@ export default function PurchaseOrders() {
                         </div>
                         <div className="text-right pl-2 border-l border-border">
                           <p className="text-[10px] text-orange-600/80 font-bold uppercase">Pending Value</p>
-                          <p className="text-sm font-black text-orange-600">₹{group.totalPendingValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                          <p className="text-sm font-black text-orange-600">₹{formatValue(group.totalPendingValue)}</p>
                         </div>
                       </div>
                     </div>
@@ -806,12 +834,12 @@ export default function PurchaseOrders() {
                                   <td className="px-3 py-2 text-muted-foreground">{formatDate(po.deliveryDate)}</td>
                                   <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
                                   <td className="px-3 py-2 text-muted-foreground truncate max-w-[150px]" title={po.consignee}>{po.consignee || '-'}</td>
-                                  <td className="px-3 py-2 text-right font-medium">₹{po.rate.toFixed(2)}</td>
+                                  <td className="px-3 py-2 text-right font-medium">₹{formatRate(po.rate)}</td>
                                   <td className="px-3 py-2 text-right font-bold">{po.orderQty.toLocaleString()}</td>
                                   <td className="px-3 py-2 text-right font-bold text-green-600">{(po.inQty || 0).toLocaleString()}</td>
                                   <td className="px-3 py-2 text-right font-bold text-red-600">{(po.outQty || 0).toLocaleString()}</td>
                                   <td className="px-3 py-2 text-right font-black text-foreground">{closingBal.toLocaleString()}</td>
-                                  <td className="px-3 py-2 text-right font-bold text-orange-600">₹{value.toLocaleString()}</td>
+                                  <td className="px-3 py-2 text-right font-bold text-orange-600">₹{formatValue(value)}</td>
                                   <td className="px-3 py-2 text-center">
                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${
                                       calculatedStatus === 'PENDING' ? 'bg-blue-100 text-blue-700' :
@@ -883,7 +911,7 @@ export default function PurchaseOrders() {
                                 <td className="px-3 py-2 text-right text-green-600 font-bold">{group.totalInQty.toLocaleString()}</td>
                                 <td className="px-3 py-2 text-right text-red-600 font-bold">{group.totalOutQty.toLocaleString()}</td>
                                 <td className="px-3 py-2 text-right text-foreground font-black">{group.totalClosingBal.toLocaleString()}</td>
-                                <td className="px-3 py-2 text-right text-orange-600 font-bold">₹{group.totalPendingValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                                <td className="px-3 py-2 text-right text-orange-600 font-bold">₹{formatValue(group.totalPendingValue)}</td>
                                 <td colSpan={2}></td>
                               </tr>
                             </tfoot>
@@ -952,12 +980,12 @@ export default function PurchaseOrders() {
                         <td className="px-4 py-3 font-bold text-foreground group-hover:text-primary transition-colors flex items-center">
                           {s.name} <span className="ml-2 text-[10px] bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">{s.poCount} POs</span>
                         </td>
-                        <td className="px-4 py-3 text-right font-bold">₹{s.poValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                        <td className="px-4 py-3 text-right font-bold">₹{formatValue(s.poValue)}</td>
                         <td className="px-4 py-3 text-right font-semibold">{s.opnQty.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right font-semibold text-green-600">{s.inQty.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right font-semibold text-red-600">{s.outQty.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right font-black text-foreground">{s.closingBal.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right font-bold text-orange-600">₹{s.pendingValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                        <td className="px-4 py-3 text-right font-bold text-orange-600">₹{formatValue(s.pendingValue)}</td>
                       </tr>
                     ))
                   )}
@@ -967,12 +995,12 @@ export default function PurchaseOrders() {
                   <tfoot className="bg-muted/50 font-bold sticky bottom-0 border-t-2 border-border shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
                     <tr>
                       <td className="px-4 py-3 text-foreground uppercase tracking-wider text-xs">GRAND TOTAL</td>
-                      <td className="px-4 py-3 text-right">₹{summaryGrandTotals.grandPoValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                      <td className="px-4 py-3 text-right">₹{formatValue(summaryGrandTotals.grandPoValue)}</td>
                       <td className="px-4 py-3 text-right">{summaryGrandTotals.grandOpnQty.toLocaleString()}</td>
                       <td className="px-4 py-3 text-right text-green-600">{summaryGrandTotals.grandInQty.toLocaleString()}</td>
                       <td className="px-4 py-3 text-right text-red-600">{summaryGrandTotals.grandOutQty.toLocaleString()}</td>
                       <td className="px-4 py-3 text-right text-foreground">{summaryGrandTotals.grandClosingBal.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right text-orange-600">₹{summaryGrandTotals.grandPendingValue.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                      <td className="px-4 py-3 text-right text-orange-600">₹{formatValue(summaryGrandTotals.grandPendingValue)}</td>
                     </tr>
                   </tfoot>
                 )}
@@ -1005,7 +1033,7 @@ export default function PurchaseOrders() {
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Total PO Value</p>
-                    <p className="text-lg font-bold">₹{selectedCustomerSummary.poValue.toLocaleString()}</p>
+                    <p className="text-lg font-bold">₹{formatValue(selectedCustomerSummary.poValue)}</p>
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Opening Qty</p>
@@ -1025,7 +1053,7 @@ export default function PurchaseOrders() {
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Pending Value</p>
-                    <p className="text-lg font-bold text-orange-600">₹{selectedCustomerSummary.pendingValue.toLocaleString()}</p>
+                    <p className="text-lg font-bold text-orange-600">₹{formatValue(selectedCustomerSummary.pendingValue)}</p>
                   </div>
                 </div>
               </div>
@@ -1036,12 +1064,12 @@ export default function PurchaseOrders() {
           {viewMode === 'ALL' && (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               {[
-                { label: 'TOTAL PO VALUE', value: `₹${totals.poValue.toLocaleString()}`, color: 'text-primary' },
+                { label: 'TOTAL PO VALUE', value: `₹${formatValue(totals.poValue)}`, color: 'text-primary' },
                 { label: 'TOTAL OPENING QTY', value: totals.openQty.toLocaleString(), color: 'text-foreground' },
                 { label: 'TOTAL IN QTY', value: totals.inQty.toLocaleString(), color: 'text-green-600' },
                 { label: 'TOTAL OUT QTY', value: totals.outQty.toLocaleString(), color: 'text-red-600' },
                 { label: 'TOTAL CLOSING BAL', value: totals.closingBal.toLocaleString(), color: 'text-foreground' },
-                { label: 'PENDING PO VALUE', value: `₹${totals.pendingValue.toLocaleString()}`, color: 'text-orange-600' },
+                { label: 'PENDING PO VALUE', value: `₹${formatValue(totals.pendingValue)}`, color: 'text-orange-600' },
               ].map((card, i) => (
                 <div key={i} className="bg-card p-4 rounded-xl border border-border shadow-sm flex flex-col justify-center items-center text-center relative overflow-hidden group hover:border-primary/50 transition-colors">
                   <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-primary/5 to-transparent rounded-bl-full -z-10 transition-transform group-hover:scale-150" />
@@ -1115,11 +1143,12 @@ export default function PurchaseOrders() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <option value="">All Statuses</option>
+              <option value="">Running POs (Bal &gt; 0)</option>
+              <option value="ALL">All POs (Including Closed)</option>
               <option value="PENDING">Pending</option>
               <option value="PARTIALLY COMPLETED">Partially Completed</option>
-              <option value="COMPLETED">Completed</option>
               <option value="OVERDUE / DELAYED">Overdue / Delayed</option>
+              <option value="COMPLETED">Completed (Bal = 0)</option>
               <option value="CANCELLED">Cancelled</option>
             </select>
           </div>
@@ -1162,7 +1191,7 @@ export default function PurchaseOrders() {
           </div>
         )}
         <div className="overflow-x-auto flex-1">
-          <table className="w-full text-left text-sm whitespace-nowrap min-w-[1200px]">
+          <table className="w-full text-left text-sm whitespace-nowrap min-w-full">
             <thead className="bg-secondary/50 text-muted-foreground uppercase font-semibold text-[10px] tracking-wider sticky top-0 z-10 backdrop-blur-md">
               <tr>
                 <th className={thClass} onClick={() => handleSort('poNo')}>
@@ -1177,25 +1206,22 @@ export default function PurchaseOrders() {
                 <th className={thClass} onClick={() => handleSort('customerName')}>
                   <div className="flex items-center">4. CUSTOMER NAME <SortIcon field="customerName" /></div>
                 </th>
-                <th className="px-3 py-3 border-b border-border max-w-[150px] truncate">5. CONSIGNEE</th>
-                <th className="px-3 py-3 border-b border-border">6. ARTWORK NO.</th>
-                <th className="px-3 py-3 border-b border-border">7. ITEM NAME</th>
-                <th className="px-3 py-3 border-b border-border">8. SIZE</th>
-                <th className="px-3 py-3 border-b border-border text-right">9. RATE</th>
+                <th className="px-3 py-3 border-b border-border">5. ITEM NAME</th>
+                <th className="px-3 py-3 border-b border-border text-right">6. RATE</th>
                 <th className={cn(thClass, "text-right")} onClick={() => handleSort('orderQty')}>
-                  <div className="flex items-center justify-end">10. OPN QTY <SortIcon field="orderQty" /></div>
+                  <div className="flex items-center justify-end">7. OPN QTY <SortIcon field="orderQty" /></div>
                 </th>
                 <th className={cn(thClass, "text-right text-green-600/70")} onClick={() => handleSort('inQty')}>
-                  <div className="flex items-center justify-end">11. IN QTY <SortIcon field="inQty" /></div>
+                  <div className="flex items-center justify-end">8. IN QTY <SortIcon field="inQty" /></div>
                 </th>
                 <th className={cn(thClass, "text-right text-red-600/70")} onClick={() => handleSort('outQty')}>
-                  <div className="flex items-center justify-end">12. OUT QTY <SortIcon field="outQty" /></div>
+                  <div className="flex items-center justify-end">9. OUT QTY <SortIcon field="outQty" /></div>
                 </th>
                 <th className={cn(thClass, "text-right")} onClick={() => handleSort('closingBal')}>
-                  <div className="flex items-center justify-end">13. CLOSING BAL <SortIcon field="closingBal" /></div>
+                  <div className="flex items-center justify-end">10. CLOSING BAL <SortIcon field="closingBal" /></div>
                 </th>
                 <th className={cn(thClass, "text-right text-orange-600/70")} onClick={() => handleSort('value')}>
-                  <div className="flex items-center justify-end">14. VALUE <SortIcon field="value" /></div>
+                  <div className="flex items-center justify-end">11. VALUE <SortIcon field="value" /></div>
                 </th>
                 <th className={cn(thClass, "text-center")} onClick={() => handleSort('statusPriority')}>
                   <div className="flex items-center justify-center">STATUS <SortIcon field="statusPriority" /></div>
@@ -1206,7 +1232,7 @@ export default function PurchaseOrders() {
             <tbody className="divide-y divide-border">
               {displayData.length === 0 && !isLoading ? (
                 <tr>
-                  <td colSpan={15} className="px-6 py-16 text-center">
+                  <td colSpan={13} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center justify-center text-muted-foreground">
                       <FileText className="w-12 h-12 mb-3 text-muted-foreground/30" />
                       <p className="text-base font-semibold">No Purchase Orders Found</p>
@@ -1225,8 +1251,6 @@ export default function PurchaseOrders() {
                       <td className="px-3 py-2 text-muted-foreground">{formatDate(po.poDate)}</td>
                       <td className="px-3 py-2 text-muted-foreground">{formatDate(po.deliveryDate)}</td>
                       <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
-                      <td className="px-3 py-2 text-muted-foreground truncate max-w-[150px]" title={po.consignee}>{po.consignee || '-'}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{po.artworkNo || '-'}</td>
                       <td className="px-3 py-2 font-medium max-w-[200px]" title={po.productName}>
                         <div className="flex items-center gap-1.5">
                           <span className="truncate">{po.productName}</span>
@@ -1252,13 +1276,12 @@ export default function PurchaseOrders() {
                           })()}
                         </div>
                       </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">{po.size}</td>
-                      <td className="px-3 py-2 text-right font-medium">₹{po.rate.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">₹{formatRate(po.rate)}</td>
                       <td className="px-3 py-2 text-right font-bold">{po.orderQty}</td>
                       <td className="px-3 py-2 text-right font-bold text-green-600">{po.inQty || 0}</td>
                       <td className="px-3 py-2 text-right font-bold text-red-600">{po.outQty || 0}</td>
                       <td className="px-3 py-2 text-right font-black text-foreground">{closingBal}</td>
-                      <td className="px-3 py-2 text-right font-bold text-orange-600">₹{value.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right font-bold text-orange-600">₹{formatValue(value)}</td>
                       <td className="px-3 py-2 text-center">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${
                           calculatedStatus === 'PENDING' ? 'bg-blue-100 text-blue-700' :
@@ -1383,12 +1406,12 @@ export default function PurchaseOrders() {
                         <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
                         <td className="px-3 py-2 font-mono text-xs text-muted-foreground max-w-[100px] truncate" title={po.artworkNo}>{po.artworkNo || '-'}</td>
                         <td className="px-3 py-2 font-medium truncate max-w-[150px]" title={po.productName}>{po.productName}</td>
-                        <td className="px-3 py-2 text-right font-medium">₹{po.rate.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-medium">₹{formatRate(po.rate)}</td>
                         <td className="px-3 py-2 text-right font-bold">{po.monthlyOpeningBal}</td>
                         <td className="px-3 py-2 text-right font-bold text-green-600 bg-green-50/30">{po.monthlyIn || 0}</td>
                         <td className="px-3 py-2 text-right font-bold text-red-600 bg-red-50/30">{po.monthlyOut || 0}</td>
                         <td className="px-3 py-2 text-right font-black text-foreground">{po.monthlyClosingBal}</td>
-                        <td className="px-3 py-2 text-right font-bold text-orange-600">₹{po.monthlyValue.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right font-bold text-orange-600">₹{formatValue(po.monthlyValue)}</td>
                         <td className="px-3 py-2 text-center">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider ${
                             calculatedStatus === 'PENDING' ? 'bg-blue-100 text-blue-700' :
@@ -1411,7 +1434,7 @@ export default function PurchaseOrders() {
                     <td className="px-3 py-3 text-right text-green-600 bg-green-50/50">{monthlyTotals.inQty.toLocaleString()}</td>
                     <td className="px-3 py-3 text-right text-red-600 bg-red-50/50">{monthlyTotals.outQty.toLocaleString()}</td>
                     <td className="px-3 py-3 text-right text-foreground">{monthlyTotals.closingBal.toLocaleString()}</td>
-                    <td className="px-3 py-3 text-right text-orange-600">₹{monthlyTotals.value.toLocaleString(undefined, {minimumFractionDigits:2})}</td>
+                    <td className="px-3 py-3 text-right text-orange-600">₹{formatValue(monthlyTotals.value)}</td>
                     <td></td>
                   </tr>
                 </tfoot>

@@ -231,7 +231,7 @@ export default function EditPOModal({
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold text-sm">₹</span>
                   <input
                     type="number"
-                    step="0.01"
+                    step="0.001"
                     min="0"
                     value={formData.rate}
                     onChange={e => handleChange('rate', e.target.value)}
@@ -256,7 +256,7 @@ export default function EditPOModal({
               <div className="flex items-center justify-between p-3 bg-primary/5 rounded-lg border border-primary/20">
                 <span className="text-xs font-bold text-muted-foreground uppercase">Calculated PO Value</span>
                 <span className="text-base font-black text-primary">
-                  ₹{(Number(formData.rate) * Number(formData.orderQty)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  ₹{Math.round(Number(formData.rate) * Number(formData.orderQty)).toLocaleString('en-IN')}
                 </span>
               </div>
             )}

@@ -214,7 +214,7 @@ export default function POHistoryModal({ po, onClose, onRefreshParent }: POHisto
               </div>
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold">Rate</p>
-                <p className="font-bold text-foreground text-sm font-mono">₹{po.rate.toFixed(2)}</p>
+                <p className="font-bold text-foreground text-sm font-mono">₹{Number(po.rate || 0).toFixed(3)}</p>
               </div>
             </div>
 

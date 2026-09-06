@@ -17,12 +17,12 @@ export const exportPurchaseOrdersToExcel = (poList: PurchaseOrder[]) => {
     'Item Name': po.productName,
     'Artwork No': po.artworkNo || '',
     'Size': po.size,
-    'Rate (₹)': po.rate,
+    'Rate (₹)': Number(Number(po.rate || 0).toFixed(3)),
     'OPN QTY': po.orderQty,
     'IN QTY': po.inQty || 0,
     'OUT QTY': po.outQty || 0,
     'Closing Bal': getPurchaseOrderBalance(po),
-    'Value (₹)': (getPurchaseOrderBalance(po)) * po.rate,
+    'Value (₹)': Math.round((getPurchaseOrderBalance(po)) * (po.rate || 0)),
     'Status': po.status,
   }));
 

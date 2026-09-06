@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, Loader2, Search, ChevronDown, Sparkles, Building2, Package, Check, Info } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getProducts, createProduct } from '../../lib/supabase/productService';
@@ -23,9 +24,16 @@ function SearchableCustomerSelect({ value, onChange, customers, hasError, onCust
   const [search, setSearch] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [highlightIdx, setHighlightIdx] = useState(0);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number; placeAbove: boolean }>({
+    top: 0,
+    left: 0,
+    width: 320,
+    placeAbove: false,
+  });
 
   const selected = customers.find(c => c.id === value || c.name === value);
 
@@ -54,6 +62,36 @@ function SearchableCustomerSelect({ value, onChange, customers, hasError, onCust
 
   useEffect(() => { setHighlightIdx(0); }, [search]);
 
+  const updatePosition = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const dropdownHeight = 280;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const placeAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+    const width = Math.max(rect.width, 320);
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+
+    setCoords({
+      top: placeAbove ? rect.top - 4 : rect.bottom + 4,
+      left,
+      width,
+      placeAbove,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      updatePosition();
+      const handleScrollOrResize = () => updatePosition();
+      window.addEventListener('resize', handleScrollOrResize);
+      window.addEventListener('scroll', handleScrollOrResize, true);
+      return () => {
+        window.removeEventListener('resize', handleScrollOrResize);
+        window.removeEventListener('scroll', handleScrollOrResize, true);
+      };
+    }
+  }, [open, updatePosition]);
+
   useEffect(() => {
     if (open) {
       setTimeout(() => searchRef.current?.focus(), 50);
@@ -64,7 +102,13 @@ function SearchableCustomerSelect({ value, onChange, customers, hasError, onCust
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (
+        !containerRef.current?.contains(target) &&
+        !dropdownRef.current?.contains(target)
+      ) {
+        setOpen(false);
+      }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
@@ -132,15 +176,24 @@ function SearchableCustomerSelect({ value, onChange, customers, hasError, onCust
         <ChevronDown className={cn('w-4 h-4 ml-1.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
-          className="absolute z-[250] top-full left-0 right-0 mt-1 bg-popover border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden animate-fade-in"
-          style={{ maxHeight: 280 }}
+          ref={dropdownRef}
+          className="fixed z-[99999] bg-white dark:bg-slate-900 text-foreground border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden animate-fade-in"
+          style={{
+            top: coords.placeAbove ? 'auto' : `${coords.top}px`,
+            bottom: coords.placeAbove ? `${window.innerHeight - coords.top}px` : 'auto',
+            left: `${coords.left}px`,
+            width: `${coords.width}px`,
+            maxHeight: 280,
+          }}
+          onMouseDown={e => e.stopPropagation()}
         >
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/40">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-slate-50 dark:bg-slate-800/80">
             <Search className="w-4 h-4 text-muted-foreground shrink-0" />
             <input
               ref={searchRef}
+              autoFocus
               type="text"
               className="flex-1 bg-transparent text-sm outline-none text-foreground placeholder:text-muted-foreground font-medium"
               placeholder="Type customer name to search or create..."
@@ -197,7 +250,8 @@ function SearchableCustomerSelect({ value, onChange, customers, hasError, onCust
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -245,9 +299,17 @@ function SearchableProductSelect({
   const [search, setSearch] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [highlightIdx, setHighlightIdx] = useState(0);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number; placeAbove: boolean; maxHeight: number }>({
+    top: 0,
+    left: 0,
+    width: 380,
+    placeAbove: false,
+    maxHeight: 340,
+  });
 
   const selected = products.find(p => p.id === value);
 
@@ -314,6 +376,39 @@ function SearchableProductSelect({
 
   useEffect(() => { setHighlightIdx(0); }, [search]);
 
+  const updatePosition = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const placeAbove = spaceBelow < 260 && spaceAbove > spaceBelow;
+    const availableHeight = placeAbove ? spaceAbove : spaceBelow;
+    const maxHeight = Math.min(340, Math.max(200, availableHeight));
+    const width = Math.max(rect.width, 380);
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+
+    setCoords({
+      top: placeAbove ? rect.top - 6 : rect.bottom + 6,
+      left,
+      width,
+      placeAbove,
+      maxHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      updatePosition();
+      const handleScrollOrResize = () => updatePosition();
+      window.addEventListener('resize', handleScrollOrResize);
+      window.addEventListener('scroll', handleScrollOrResize, true);
+      return () => {
+        window.removeEventListener('resize', handleScrollOrResize);
+        window.removeEventListener('scroll', handleScrollOrResize, true);
+      };
+    }
+  }, [open, updatePosition]);
+
   useEffect(() => {
     if (open) {
       setTimeout(() => searchRef.current?.focus(), 50);
@@ -324,11 +419,25 @@ function SearchableProductSelect({
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (
+        !containerRef.current?.contains(target) &&
+        !dropdownRef.current?.contains(target)
+      ) {
+        setOpen(false);
+      }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${highlightIdx}"]`) as HTMLElement | null;
+    if (el) {
+      el.scrollIntoView({ block: 'nearest' });
+    }
+  }, [highlightIdx, open]);
 
   const handleCreateNewProduct = async () => {
     if (!search.trim() || isCreating) return;
@@ -406,13 +515,21 @@ function SearchableProductSelect({
         <ChevronDown className={cn('w-3.5 h-3.5 ml-1 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
-          className="absolute z-[250] top-full left-0 right-0 mt-1 bg-popover border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden animate-fade-in"
-          style={{ maxHeight: 300, minWidth: 320 }}
+          ref={dropdownRef}
+          className="fixed z-[99999] bg-white dark:bg-slate-900 text-foreground border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden animate-fade-in"
+          style={{
+            top: coords.placeAbove ? 'auto' : `${coords.top}px`,
+            bottom: coords.placeAbove ? `${window.innerHeight - coords.top}px` : 'auto',
+            left: `${coords.left}px`,
+            width: `${coords.width}px`,
+            maxHeight: coords.maxHeight,
+          }}
+          onMouseDown={e => e.stopPropagation()}
         >
-          <div className="flex items-center gap-1.5 px-2.5 py-2 border-b border-border bg-muted/40">
-            <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-slate-50 dark:bg-slate-800/80 shrink-0">
+            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
             <input
               ref={searchRef}
               type="text"
@@ -426,11 +543,11 @@ function SearchableProductSelect({
             )}
           </div>
 
-          <div ref={listRef} className="overflow-y-auto" style={{ maxHeight: 240 }}>
+          <div ref={listRef} className="overflow-y-auto flex-1 min-h-0 divide-y divide-border/20 bg-white dark:bg-slate-900" style={{ maxHeight: Math.max(160, coords.maxHeight - 48) }}>
             {/* Customer Items Section */}
             {customerItems.length > 0 && (
               <div>
-                <div className="px-3 py-1.5 bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider sticky top-0 flex items-center justify-between">
+                <div className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-primary font-bold text-[10px] uppercase tracking-wider sticky top-0 flex items-center justify-between z-10 border-b border-border">
                   <span>Items for {selectedCustomerName || 'Selected Customer'}</span>
                   <span>({customerItems.length})</span>
                 </div>
@@ -466,7 +583,7 @@ function SearchableProductSelect({
             {/* Other Items Section */}
             {otherItems.length > 0 && (
               <div>
-                <div className="px-3 py-1.5 bg-secondary/70 text-muted-foreground text-[10px] font-bold uppercase tracking-wider sticky top-0 flex items-center justify-between border-t border-border">
+                <div className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-muted-foreground text-[10px] font-bold uppercase tracking-wider sticky top-0 flex items-center justify-between border-t border-b border-border z-10">
                   <span>Other Products</span>
                   <span>({otherItems.length})</span>
                 </div>
@@ -505,9 +622,9 @@ function SearchableProductSelect({
                 type="button"
                 onClick={handleCreateNewProduct}
                 disabled={isCreating}
-                className="w-full text-left px-3.5 py-2.5 text-sm bg-green-500/10 hover:bg-green-500/20 text-green-700 dark:text-green-300 font-bold flex items-center gap-2 transition-colors border-t border-green-500/20 sticky bottom-0"
+                className="w-full text-left px-3.5 py-2.5 text-sm bg-emerald-50 dark:bg-emerald-950/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/90 text-emerald-800 dark:text-emerald-300 font-bold flex items-center gap-2 transition-colors border-t border-emerald-300 dark:border-emerald-800 sticky bottom-0 z-10"
               >
-                {isCreating ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : <Sparkles className="w-4 h-4 shrink-0 text-green-600" />}
+                {isCreating ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : <Sparkles className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />}
                 <span>+ Create New Item: <b>"{search.trim()}"</b> {selectedCustomerName ? `for ${selectedCustomerName}` : ''}</span>
               </button>
             )}
@@ -518,7 +635,8 @@ function SearchableProductSelect({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -1044,9 +1162,9 @@ export default function AddPOModal({
                         <td className="px-3 py-2">
                            <input 
                             type="number" 
-                            step="0.01"
+                            step="0.001"
                             min="0"
-                            placeholder="0.00"
+                            placeholder="0.000"
                             className={cn(
                               "w-full px-2.5 py-1.5 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold text-right",
                               errors[`rate-${item.id}`] ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"

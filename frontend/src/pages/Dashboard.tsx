@@ -1,19 +1,19 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Layers, Clock, Activity, CheckCircle2, AlertCircle, Snowflake, Unlock, ShieldAlert, ShieldCheck, ShieldX, Printer, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Layers, Clock, Activity, CheckCircle2, AlertCircle, Snowflake, Unlock, ShieldAlert, ShieldCheck, ShieldX, Printer, X, Flame, ArrowRight, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import DashboardListModal from './dashboard/DashboardListModal';
 import PrintableJobCard from './job-cards/PrintableJobCard';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '../lib/utils';
-import { getAttendanceByMonth } from '../lib/supabase/attendanceService';
 import { getJobCards, getPendingApprovalJobCards, updateJobCard } from '../lib/supabase/jobCardService';
-import { getFrozenReels, unfreezeReel, getOutwardReelTransactionsByMonth } from '../lib/supabase/reelService';
+import { getFrozenReels, unfreezeReel } from '../lib/supabase/reelService';
 import { getRecentActivityLogs } from '../lib/supabase/activityLogService';
 
 export default function Dashboard() {
   const { user, hasRole } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [unfreezingId, setUnfreezingId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
@@ -23,7 +23,7 @@ export default function Dashboard() {
     title: '',
     filterKey: ''
   });
-  const [trendMode, setTrendMode] = useState<'weekly' | 'monthly'>('weekly');
+  const [radarFilter, setRadarFilter] = useState<'ALL' | 'OVERDUE' | 'TODAY' | 'NEXT48' | 'IN_PROCESS'>('ALL');
 
   const { data: jobCards = [], isLoading: loadingJC } = useQuery({
     queryKey: ['dashboard-jobcards'],
@@ -35,16 +35,6 @@ export default function Dashboard() {
     queryKey: ['dashboard-logs'],
     queryFn: () => getRecentActivityLogs(50),
     refetchInterval: 10000
-  });
-
-  const currentMonth = new Date().toISOString().substring(0, 7);
-  const { data: attendance = [] } = useQuery({
-    queryKey: ['dashboard-attendance', currentMonth],
-    queryFn: () => getAttendanceByMonth(currentMonth)
-  });
-  const { data: outwardReels = [] } = useQuery({
-    queryKey: ['dashboard-outward', currentMonth],
-    queryFn: () => getOutwardReelTransactionsByMonth(currentMonth)
   });
 
   const { data: frozenReels = [], isLoading: loadingFrozen, refetch: refetchFrozen } = useQuery({
@@ -142,47 +132,101 @@ export default function Dashboard() {
     }
   };
 
-  // Chart 1: Conversion Cost Trend
-  const conversionTrendData = useMemo(() => {
-    const days = trendMode === 'weekly' ? 7 : 30;
-    const pastDays = Array.from({ length: days }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      return d.toISOString().split('T')[0];
-    }).reverse();
+  // Option 1: Urgent Orders Radar & Live Floor Priority
+  const urgentQueue = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMs = today.getTime();
 
-    return pastDays.map(dateStr => {
-      const dailyAtt = attendance.filter(a => a.date === dateStr);
-      const dailyTx = outwardReels.filter(tx => tx.date && tx.date.startsWith(dateStr));
-      
-      const manpower = dailyAtt.reduce((acc, rec) => acc + (rec.perDayAmount || 0) + (rec.otAmount || 0) + (rec.refreshment || 0), 0);
-      const weight = dailyTx.reduce((acc, tx) => acc + (tx.quantity || 0), 0);
-      
+    // Active jobs only: not completed, not deleted, not cancelled
+    const active = jobCards.filter((jc: any) => {
+      const s = (jc.status || '').toUpperCase();
+      return s !== 'COMPLETED' && s !== 'DELETED' && s !== 'CANCELLED';
+    });
+
+    const parsed = active.map((jc: any) => {
+      let targetMs: number | null = null;
+      let targetDisplay = '-';
+      if (jc.targetDate) {
+        const isoMatch = String(jc.targetDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) {
+          const [, yyyy, mm, dd] = isoMatch;
+          targetMs = new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime();
+          targetDisplay = `${dd}/${mm}/${yyyy.slice(2)}`;
+        } else {
+          const d = new Date(jc.targetDate);
+          if (!isNaN(d.getTime())) {
+            d.setHours(0, 0, 0, 0);
+            targetMs = d.getTime();
+            targetDisplay = d.toLocaleDateString('en-IN');
+          }
+        }
+      }
+
+      const diffDays = targetMs !== null ? Math.round((targetMs - todayMs) / (1000 * 60 * 60 * 24)) : null;
+
+      let urgencyLevel: 'OVERDUE' | 'TODAY' | 'NEXT48' | 'UPCOMING' | 'NO_DATE' = 'NO_DATE';
+      if (diffDays !== null) {
+        if (diffDays < 0) urgencyLevel = 'OVERDUE';
+        else if (diffDays === 0) urgencyLevel = 'TODAY';
+        else if (diffDays <= 2) urgencyLevel = 'NEXT48';
+        else urgencyLevel = 'UPCOMING';
+      }
+
       return {
-        name: dateStr.substring(5), // MM-DD
-        Cost: weight > 0 ? Number((manpower / weight).toFixed(2)) : 0
+        ...jc,
+        targetMs,
+        targetDisplay,
+        diffDays,
+        urgencyLevel
       };
     });
-  }, [attendance, outwardReels, trendMode]);
 
-  const currentConversionCost = useMemo(() => {
-    const totalManpowerCost = attendance.reduce((acc, rec) => acc + (rec.perDayAmount || 0) + (rec.otAmount || 0) + (rec.refreshment || 0), 0);
-    const totalWeight = outwardReels.reduce((acc, tx) => acc + (tx.quantity || 0), 0);
-    return totalWeight > 0 ? (totalManpowerCost / totalWeight).toFixed(2) : '0.00';
-  }, [attendance, outwardReels]);
+    // Priority sorting: Overdue (diffDays < 0 ascending, most overdue first) -> Today -> Next48 -> Upcoming -> No Date
+    const order: Record<string, number> = { OVERDUE: 1, TODAY: 2, NEXT48: 3, UPCOMING: 4, NO_DATE: 5 };
+    parsed.sort((a: any, b: any) => {
+      const rankA = order[String(a.urgencyLevel)] ?? 99;
+      const rankB = order[String(b.urgencyLevel)] ?? 99;
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+      if (a.targetMs !== null && b.targetMs !== null) {
+        return a.targetMs - b.targetMs;
+      }
+      if (a.targetMs !== null) return -1;
+      if (b.targetMs !== null) return 1;
+      const numA = parseInt(String(a.jobCardNo).split('/').pop() || '0', 10);
+      const numB = parseInt(String(b.jobCardNo).split('/').pop() || '0', 10);
+      return numB - numA;
+    });
 
-  // Chart 2: On-Time vs Delayed
-  const performanceData = useMemo(() => {
-    const onTime = stats.completed.filter(jc => jc.completionStatus === 'ON TIME').length;
-    const delayed = stats.completed.filter(jc => jc.completionStatus === 'DELAYED').length;
-    
-    if (onTime === 0 && delayed === 0) return []; // No data yet
+    const overdueList = parsed.filter((j: any) => j.urgencyLevel === 'OVERDUE');
+    const todayList = parsed.filter((j: any) => j.urgencyLevel === 'TODAY');
+    const next48List = parsed.filter((j: any) => j.urgencyLevel === 'NEXT48');
 
-    return [
-      { name: 'On Time', value: onTime, color: '#16a34a' },
-      { name: 'Delayed', value: delayed, color: '#dc2626' }
-    ];
-  }, [stats.completed]);
+    return {
+      all: parsed,
+      overdueList,
+      todayList,
+      next48List,
+      counts: {
+        total: parsed.length,
+        overdue: overdueList.length,
+        today: todayList.length,
+        next48: next48List.length
+      }
+    };
+  }, [jobCards]);
+
+  const filteredRadarJobs = useMemo(() => {
+    switch (radarFilter) {
+      case 'OVERDUE': return urgentQueue.overdueList;
+      case 'TODAY': return urgentQueue.todayList;
+      case 'NEXT48': return urgentQueue.next48List;
+      case 'IN_PROCESS': return urgentQueue.all.filter((j: any) => j.status === 'IN_PROCESS');
+      default: return urgentQueue.all;
+    }
+  }, [urgentQueue, radarFilter]);
 
   return (
     <div className="h-full flex flex-col">
@@ -376,122 +420,264 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-      
-      {/* Charts & Activity Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-[400px]">
+         {/* Option 1: Urgent Orders Radar & Live Floor Priority */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-[420px]">
         
-        {/* Main Chart */}
-        <div className="bg-card border border-border shadow-sm rounded-xl p-6 flex flex-col lg:col-span-2">
-           <div className="flex justify-between items-center mb-6">
-             <div>
-               <h3 className="font-semibold text-foreground">Conversion Cost Trend</h3>
-               <p className="text-xs text-muted-foreground mt-1">Current MTD Avg: <span className="font-bold text-red-600">₹{currentConversionCost} / kg</span></p>
-             </div>
-             <div className="flex bg-muted/50 p-1 rounded-lg border border-border">
-               <button 
-                 onClick={() => setTrendMode('weekly')}
-                 className={cn("px-3 py-1 text-xs font-medium rounded-md transition-colors", trendMode === 'weekly' ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
-               >
-                 Weekly
-               </button>
-               <button 
-                 onClick={() => setTrendMode('monthly')}
-                 className={cn("px-3 py-1 text-xs font-medium rounded-md transition-colors", trendMode === 'monthly' ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground")}
-               >
-                 Monthly
-               </button>
-             </div>
-           </div>
-           <div className="flex-1 w-full min-h-[250px]">
-             <ResponsiveContainer width="100%" height="100%">
-               <AreaChart data={conversionTrendData}>
-                 <defs>
-                   <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
-                     <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
-                     <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                   </linearGradient>
-                 </defs>
-                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6b7280' }} dy={10} />
-                 <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6b7280' }} tickFormatter={(val) => `₹${val}`} />
-                 <Tooltip 
-                   cursor={{ stroke: '#ef4444', strokeWidth: 1, strokeDasharray: '3 3' }} 
-                   contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} 
-                   formatter={(value: any) => [`₹${value}`, 'Cost/Kg']}
-                 />
-                 <Area type="monotone" dataKey="Cost" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorCost)" />
-               </AreaChart>
-             </ResponsiveContainer>
-           </div>
+        {/* Left Column: Urgent Orders Radar (2 Cols) */}
+        <div className="bg-card border border-border shadow-sm rounded-xl p-5 sm:p-6 flex flex-col lg:col-span-2 overflow-hidden">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-4 border-b border-border/70">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-red-500/10 text-red-600 dark:text-red-400">
+                <Flame className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-black text-foreground text-lg tracking-tight">Urgent Orders Radar</h3>
+                  {urgentQueue.counts.overdue > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-black bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300 border border-red-200 animate-pulse">
+                      {urgentQueue.counts.overdue} OVERDUE
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">Live production floor priorities sorted by target deadline</p>
+              </div>
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="flex flex-wrap gap-1 bg-muted/60 p-1 rounded-lg border border-border self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setRadarFilter('ALL')}
+                className={cn("px-2.5 py-1 text-xs font-bold rounded-md transition-all", radarFilter === 'ALL' ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}
+              >
+                All ({urgentQueue.counts.total})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRadarFilter('OVERDUE')}
+                className={cn("px-2.5 py-1 text-xs font-bold rounded-md transition-all flex items-center gap-1", radarFilter === 'OVERDUE' ? "bg-red-600 text-white shadow-xs" : "text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30")}
+              >
+                Overdue ({urgentQueue.counts.overdue})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRadarFilter('TODAY')}
+                className={cn("px-2.5 py-1 text-xs font-bold rounded-md transition-all flex items-center gap-1", radarFilter === 'TODAY' ? "bg-amber-500 text-white shadow-xs" : "text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30")}
+              >
+                Today ({urgentQueue.counts.today})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRadarFilter('NEXT48')}
+                className={cn("px-2.5 py-1 text-xs font-bold rounded-md transition-all", radarFilter === 'NEXT48' ? "bg-blue-600 text-white shadow-xs" : "text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30")}
+              >
+                Next 48h ({urgentQueue.counts.next48})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRadarFilter('IN_PROCESS')}
+                className={cn("px-2.5 py-1 text-xs font-bold rounded-md transition-all", radarFilter === 'IN_PROCESS' ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}
+              >
+                In-Process
+              </button>
+            </div>
+          </div>
+
+          {/* Radar Job Cards List */}
+          <div className="flex-1 overflow-y-auto pr-1 space-y-2.5 max-h-[460px]">
+            {filteredRadarJobs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                <div className="w-12 h-12 rounded-full bg-green-500/10 text-green-600 flex items-center justify-center mb-3">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <p className="text-base font-bold text-foreground">All Orders On Track!</p>
+                <p className="text-xs text-muted-foreground mt-1">No job cards found in this priority category right now.</p>
+              </div>
+            ) : (
+              filteredRadarJobs.map((jc: any) => (
+                <div
+                  key={jc.id}
+                  className={cn(
+                    "p-3.5 rounded-xl border transition-all hover:shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3",
+                    jc.urgencyLevel === 'OVERDUE'
+                      ? "bg-red-50/50 dark:bg-red-950/20 border-red-200 dark:border-red-900/50 hover:border-red-400"
+                      : jc.urgencyLevel === 'TODAY'
+                      ? "bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50 hover:border-amber-400"
+                      : "bg-background border-border/70 hover:border-primary/40"
+                  )}
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="mt-0.5 shrink-0">
+                      {jc.urgencyLevel === 'OVERDUE' ? (
+                        <span className="flex h-8 w-8 rounded-lg bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 items-center justify-center font-bold text-xs">
+                          <AlertCircle className="w-4 h-4" />
+                        </span>
+                      ) : jc.urgencyLevel === 'TODAY' ? (
+                        <span className="flex h-8 w-8 rounded-lg bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 items-center justify-center font-bold text-xs">
+                          <Clock className="w-4 h-4" />
+                        </span>
+                      ) : (
+                        <span className="flex h-8 w-8 rounded-lg bg-primary/10 text-primary items-center justify-center font-bold text-xs">
+                          <Layers className="w-4 h-4" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                        <span className="font-black text-foreground text-sm tracking-tight">{jc.jobCardNo}</span>
+                        {jc.poNo && (
+                          <span className="px-1.5 py-0.2 text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 rounded">
+                            PO: {jc.poNo}
+                          </span>
+                        )}
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase border",
+                          jc.status === 'IN_PROCESS' 
+                            ? "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300"
+                            : jc.status === 'PENDING APPROVAL'
+                            ? "bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-950/60 dark:text-orange-300"
+                            : "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-950/60 dark:text-yellow-300"
+                        )}>
+                          {jc.status}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                        <span className="font-semibold text-foreground truncate max-w-[180px]" title={jc.customerName}>{jc.customerName}</span>
+                        <span>•</span>
+                        <span className="text-foreground/90 font-medium truncate max-w-[200px]" title={jc.productName}>{jc.productName}</span>
+                        {jc.productSnapshot && (
+                          <span className="text-muted-foreground/70 font-mono text-[11px]">
+                            ({jc.productSnapshot.length}"x{jc.productSnapshot.width}"x{jc.productSnapshot.height}")
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Metrics & Action */}
+                  <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/40">
+                    <div className="text-left sm:text-right">
+                      <p className="text-xs font-bold text-foreground">{Number(jc.orderQty || 0).toLocaleString()} pcs</p>
+                      <p className="text-[11px] text-muted-foreground">{jc.totalWeight ? `${jc.totalWeight} Kg` : '-'}</p>
+                    </div>
+
+                    {/* Target Deadline Badge */}
+                    <div className="min-w-[115px] text-right">
+                      {jc.urgencyLevel === 'OVERDUE' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-red-600 text-white shadow-xs">
+                          <AlertTriangle className="w-3 h-3" />
+                          {Math.abs(jc.diffDays)}d Overdue
+                        </span>
+                      ) : jc.urgencyLevel === 'TODAY' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-black bg-amber-500 text-white shadow-xs">
+                          <Clock className="w-3 h-3" />
+                          Due Today
+                        </span>
+                      ) : jc.urgencyLevel === 'NEXT48' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                          {jc.diffDays === 1 ? 'Due Tomorrow' : `In 2 days`}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground font-semibold">
+                          Target: {jc.targetDisplay}
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setViewingJobCard(jc)}
+                      className="p-1.5 hover:bg-muted text-muted-foreground hover:text-foreground rounded-lg transition-colors border border-border/60"
+                      title="View & Print Job Card"
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
-        {/* Activity Logs & Performance */}
+        {/* Right Column: Floor Urgency Summary + Live Activity Feed (1 Col) */}
         <div className="flex flex-col gap-6 lg:col-span-1">
           
-          {/* Performance Chart */}
-          <div className="bg-card border border-border shadow-sm rounded-xl p-6 flex flex-col h-[220px]">
-             <h3 className="font-semibold text-foreground mb-2 text-sm">Delivery Performance (Completed)</h3>
-             {performanceData.length === 0 ? (
-               <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">No completed jobs yet.</div>
-             ) : (
-               <div className="flex-1 w-full">
-                 <ResponsiveContainer width="100%" height="100%">
-                   <PieChart>
-                     <Pie
-                       data={performanceData}
-                       cx="50%"
-                       cy="50%"
-                       innerRadius={40}
-                       outerRadius={60}
-                       paddingAngle={5}
-                       dataKey="value"
-                     >
-                       {performanceData.map((entry, index) => (
-                         <Cell key={`cell-${index}`} fill={entry.color} />
-                       ))}
-                     </Pie>
-                     <Tooltip />
-                     <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                   </PieChart>
-                 </ResponsiveContainer>
-               </div>
-             )}
+          {/* Floor Urgency Summary Widget */}
+          <div className="bg-card border border-border shadow-sm rounded-xl p-5 flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-foreground text-sm flex items-center gap-2">
+                <Activity className="w-4 h-4 text-primary" />
+                Floor Urgency Summary
+              </h3>
+              <button 
+                type="button"
+                onClick={() => navigate('/job-cards')}
+                className="text-xs font-bold text-primary hover:underline flex items-center gap-1"
+              >
+                All Jobs <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2.5 text-center">
+              <div 
+                onClick={() => setRadarFilter('OVERDUE')}
+                className={cn("p-2.5 rounded-lg cursor-pointer transition-all border", radarFilter === 'OVERDUE' ? "bg-red-600 text-white border-red-600" : "bg-red-500/10 border-red-200/60 hover:border-red-400")}
+              >
+                <p className={cn("text-[10px] uppercase font-bold", radarFilter === 'OVERDUE' ? "text-white" : "text-red-700")}>Overdue</p>
+                <p className={cn("text-xl font-black", radarFilter === 'OVERDUE' ? "text-white" : "text-red-600")}>{urgentQueue.counts.overdue}</p>
+              </div>
+              <div 
+                onClick={() => setRadarFilter('TODAY')}
+                className={cn("p-2.5 rounded-lg cursor-pointer transition-all border", radarFilter === 'TODAY' ? "bg-amber-500 text-white border-amber-500" : "bg-amber-500/10 border-amber-200/60 hover:border-amber-400")}
+              >
+                <p className={cn("text-[10px] uppercase font-bold", radarFilter === 'TODAY' ? "text-white" : "text-amber-700")}>Due Today</p>
+                <p className={cn("text-xl font-black", radarFilter === 'TODAY' ? "text-white" : "text-amber-600")}>{urgentQueue.counts.today}</p>
+              </div>
+              <div 
+                onClick={() => setRadarFilter('NEXT48')}
+                className={cn("p-2.5 rounded-lg cursor-pointer transition-all border", radarFilter === 'NEXT48' ? "bg-blue-600 text-white border-blue-600" : "bg-blue-500/10 border-blue-200/60 hover:border-blue-400")}
+              >
+                <p className={cn("text-[10px] uppercase font-bold", radarFilter === 'NEXT48' ? "text-white" : "text-blue-700")}>Next 48h</p>
+                <p className={cn("text-xl font-black", radarFilter === 'NEXT48' ? "text-white" : "text-blue-600")}>{urgentQueue.counts.next48}</p>
+              </div>
+            </div>
           </div>
 
           {/* Activity Feed */}
-          <div className="bg-card border border-border shadow-sm rounded-xl p-6 flex flex-col flex-1 min-h-[250px] overflow-hidden">
+          <div className="bg-card border border-border shadow-sm rounded-xl p-6 flex flex-col flex-1 min-h-[280px] overflow-hidden">
              <h3 className="font-semibold text-foreground mb-4 text-sm flex items-center justify-between">
-               Live Activity Feed
-               {loadingLogs && <span className="text-xs text-muted-foreground animate-pulse">Syncing...</span>}
+                Live Activity Feed
+                {loadingLogs && <span className="text-xs text-muted-foreground animate-pulse">Syncing...</span>}
              </h3>
              <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-               {activityLogs.length > 0 ? (
-                  activityLogs.map((log: any) => {
-                   let ts = Date.now();
-                   if (log.timestamp?.toDate) ts = log.timestamp.toDate().getTime();
-                   else if (log.timestamp) ts = new Date(log.timestamp).getTime();
-                   else if (log.createdAt?.toDate) ts = log.createdAt.toDate().getTime();
+                {activityLogs.length > 0 ? (
+                   activityLogs.map((log: any) => {
+                    let ts = Date.now();
+                    if (log.timestamp?.toDate) ts = log.timestamp.toDate().getTime();
+                    else if (log.timestamp) ts = new Date(log.timestamp).getTime();
+                    else if (log.createdAt?.toDate) ts = log.createdAt.toDate().getTime();
 
-                   let displayAction = log.action;
-                   if (displayAction === 'Updated') displayAction = 'Modified';
-                   
-                   return (
-                     <div key={log.id} className="flex items-start text-sm pb-3 border-b border-border/50 last:border-0 last:pb-0">
-                       <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs mr-3 flex-shrink-0">
-                         {log.user?.charAt(0).toUpperCase() || 'U'}
-                       </div>
-                       <div>
-                         <p className="text-foreground leading-snug">
-                           <span className="font-semibold">{log.user || 'System'}</span> {displayAction.toLowerCase()} <span className="font-medium text-primary">{log.entity === 'jobCards' ? 'Job Card' : log.entity}</span>
-                         </p>
-                         <p className="text-xs text-muted-foreground mt-0.5">{formatDistanceToNow(ts, { addSuffix: true })}</p>
-                       </div>
-                     </div>
-                   );
-                 })
-               ) : (
-                 <p className="text-xs text-muted-foreground text-center py-4">No recent activities found.</p>
-               )}
+                    let displayAction = log.action;
+                    if (displayAction === 'Updated') displayAction = 'Modified';
+                    
+                    return (
+                      <div key={log.id} className="flex items-start text-sm pb-3 border-b border-border/50 last:border-0 last:pb-0">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs mr-3 flex-shrink-0">
+                          {log.user?.charAt(0).toUpperCase() || 'U'}
+                        </div>
+                        <div>
+                          <p className="text-foreground leading-snug">
+                            <span className="font-semibold">{log.user || 'System'}</span> {displayAction.toLowerCase()} <span className="font-medium text-primary">{log.entity === 'jobCards' ? 'Job Card' : log.entity}</span>
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{formatDistanceToNow(ts, { addSuffix: true })}</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-4">No recent activities found.</p>
+                )}
              </div>
           </div>
 

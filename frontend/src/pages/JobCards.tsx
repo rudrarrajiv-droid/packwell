@@ -96,21 +96,62 @@ export default function JobCards() {
       return matchC && matchP && matchJ;
     });
 
-    const statusWeight: Record<string, number> = {
-      'PENDING': 1,
-      'ISSUED': 2,
-      'IN-PROCESS': 2,
-      'COMPLETED': 3
+    const getStatusRank = (status: string | null | undefined): number => {
+      const s = (status || '').toUpperCase().trim();
+      if (s === 'PENDING' || s === 'PENDING APPROVAL' || s.startsWith('PENDING')) return 1;
+      if (s === 'IN_PROCESS' || s === 'IN-PROCESS' || s === 'IN PROCESS' || s === 'ISSUED' || s === 'DELAYED') return 2;
+      if (s === 'COMPLETED') return 3;
+      if (s === 'DELETED') return 4;
+      return 5;
+    };
+
+    const parseTargetDate = (dateStr: string | null | undefined): number => {
+      if (!dateStr) return Infinity;
+      const isoMatch = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        const [, yyyy, mm, dd] = isoMatch;
+        return new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime();
+      }
+      const t = new Date(dateStr).getTime();
+      return isNaN(t) ? Infinity : t;
+    };
+
+    const parseJcNum = (jcNo: string | null | undefined): number => {
+      if (!jcNo) return 0;
+      const parts = String(jcNo).split('/');
+      const last = parts[parts.length - 1];
+      const parsed = parseInt(last, 10);
+      return isNaN(parsed) ? 0 : parsed;
     };
 
     list.sort((a, b) => {
-      const weightA = statusWeight[a.status] || 99;
-      const weightB = statusWeight[b.status] || 99;
-      if (weightA !== weightB) {
-        return weightA - weightB;
+      const rankA = getStatusRank(a.status);
+      const rankB = getStatusRank(b.status);
+      if (rankA !== rankB) {
+        return rankA - rankB;
       }
-      const numA = parseInt(String(a.jobCardNo).split('/').pop() || '0', 10);
-      const numB = parseInt(String(b.jobCardNo).split('/').pop() || '0', 10);
+
+      // Group 2: IN PROCESS - sort by nearest target date first, then newer target dates
+      if (rankA === 2) {
+        const dateA = parseTargetDate(a.targetDate);
+        const dateB = parseTargetDate(b.targetDate);
+        if (dateA !== dateB) {
+          return dateA - dateB;
+        }
+      }
+
+      // Group 1: PENDING - if target dates differ, nearest target date first
+      if (rankA === 1) {
+        const dateA = parseTargetDate(a.targetDate);
+        const dateB = parseTargetDate(b.targetDate);
+        if (dateA !== dateB && dateA !== Infinity && dateB !== Infinity) {
+          return dateA - dateB;
+        }
+      }
+
+      // Default / Tie-breaker: latest Job Card Number first
+      const numA = parseJcNum(a.jobCardNo);
+      const numB = parseJcNum(b.jobCardNo);
       return numB - numA;
     });
 

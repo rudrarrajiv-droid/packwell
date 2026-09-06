@@ -110,7 +110,7 @@ export default function POAdjustModal({ po, onClose, onSuccess }: POAdjustModalP
               </div>
               <div className="text-right">
                 <span className="text-[10px] uppercase font-bold text-muted-foreground block">Rate</span>
-                <span className="text-sm font-bold text-foreground">₹{po.rate.toFixed(2)}</span>
+                <span className="text-sm font-bold text-foreground">₹{Number(po.rate || 0).toFixed(3)}</span>
               </div>
             </div>
 

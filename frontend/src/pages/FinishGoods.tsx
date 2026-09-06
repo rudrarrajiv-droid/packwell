@@ -97,6 +97,19 @@ export default function FinishGoods() {
     }, { totalRegValue: 0, totalNonValue: 0 });
   }, [filteredFG]);
 
+  const exportData = useMemo(() => {
+    return filteredFG.map((item: any) => {
+      const closingBal = Number(item.closingBalance) || 0;
+      const nonMovingBal = Number(item.nonMovingBalance) || 0;
+      const rate = Number(item.rate) || 0;
+      return {
+        ...item,
+        rate: Number(rate.toFixed(3)),
+        totalValue: Math.round((closingBal + nonMovingBal) * rate),
+      };
+    });
+  }, [filteredFG]);
+
   // Generate Date Report
   const reportData = useMemo(() => {
     if (activeTab !== 'REPORT') return [];
@@ -149,14 +162,14 @@ export default function FinishGoods() {
           <div className="bg-primary/10 border border-primary/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
             <div className="text-right">
               <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Regular Stock Valuation</div>
-              <div className="text-xl font-black text-primary">₹{totalRegValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+              <div className="text-xl font-black text-primary">₹{Math.round(totalRegValue).toLocaleString('en-IN')}</div>
             </div>
           </div>
           {totalNonValue > 0 && (
             <div className="bg-orange-500/10 border border-orange-500/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
               <div className="text-right">
                 <div className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Non-Moving Valuation</div>
-                <div className="text-xl font-black text-orange-600 dark:text-orange-400">₹{totalNonValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                <div className="text-xl font-black text-orange-600 dark:text-orange-400">₹{Math.round(totalNonValue).toLocaleString('en-IN')}</div>
               </div>
             </div>
           )}
@@ -245,7 +258,7 @@ export default function FinishGoods() {
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto pb-2 sm:pb-0">
           {activeTab !== 'REPORT' && (
             <ExportButtons 
-              data={filteredFG} 
+              data={exportData} 
               filenamePrefix="FinishGoodsInventory"
               title="Finish Goods Inventory Status"
               columnMap={{
@@ -257,6 +270,7 @@ export default function FinishGoods() {
                 'closingBalance': 'Closing Balance',
                 'nonMovingBalance': 'Non-Moving Balance',
                 'rate': 'Rate',
+                'totalValue': 'Total Value',
               }}
             />
           )}
@@ -371,7 +385,7 @@ export default function FinishGoods() {
                       </td>
                       <td className="px-6 py-4 text-right font-bold text-orange-600">{nonMovingBal.toLocaleString()}</td>
                       <td className="px-6 py-4 text-right font-medium text-muted-foreground">₹{rate.toFixed(3)}</td>
-                      <td className={`px-6 py-4 text-right font-bold ${isNegative ? 'text-red-700' : 'text-foreground'}`}>₹{totalVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                      <td className={`px-6 py-4 text-right font-bold ${isNegative ? 'text-red-700' : 'text-foreground'}`}>₹{Math.round(totalVal).toLocaleString('en-IN')}</td>
                       <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1.5">
                           {/* Rate & Qty Adjustment Button */}
