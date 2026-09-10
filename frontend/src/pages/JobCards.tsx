@@ -224,7 +224,7 @@ export default function JobCards() {
     <div className="h-full flex flex-col relative">
       {/* --- PRINT PREVIEW OVERLAY --- */}
       {printingJobCard && (
-        <div className="fixed inset-0 z-[100] bg-gray-900 overflow-auto flex flex-col">
+        <div className="fixed inset-0 z-[100] bg-gray-900 overflow-auto flex flex-col print:static print:bg-white print:overflow-visible print:h-auto print:block print:p-0 print:m-0">
           <div className="p-4 bg-gray-800 text-white flex justify-between items-center shadow-lg sticky top-0 z-10 shrink-0 no-print">
             <div>
               <h2 className="text-xl font-bold text-white">Print Preview</h2>
@@ -258,8 +258,8 @@ export default function JobCards() {
             </div>
           </div>
           
-          <div className="flex-1 p-8 overflow-y-auto flex justify-center pb-20 no-print-bg">
-            <div id="job-card-print-area" className="bg-white shadow-2xl overflow-hidden print-view-container min-h-[297mm]">
+          <div className="flex-1 p-8 overflow-y-auto flex justify-center pb-20 no-print-bg print:p-0 print:m-0 print:overflow-visible print:block print:h-auto">
+            <div className="bg-white shadow-2xl overflow-hidden print-view-container min-h-[297mm] print:shadow-none print:m-0 print:p-0">
               <PrintableJobCard jobCard={printingJobCard} />
             </div>
           </div>

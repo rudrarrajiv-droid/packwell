@@ -7,7 +7,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
   const roundWeight = (w: any) => Math.round(Number(w) || 0);
 
   return (
-    <div id="job-card-print-area" className="w-[210mm] h-[297mm] mx-auto bg-white text-black p-[10mm] text-[12px] font-sans leading-snug box-border overflow-hidden relative">
+    <div id="job-card-print-area" className="print-view-container w-[210mm] min-h-[297mm] mx-auto bg-white text-black p-[10mm] text-[12px] font-sans leading-snug box-border relative">
       
       {/* HEADER */}
       <div className="grid grid-cols-3 items-center border-b-2 border-black pb-2 mb-2">
@@ -352,12 +352,46 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
       </div>
       
       {/* INSTRUCTIONS */}
-      {(jobCard.remarks || jobCard.specialInstructions) && (
-        <div className="mb-2 p-2 border border-black min-h-[40px]">
-          <h3 className="font-bold text-xs mb-1">Remarks / Special Instructions:</h3>
-          <p className="text-[11px] whitespace-pre-wrap">{jobCard.remarks || jobCard.specialInstructions}</p>
-        </div>
-      )}
+      {(() => {
+        const formatRemark = (r: any): string => {
+          if (!r) return '';
+          if (typeof r === 'string') return r;
+          if (typeof r === 'object') {
+            if (r.text) {
+              const meta = [r.by, r.date ? new Date(r.date).toLocaleDateString('en-GB') : null].filter(Boolean).join(' - ');
+              return meta ? `${r.text} (${meta})` : r.text;
+            }
+            return JSON.stringify(r);
+          }
+          return String(r);
+        };
+
+        let remarkList: string[] = [];
+        if (Array.isArray(jobCard.remarks)) {
+          remarkList = jobCard.remarks.map(formatRemark).filter(Boolean);
+        } else if (jobCard.remarks) {
+          remarkList = [formatRemark(jobCard.remarks)];
+        }
+
+        if (Array.isArray(jobCard.specialInstructions)) {
+          remarkList.push(...jobCard.specialInstructions.map(formatRemark).filter(Boolean));
+        } else if (jobCard.specialInstructions) {
+          remarkList.push(formatRemark(jobCard.specialInstructions));
+        }
+
+        if (remarkList.length === 0) return null;
+
+        return (
+          <div className="mb-2 p-2 border border-black min-h-[40px]">
+            <h3 className="font-bold text-xs mb-1">Remarks / Special Instructions:</h3>
+            <div className="text-[11px] whitespace-pre-wrap space-y-1">
+              {remarkList.map((text, idx) => (
+                <p key={idx}>{text}</p>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* PREPARED / CHECKED / PRODUCTION HEAD */}
       <div className="grid grid-cols-3 gap-8 mt-6 pt-4 text-center text-gray-800 font-bold uppercase text-[10px] break-inside-avoid relative bottom-0">

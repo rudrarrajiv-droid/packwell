@@ -68,17 +68,17 @@
     visibility: hidden;
   }
   /* Show only the print view container and its children */
-  .print-view-container, .print-view-container * {
-    visibility: visible;
+  .print-view-container, .print-view-container *,
+  #job-card-print-area, #job-card-print-area * {
+    visibility: visible !important;
   }
-  .print-view-container {
+  .print-view-container, #job-card-print-area {
     position: absolute;
     left: 0;
     top: 0;
     width: 210mm;
-    height: 297mm;
+    min-height: 297mm;
     margin: 0;
-    padding: 0;
     background: white;
     box-shadow: none !important;
   }
