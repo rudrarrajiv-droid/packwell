@@ -105,3 +105,65 @@ export const downloadPOTemplate = () => {
   XLSX.utils.book_append_sheet(workbook, worksheet, 'PO_Template');
   XLSX.writeFile(workbook, 'Bulk_PO_Import_Template.xlsx');
 };
+
+export interface ItemLedgerExcelRow {
+  date: string;
+  type: string;
+  poNo: string;
+  invoiceNo: string;
+  customerName: string;
+  inQty: number;
+  outQty: number;
+  balance: number;
+  rate?: number;
+  remarks: string;
+}
+
+/**
+ * Export an Item's Complete PO In & Dispatch Out Ledger to Excel
+ */
+export const exportItemLedgerToExcel = (
+  itemName: string,
+  artworkNo: string | undefined,
+  rows: ItemLedgerExcelRow[]
+) => {
+  const excelData = rows.map((r, idx) => ({
+    'S.No': idx + 1,
+    'Date': r.date,
+    'Type': r.type,
+    'PO No.': r.poNo,
+    'Invoice No.': r.invoiceNo,
+    'Customer / Party': r.customerName,
+    'IN Qty (+)': r.inQty > 0 ? r.inQty : 0,
+    'OUT Qty (-)': r.outQty > 0 ? r.outQty : 0,
+    'Running Balance': r.balance,
+    'Rate (₹)': r.rate !== undefined ? Number(Number(r.rate).toFixed(3)) : '',
+    'Remarks / Vehicle': r.remarks || ''
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(excelData);
+  const workbook = XLSX.utils.book_new();
+
+  worksheet['!cols'] = [
+    { wch: 6 },   // S.No
+    { wch: 12 },  // Date
+    { wch: 16 },  // Type
+    { wch: 16 },  // PO No.
+    { wch: 18 },  // Invoice No.
+    { wch: 26 },  // Customer
+    { wch: 14 },  // IN Qty
+    { wch: 14 },  // OUT Qty
+    { wch: 16 },  // Running Balance
+    { wch: 10 },  // Rate
+    { wch: 35 },  // Remarks
+  ];
+
+  const safeName = (itemName || 'Item').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 25);
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Item Ledger');
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  const filename = `${safeName}_Ledger_${dateStr}.xlsx`;
+
+  XLSX.writeFile(workbook, filename);
+};
+

@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Search, FileText, ShoppingCart, Activity, XCircle, ArrowUpDown, ArrowUp, ArrowDown, Users, List, ChevronLeft, Link, FileSpreadsheet, Scale, Boxes, Layers, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Search, FileText, ShoppingCart, Activity, XCircle, ArrowUpDown, ArrowUp, ArrowDown, Users, List, ChevronLeft, Link, FileSpreadsheet, Scale, Boxes, Layers, ChevronDown, ChevronRight, Receipt } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { deletePurchaseOrder, getAllPOTransactions, getPurchaseOrders, type PurchaseOrder, getPurchaseOrderBalance } from '../lib/supabase/purchaseOrderService';
 import { exportPurchaseOrdersToExcel } from '../utils/exportUtils';
 import AddPOModal from './po-management/AddPOModal';
 import POInModal from './po-management/POInModal';
 import POHistoryModal from './po-management/POHistoryModal';
+import ItemPOHistoryModal from './po-management/ItemPOHistoryModal';
 import POAdjustModal from './po-management/POAdjustModal';
 import LinkedJobCardsModal from './po-management/LinkedJobCardsModal';
 import ExcelImportPreviewModal from './po-management/ExcelImportPreviewModal';
@@ -95,6 +96,7 @@ export default function PurchaseOrders() {
   const [editPo, setEditPo] = useState<PurchaseOrder | null>(null);
   const [adjustPo, setAdjustPo] = useState<PurchaseOrder | null>(null);
   const [isBulkCloseModalOpen, setIsBulkCloseModalOpen] = useState(false);
+  const [selectedItemForHistory, setSelectedItemForHistory] = useState<{ productName: string; artworkNo?: string } | null>(null);
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -748,12 +750,34 @@ export default function PurchaseOrders() {
                         </div>
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-base font-black text-foreground">{group.productName}</h3>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedItemForHistory({ productName: group.productName, artworkNo: group.artworkNo });
+                              }}
+                              className="text-base font-black text-foreground hover:text-primary transition-colors text-left flex items-center gap-1.5 group/item cursor-pointer"
+                              title="Click to view full PO & Dispatch Ledger for this item"
+                            >
+                              <span className="group-hover/item:underline">{group.productName}</span>
+                            </button>
                             {group.artworkNo && (
                               <span className="px-2 py-0.5 bg-muted border border-border text-muted-foreground font-mono text-xs rounded">
                                 Art: {group.artworkNo}
                               </span>
                             )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedItemForHistory({ productName: group.productName, artworkNo: group.artworkNo });
+                              }}
+                              className="px-2.5 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-700 dark:text-blue-300 font-bold rounded-full text-xs flex items-center gap-1 cursor-pointer transition-colors"
+                              title="View Complete Item PO & Dispatch Ledger"
+                            >
+                              <Receipt className="w-3 h-3" />
+                              Ledger
+                            </button>
                             {group.hasMultiple ? (
                               <span className="px-2.5 py-0.5 bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-400 font-bold rounded-full text-xs flex items-center gap-1">
                                 <Layers className="w-3 h-3" />
@@ -1206,7 +1230,7 @@ export default function PurchaseOrders() {
                 <th className={thClass} onClick={() => handleSort('customerName')}>
                   <div className="flex items-center">4. CUSTOMER NAME <SortIcon field="customerName" /></div>
                 </th>
-                <th className="px-3 py-3 border-b border-border">5. ITEM NAME</th>
+                <th className="px-3 py-3 border-b border-border min-w-[220px]">5. ITEM NAME</th>
                 <th className="px-3 py-3 border-b border-border text-right">6. RATE</th>
                 <th className={cn(thClass, "text-right")} onClick={() => handleSort('orderQty')}>
                   <div className="flex items-center justify-end">7. OPN QTY <SortIcon field="orderQty" /></div>
@@ -1251,29 +1275,43 @@ export default function PurchaseOrders() {
                       <td className="px-3 py-2 text-muted-foreground">{formatDate(po.poDate)}</td>
                       <td className="px-3 py-2 text-muted-foreground">{formatDate(po.deliveryDate)}</td>
                       <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
-                      <td className="px-3 py-2 font-medium max-w-[200px]" title={po.productName}>
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate">{po.productName}</span>
-                          {(() => {
-                            const group = itemWiseData.find(g => g.productName.toLowerCase() === (po.productName || '').trim().toLowerCase());
-                            if (group && group.hasMultiple) {
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSearchTerm(po.productName);
-                                    setViewMode('ITEM_WISE');
-                                  }}
-                                  className="px-1.5 py-0.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-700 dark:text-amber-300 rounded text-[10px] font-bold shrink-0 transition-colors"
-                                  title={`This item has ${group.poCount} POs. Click to view grouped!`}
-                                >
-                                  {group.poCount} POs
-                                </button>
-                              );
-                            }
-                            return null;
-                          })()}
+                      <td className="px-3 py-2 font-medium min-w-[220px] max-w-[360px] whitespace-normal">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-start gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedItemForHistory({ productName: po.productName, artworkNo: po.artworkNo })}
+                              className="text-left font-semibold text-foreground hover:text-primary transition-colors hover:underline leading-snug cursor-pointer break-words group/item"
+                              title="Click to view PO In & Dispatch Out Ledger for this item"
+                            >
+                              <span>{po.productName}</span>
+                            </button>
+                            {(() => {
+                              const group = itemWiseData.find(g => g.productName.toLowerCase() === (po.productName || '').trim().toLowerCase());
+                              if (group && group.hasMultiple) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSearchTerm(po.productName);
+                                      setViewMode('ITEM_WISE');
+                                    }}
+                                    className="px-1.5 py-0.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-700 dark:text-amber-300 rounded text-[10px] font-bold shrink-0 transition-colors cursor-pointer"
+                                    title={`This item has ${group.poCount} POs. Click to view grouped!`}
+                                  >
+                                    {group.poCount} POs
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
+                          {po.artworkNo && (
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              Art: {po.artworkNo}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right font-medium">₹{formatRate(po.rate)}</td>
@@ -1375,7 +1413,7 @@ export default function PurchaseOrders() {
                   <th className="px-3 py-3 border-b border-border cursor-pointer hover:bg-muted/50">3. DELIVERY DATE</th>
                   <th className="px-3 py-3 border-b border-border cursor-pointer hover:bg-muted/50">4. CUSTOMER NAME</th>
                   <th className="px-3 py-3 border-b border-border truncate max-w-[100px]">5. ARTWORK NO.</th>
-                  <th className="px-3 py-3 border-b border-border truncate max-w-[150px]">6. ITEM NAME</th>
+                  <th className="px-3 py-3 border-b border-border min-w-[200px]">6. ITEM NAME</th>
                   <th className="px-3 py-3 border-b border-border text-right">7. RATE</th>
                   <th className="px-3 py-3 border-b border-border text-right text-foreground">8. OPN QTY</th>
                   <th className="px-3 py-3 border-b border-border text-right text-green-600/70 bg-green-50/30">9. MTH IN QTY</th>
@@ -1405,7 +1443,16 @@ export default function PurchaseOrders() {
                         <td className="px-3 py-2 text-muted-foreground">{formatDate(po.deliveryDate)}</td>
                         <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
                         <td className="px-3 py-2 font-mono text-xs text-muted-foreground max-w-[100px] truncate" title={po.artworkNo}>{po.artworkNo || '-'}</td>
-                        <td className="px-3 py-2 font-medium truncate max-w-[150px]" title={po.productName}>{po.productName}</td>
+                        <td className="px-3 py-2 font-medium min-w-[200px] max-w-[320px] whitespace-normal">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedItemForHistory({ productName: po.productName, artworkNo: po.artworkNo })}
+                            className="text-left font-semibold text-foreground hover:text-primary transition-colors hover:underline cursor-pointer"
+                            title="Click to view full PO & Dispatch Ledger for this item"
+                          >
+                            {po.productName}
+                          </button>
+                        </td>
                         <td className="px-3 py-2 text-right font-medium">₹{formatRate(po.rate)}</td>
                         <td className="px-3 py-2 text-right font-bold">{po.monthlyOpeningBal}</td>
                         <td className="px-3 py-2 text-right font-bold text-green-600 bg-green-50/30">{po.monthlyIn || 0}</td>
@@ -1526,6 +1573,16 @@ export default function PurchaseOrders() {
         <BulkClosePOModal
           activePOs={purchaseOrders}
           onClose={() => setIsBulkCloseModalOpen(false)}
+        />
+      )}
+
+      {selectedItemForHistory && (
+        <ItemPOHistoryModal
+          productName={selectedItemForHistory.productName}
+          artworkNo={selectedItemForHistory.artworkNo}
+          purchaseOrders={purchaseOrders}
+          poTransactions={poTransactions}
+          onClose={() => setSelectedItemForHistory(null)}
         />
       )}
     </div>
