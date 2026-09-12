@@ -132,17 +132,19 @@ export default function PurchaseOrders() {
     queryFn: () => getAllPOTransactions()
   });
 
-  // Unique Customers for Dropdown
+  // Unique Customers for Dropdown (Deduplicated and merged by Customer Name)
   const uniqueCustomers = useMemo(() => {
     const map = new Map<string, string>();
     purchaseOrders.forEach(po => {
-      if (po.customerId && po.customerName) {
-        map.set(po.customerId, po.customerName);
-      } else if (po.customerName) {
-        map.set(po.customerName, po.customerName);
+      const name = (po.customerName || '').trim();
+      if (name) {
+        const key = name.toLowerCase();
+        if (!map.has(key)) {
+          map.set(key, name);
+        }
       }
     });
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
   }, [purchaseOrders]);
 
   // Handle Sort Toggle
@@ -200,8 +202,21 @@ export default function PurchaseOrders() {
         if (calculatedStatus !== statusFilter) return false;
       }
 
-      // 3. Customer Filter
-      if (customerFilter && po.customerId !== customerFilter) return false;
+      // 3. Customer Filter (Matches by Customer Name or ID)
+      if (customerFilter) {
+        const filterNorm = customerFilter.toLowerCase().trim();
+        const poCustName = (po.customerName || '').toLowerCase().trim();
+        const poCustId = (po.customerId || '').toLowerCase().trim();
+        if (poCustName !== filterNorm && poCustId !== filterNorm) return false;
+      }
+
+      // Detail View Filter (When clicking a customer from Customer Summary)
+      if (viewMode === 'DETAIL' && selectedCustomerId) {
+        const selectedNorm = selectedCustomerId.toLowerCase().trim();
+        const poCustName = (po.customerName || '').toLowerCase().trim();
+        const poCustId = (po.customerId || '').toLowerCase().trim();
+        if (poCustName !== selectedNorm && poCustId !== selectedNorm) return false;
+      }
 
       // 4. PO Date Filter
       if (poDateFrom && po.poDate < poDateFrom) return false;
@@ -363,7 +378,7 @@ export default function PurchaseOrders() {
     return itemWiseData;
   }, [itemWiseData, showMultipleOnly]);
 
-  // Phase 9: Customer Summaries Computation
+  // Phase 9: Customer Summaries Computation (Merged by Customer Name)
   const { customerSummaries, summaryGrandTotals } = useMemo(() => {
     const map = new Map<string, any>();
     
@@ -375,16 +390,20 @@ export default function PurchaseOrders() {
     let grandPendingValue = 0;
 
     purchaseOrders.forEach(po => {
-      if (!po.customerId || !po.customerName) return;
+      const custName = (po.customerName || '').trim();
+      if (!custName) return;
+      const key = custName.toLowerCase();
       
       const closingBal = getPurchaseOrderBalance(po);
       const poValue = po.orderQty * po.rate;
       const pendingValue = closingBal * po.rate;
 
-      if (!map.has(po.customerId)) {
-        map.set(po.customerId, {
-          id: po.customerId,
-          name: po.customerName,
+      if (!map.has(key)) {
+        map.set(key, {
+          id: po.customerId || custName,
+          name: custName,
+          key: key,
+          customerIds: new Set<string>(po.customerId ? [po.customerId] : []),
           poCount: 0,
           poValue: 0,
           opnQty: 0,
@@ -395,7 +414,8 @@ export default function PurchaseOrders() {
         });
       }
 
-      const summary = map.get(po.customerId);
+      const summary = map.get(key);
+      if (po.customerId) summary.customerIds.add(po.customerId);
       summary.poCount += 1;
       summary.poValue += poValue;
       summary.opnQty += po.orderQty;
@@ -416,7 +436,7 @@ export default function PurchaseOrders() {
     let summaries = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 
     if (summarySearch) {
-      const term = summarySearch.toLowerCase();
+      const term = summarySearch.toLowerCase().trim();
       summaries = summaries.filter(s => s.name.toLowerCase().includes(term));
     }
 
@@ -428,7 +448,12 @@ export default function PurchaseOrders() {
 
   const selectedCustomerSummary = useMemo(() => {
     if (!selectedCustomerId) return null;
-    return customerSummaries.find(s => s.id === selectedCustomerId) || null;
+    const norm = selectedCustomerId.toLowerCase().trim();
+    return customerSummaries.find(s => 
+      s.name.toLowerCase().trim() === norm || 
+      s.id === selectedCustomerId || 
+      (s.customerIds && s.customerIds.has(selectedCustomerId))
+    ) || null;
   }, [customerSummaries, selectedCustomerId]);
 
   // Phase 12: Monthly PO Data Computation
@@ -510,8 +535,13 @@ export default function PurchaseOrders() {
         }
       }
 
-      // 4. Customer Filter
-      if (customerFilter && po.customerId !== customerFilter) return false;
+      // 4. Customer Filter (Matches by Customer Name or ID)
+      if (customerFilter) {
+        const filterNorm = customerFilter.toLowerCase().trim();
+        const poCustName = (po.customerName || '').toLowerCase().trim();
+        const poCustId = (po.customerId || '').toLowerCase().trim();
+        if (poCustName !== filterNorm && poCustId !== filterNorm) return false;
+      }
 
       return true;
     });
@@ -994,10 +1024,10 @@ export default function PurchaseOrders() {
                   ) : (
                     customerSummaries.map((s) => (
                       <tr 
-                        key={s.id} 
+                        key={s.key || s.name} 
                         className="hover:bg-primary/5 cursor-pointer transition-colors group"
                         onClick={() => {
-                          setSelectedCustomerId(s.id);
+                          setSelectedCustomerId(s.name);
                           setViewMode('DETAIL');
                         }}
                       >
@@ -1155,8 +1185,8 @@ export default function PurchaseOrders() {
               onChange={(e) => setCustomerFilter(e.target.value)}
             >
               <option value="">All Customers</option>
-              {uniqueCustomers.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+              {uniqueCustomers.map(name => (
+                <option key={name} value={name}>{name}</option>
               ))}
             </select>
           </div>
@@ -1232,20 +1262,11 @@ export default function PurchaseOrders() {
                 </th>
                 <th className="px-3 py-3 border-b border-border min-w-[220px]">5. ITEM NAME</th>
                 <th className="px-3 py-3 border-b border-border text-right">6. RATE</th>
-                <th className={cn(thClass, "text-right")} onClick={() => handleSort('orderQty')}>
-                  <div className="flex items-center justify-end">7. OPN QTY <SortIcon field="orderQty" /></div>
-                </th>
-                <th className={cn(thClass, "text-right text-green-600/70")} onClick={() => handleSort('inQty')}>
-                  <div className="flex items-center justify-end">8. IN QTY <SortIcon field="inQty" /></div>
-                </th>
-                <th className={cn(thClass, "text-right text-red-600/70")} onClick={() => handleSort('outQty')}>
-                  <div className="flex items-center justify-end">9. OUT QTY <SortIcon field="outQty" /></div>
-                </th>
                 <th className={cn(thClass, "text-right")} onClick={() => handleSort('closingBal')}>
-                  <div className="flex items-center justify-end">10. CLOSING BAL <SortIcon field="closingBal" /></div>
+                  <div className="flex items-center justify-end">7. CLOSING BAL <SortIcon field="closingBal" /></div>
                 </th>
                 <th className={cn(thClass, "text-right text-orange-600/70")} onClick={() => handleSort('value')}>
-                  <div className="flex items-center justify-end">11. VALUE <SortIcon field="value" /></div>
+                  <div className="flex items-center justify-end">8. VALUE <SortIcon field="value" /></div>
                 </th>
                 <th className={cn(thClass, "text-center")} onClick={() => handleSort('statusPriority')}>
                   <div className="flex items-center justify-center">STATUS <SortIcon field="statusPriority" /></div>
@@ -1256,7 +1277,7 @@ export default function PurchaseOrders() {
             <tbody className="divide-y divide-border">
               {displayData.length === 0 && !isLoading ? (
                 <tr>
-                  <td colSpan={13} className="px-6 py-16 text-center">
+                  <td colSpan={10} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center justify-center text-muted-foreground">
                       <FileText className="w-12 h-12 mb-3 text-muted-foreground/30" />
                       <p className="text-base font-semibold">No Purchase Orders Found</p>
@@ -1315,9 +1336,6 @@ export default function PurchaseOrders() {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right font-medium">₹{formatRate(po.rate)}</td>
-                      <td className="px-3 py-2 text-right font-bold">{po.orderQty}</td>
-                      <td className="px-3 py-2 text-right font-bold text-green-600">{po.inQty || 0}</td>
-                      <td className="px-3 py-2 text-right font-bold text-red-600">{po.outQty || 0}</td>
                       <td className="px-3 py-2 text-right font-black text-foreground">{closingBal}</td>
                       <td className="px-3 py-2 text-right font-bold text-orange-600">₹{formatValue(value)}</td>
                       <td className="px-3 py-2 text-center">

@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import { cn } from '../../lib/utils';
 import { importPurchaseOrdersBatch, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
 import { getProducts } from '../../lib/supabase/productService';
+import { getCustomers } from '../../lib/supabase/customerService';
 import { useQuery } from '@tanstack/react-query';
 
 type PreviewRow = {
@@ -84,6 +85,11 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
       const data = await getProducts() as any[];
       return data;
     }
+  });
+
+  const { data: customers = [] } = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => getCustomers()
   });
 
   const [filterMode, setFilterMode] = useState<'ALL' | 'READY TO IMPORT' | 'ERROR' | 'MISSING REQUIRED DATA' | 'DUPLICATE IN EXCEL' | 'ALREADY EXISTS' | 'CONFLICT - NEEDS REVIEW'>('ALL');
@@ -303,25 +309,32 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
     try {
       const rowsToImport = previewData.filter(r => r._status === 'READY TO IMPORT' || r._status === 'CONFLICT - NEEDS REVIEW');
       
-      const posToCreate: Omit<PurchaseOrder, 'id'>[] = rowsToImport.map(row => ({
-        poNo: row.poNo,
-        poDate: row.poDate,
-        deliveryDate: row.deliveryDate !== '-' ? row.deliveryDate : '',
-        customerId: row.customerName, // Ideally map to ID if you have customer mapping
-        customerName: row.customerName,
-        consignee: row.consignee !== '-' ? row.consignee : '',
-        artworkNo: row.artworkNo !== '-' ? row.artworkNo : '',
-        productId: row.itemName, // Ideally map to ID
-        productName: row.itemName,
-        size: row.size !== '-' ? row.size : '',
-        rate: parseFloat(row.rate),
-        orderQty: parseFloat(row.opnQty),
-        inQty: parseFloat(row.inQty),
-        outQty: parseFloat(row.outQty),
-        status: 'OPEN', 
-        history: [],
-        isArchived: false,
-      }));
+      const posToCreate: Omit<PurchaseOrder, 'id'>[] = rowsToImport.map(row => {
+        const cleanCustName = (row.customerName || '').trim();
+        const matchedCust = customers.find(c => (c.name || '').trim().toLowerCase() === cleanCustName.toLowerCase());
+        const customerId = matchedCust ? matchedCust.id : cleanCustName;
+        const customerName = matchedCust ? matchedCust.name : cleanCustName;
+
+        return {
+          poNo: row.poNo,
+          poDate: row.poDate,
+          deliveryDate: row.deliveryDate !== '-' ? row.deliveryDate : '',
+          customerId,
+          customerName,
+          consignee: row.consignee !== '-' ? row.consignee : '',
+          artworkNo: row.artworkNo !== '-' ? row.artworkNo : '',
+          productId: row.itemName, // Ideally map to ID
+          productName: row.itemName,
+          size: row.size !== '-' ? row.size : '',
+          rate: parseFloat(row.rate),
+          orderQty: parseFloat(row.opnQty),
+          inQty: parseFloat(row.inQty),
+          outQty: parseFloat(row.outQty),
+          status: 'OPEN', 
+          history: [],
+          isArchived: false,
+        };
+      });
 
       const result = await importPurchaseOrdersBatch(posToCreate, runId, 'Admin');
       
