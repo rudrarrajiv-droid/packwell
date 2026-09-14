@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Save, Calendar, Clock, Loader2, IndianRupee, RefreshCw, X, Sun, Briefcase } from 'lucide-react';
+import { 
+  Save, Calendar, Clock, Loader2, IndianRupee, RefreshCw, X, Sun, 
+  Briefcase, ArrowRightLeft, AlertTriangle, CheckCircle2 
+} from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEmployees, type Employee } from '../../lib/supabase/employeeService';
-import { getAttendanceByDate, saveDailyAttendance, type AttendanceRecord } from '../../lib/supabase/attendanceService';
+import { 
+  getAttendanceByDate, saveDailyAttendance, moveDailyAttendance, type AttendanceRecord 
+} from '../../lib/supabase/attendanceService';
 
 interface DailyAttendanceFormState {
   present: number;
@@ -22,6 +27,11 @@ export default function DailyEntryTab() {
   const [isSaving, setIsSaving] = useState(false);
   const [filter, setFilter] = useState<'ALL' | 'COMPANY' | 'WAGES_DINESH' | 'WAGES_VIKAS'>('ALL');
   const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
+
+  // Move / Shift Date state
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [targetMoveDate, setTargetMoveDate] = useState<string>('');
+  const [isMoving, setIsMoving] = useState(false);
 
   // Helper to check Sunday
   const isSunday = (dateStr: string) => {
@@ -160,8 +170,6 @@ export default function DailyEntryTab() {
           }
         } else {
           // Requirement 4: Baaki dino me OT hours me refreshment ka paisa automatically add nahi hoga
-          // If refreshment was previously set to 60 by accident on a weekday, revert if user desires,
-          // otherwise keep manual refreshment as is without auto-triggering 60.
         }
       } else {
         // Pre-September 2026: keep old behavior untouched (Requirement 5)
@@ -195,8 +203,12 @@ export default function DailyEntryTab() {
     }));
   };
 
-  const calculateAmounts = (emp: Employee, att: { present?: number; otHours?: any; refreshment?: any }) => {
-    const dateObj = new Date(loadedDate || pendingDate);
+  const calculateAmounts = (
+    emp: Employee, 
+    att: { present?: number; otHours?: any; refreshment?: any },
+    customDate?: string
+  ) => {
+    const dateObj = new Date(customDate || loadedDate || pendingDate);
     const daysInMonth = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
     const perDayRate = emp.basicSalary / daysInMonth;
     const presentVal = Number(att?.present) || 0;
@@ -266,6 +278,85 @@ export default function DailyEntryTab() {
     }
   };
 
+  // Move / Shift all entries from loadedDate to targetMoveDate
+  const handleMoveDate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loadedDate || !targetMoveDate) return;
+
+    if (loadedDate === targetMoveDate) {
+      alert('Current date aur target date alag honi chahiye.');
+      return;
+    }
+
+    const activeCount = employees.filter(emp => {
+      const att = attendance[emp.id!];
+      return att && (att.present > 0 || parseFloat(String(att.otHours || 0)) > 0 || Number(att.refreshment || 0) > 0);
+    }).length;
+
+    if (activeCount === 0) {
+      alert(`No attendance or OT entries found on ${loadedDate} to move.`);
+      return;
+    }
+
+    if (!confirm(`Kya aap sure hain ki ${loadedDate} ki attendance aur OT ko ${targetMoveDate} par shift karna chahte hain? Purani date (${loadedDate}) se entries clear ho jayengi.`)) {
+      return;
+    }
+
+    setIsMoving(true);
+    setMessage(null);
+    try {
+      const recordsToMove: Omit<AttendanceRecord, 'id'>[] = [];
+      const targetIsSunday = isSunday(targetMoveDate);
+      const targetIsSept2026OrLater = targetMoveDate >= '2026-09-01';
+
+      employees.forEach(emp => {
+        const att = attendance[emp.id!];
+        const presentVal = Number(att?.present) || 0;
+        const otVal = parseFloat(String(att?.otHours || 0)) || 0;
+        let refVal = Number(att?.refreshment) || 0;
+
+        // Auto refreshment adjustment if moving to Sunday
+        if (targetIsSept2026OrLater && targetIsSunday && otVal >= 6 && refVal === 0) {
+          refVal = 60;
+        }
+
+        if (att && (presentVal > 0 || otVal > 0 || refVal > 0)) {
+          const { perDayAmount, otAmount } = calculateAmounts(
+            emp, 
+            { present: presentVal, otHours: otVal, refreshment: refVal }, 
+            targetMoveDate
+          );
+          
+          recordsToMove.push({
+            employeeId: emp.id!,
+            date: targetMoveDate,
+            present: presentVal,
+            otHours: otVal,
+            refreshment: refVal,
+            perDayAmount,
+            otAmount
+          });
+        }
+      });
+
+      await moveDailyAttendance(loadedDate, targetMoveDate, recordsToMove, user?.name || 'System');
+      setShowMoveModal(false);
+      setMessage({
+        type: 'success',
+        text: `✓ Successfully moved ${recordsToMove.length} employee records from ${loadedDate} to ${targetMoveDate}!`
+      });
+
+      // Automatically load the newly shifted date
+      setPendingDate(targetMoveDate);
+      await loadData(targetMoveDate);
+    } catch (error: any) {
+      console.error(error);
+      setMessage({ type: 'error', text: 'Failed to move attendance: ' + error.message });
+    } finally {
+      setIsMoving(false);
+    }
+  };
+
   const filteredEmployees = employees.filter(emp => {
     if (filter === 'ALL') return true;
     if (filter === 'COMPANY') return emp.category === 'COMPANY';
@@ -279,7 +370,11 @@ export default function DailyEntryTab() {
   const dayName = getDayName(activeDate);
   const dateChanged = pendingDate !== loadedDate;
   const thClass = "px-3 py-3 border-b border-border text-left font-medium text-muted-foreground whitespace-nowrap";
-  const tdClass = "px-3 py-2 border-b border-border";
+
+  const totalFilledEntries = employees.filter(e => {
+    const a = attendance[e.id!];
+    return a && (a.present > 0 || parseFloat(String(a.otHours || 0)) > 0 || Number(a.refreshment || 0) > 0);
+  }).length;
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -306,7 +401,7 @@ export default function DailyEntryTab() {
           </p>
         </div>
         
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <Calendar className="w-5 h-5 text-muted-foreground" />
             <input 
@@ -322,23 +417,39 @@ export default function DailyEntryTab() {
           <button
             onClick={() => loadData(pendingDate)}
             disabled={isLoading}
-            className={`flex items-center px-4 py-2 font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50 text-sm ${
+            className={`flex items-center px-3.5 py-2 font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50 text-sm ${
               dateChanged 
                 ? 'bg-amber-500 text-white hover:bg-amber-600 animate-pulse' 
                 : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
             }`}
           >
-            {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            {isLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
             {dateChanged ? 'Load Date' : 'Reload'}
           </button>
 
+          {/* Save Button */}
           <button
             onClick={handleSave}
             disabled={isSaving || isLoading || !loadedDate}
-            className="flex items-center px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 text-sm"
+            className="flex items-center px-3.5 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 text-sm"
           >
-            {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+            {isSaving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
             Save Entry
+          </button>
+
+          {/* 1-Click Move / Shift to Another Date Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setTargetMoveDate('');
+              setShowMoveModal(true);
+            }}
+            disabled={isSaving || isLoading || !loadedDate || totalFilledEntries === 0}
+            className="flex items-center px-3.5 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 transition-colors shadow-sm disabled:opacity-40 text-sm"
+            title="Shift / Move this day's attendance to another date"
+          >
+            <ArrowRightLeft className="w-4 h-4 mr-1.5" />
+            Move Date
           </button>
         </div>
       </div>
@@ -550,6 +661,104 @@ export default function DailyEntryTab() {
           </table>
         </div>
       </div>
+
+      {/* Move / Shift Date Modal */}
+      {showMoveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-card w-full max-w-md rounded-xl shadow-xl flex flex-col">
+            <div className="p-4 border-b border-border flex justify-between items-center bg-amber-50/70 rounded-t-xl">
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="w-5 h-5 text-amber-600" />
+                <h2 className="text-lg font-bold text-foreground">Move Attendance to Another Date</h2>
+              </div>
+              <button 
+                onClick={() => setShowMoveModal(false)}
+                className="text-muted-foreground hover:text-foreground text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleMoveDate} className="p-4 space-y-4">
+              {/* Current Date Info */}
+              <div className="p-3 bg-muted/40 rounded-lg border border-border">
+                <div className="text-xs text-muted-foreground">Current (Galat) Date:</div>
+                <div className="text-base font-bold text-foreground">{loadedDate} ({dayName})</div>
+                <div className="text-xs text-muted-foreground mt-1 flex gap-3">
+                  <span>Present: <strong className="text-green-700">{summary.totalPresent}</strong></span>
+                  <span>OT: <strong className="text-blue-700">{summary.totalOT} hrs</strong></span>
+                  <span>Filled: <strong className="text-primary">{totalFilledEntries} emps</strong></span>
+                </div>
+              </div>
+
+              {/* Target Date Picker */}
+              <div>
+                <label className="block text-sm font-semibold text-foreground mb-1">
+                  Select New / Correct Date (Sahi Date Chunein) *
+                </label>
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-primary" />
+                  <input
+                    type="date"
+                    required
+                    className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm font-medium"
+                    value={targetMoveDate}
+                    onChange={(e) => setTargetMoveDate(e.target.value)}
+                    max={new Date().toISOString().split('T')[0]}
+                  />
+                </div>
+                {targetMoveDate && (
+                  <p className="text-xs text-muted-foreground mt-1 font-medium">
+                    Target Day: <span className="text-foreground font-bold">{getDayName(targetMoveDate)}</span>
+                    {isSunday(targetMoveDate) && (
+                      <span className="text-amber-700 ml-1 font-semibold">(Sunday: OT ≥ 6h will auto-apply ₹60 Ref)</span>
+                    )}
+                  </p>
+                )}
+              </div>
+
+              {/* Notice */}
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-1">
+                <div className="font-semibold flex items-center gap-1 text-amber-950">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  Attention / Dhyan Dein:
+                </div>
+                <p>
+                  • Is action se <strong>{loadedDate}</strong> ka pura attendance & OT data <strong>{targetMoveDate || 'New Date'}</strong> par shift ho jayega.
+                </p>
+                <p>
+                  • Purani date (<strong>{loadedDate}</strong>) se sabhi entries automatically delete/clear ho jayengi.
+                </p>
+                <p>
+                  • Agar target date par pehle se koi entry hogi to wo replace/overwrite ho jayegi.
+                </p>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowMoveModal(false)}
+                  className="px-4 py-2 border border-input rounded-md text-sm"
+                  disabled={isMoving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-sm font-semibold disabled:opacity-50 flex items-center"
+                  disabled={isMoving || !targetMoveDate || targetMoveDate === loadedDate}
+                >
+                  {isMoving ? (
+                    <><Loader2 className="w-4 h-4 animate-spin mr-2" />Moving Data...</>
+                  ) : (
+                    <><ArrowRightLeft className="w-4 h-4 mr-2" />Confirm & Move</>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

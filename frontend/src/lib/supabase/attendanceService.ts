@@ -200,3 +200,37 @@ export const saveDailyAttendance = async (
     throw error;
   }
 };
+
+/**
+ * Clears/deletes all attendance records for a specific date.
+ */
+export const clearDailyAttendance = async (date: string, user: string): Promise<boolean> => {
+  return saveDailyAttendance(date, [], user);
+};
+
+/**
+ * Atomically moves daily attendance records from one date to another.
+ * Saves replacement records to toDate and clears fromDate.
+ */
+export const moveDailyAttendance = async (
+  fromDate: string,
+  toDate: string,
+  records: Omit<AttendanceRecord, 'id'>[],
+  user: string
+): Promise<boolean> => {
+  // 1. Save records to destination date
+  await saveDailyAttendance(toDate, records, user);
+
+  // 2. Clear records from old source date
+  await clearDailyAttendance(fromDate, user);
+
+  await logActivity({
+    user,
+    action: `Moved daily attendance from ${fromDate} to ${toDate} (${records.length} records)`,
+    entity: 'attendance',
+    referenceId: toDate,
+  });
+
+  return true;
+};
+
