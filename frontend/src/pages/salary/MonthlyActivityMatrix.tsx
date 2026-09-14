@@ -72,6 +72,12 @@ export default function MonthlyActivityMatrix({
         };
       })
       .filter(emp => {
+        const firstDate = dates[0] || '';
+        const lastDate = dates[dates.length - 1] || '';
+        const isLeftBeforeMonth = Boolean(emp.leftDate && firstDate && emp.leftDate < firstDate && (!emp.rejoinDate || emp.rejoinDate > lastDate));
+        if (isLeftBeforeMonth && emp.totalPresent === 0 && emp.totalOTHours === 0) {
+          return false;
+        }
         // Filter out zero-activity employees if showAllEmployees is false
         if (!showAllEmployees && emp.totalPresent === 0 && emp.totalOTHours === 0) {
           return false;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Save, Calendar, Clock, Loader2, IndianRupee, RefreshCw, X } from 'lucide-react';
+import { Save, Calendar, Clock, Loader2, IndianRupee, RefreshCw, X, Sun, Briefcase } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEmployees, type Employee } from '../../lib/supabase/employeeService';
 import { getAttendanceByDate, saveDailyAttendance, type AttendanceRecord } from '../../lib/supabase/attendanceService';
@@ -23,28 +23,75 @@ export default function DailyEntryTab() {
   const [filter, setFilter] = useState<'ALL' | 'COMPANY' | 'WAGES_DINESH' | 'WAGES_VIKAS'>('ALL');
   const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
 
+  // Helper to check Sunday
+  const isSunday = (dateStr: string) => {
+    if (!dateStr) return false;
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d).getDay() === 0;
+  };
+
+  // Helper to get formatted day of week
+  const getDayName = (dateStr: string) => {
+    if (!dateStr) return '';
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(y, m - 1, d));
+  };
+
   // Load employees once on mount
   useEffect(() => {
     loadData(pendingDate);
   }, []);
 
-  // "Load" button handler - only loads when user explicitly presses Load
+  // "Load" button handler - loads and applies date-aware employee filtering
   const loadData = async (dateToLoad: string) => {
     setIsLoading(true);
     setMessage(null);
     try {
-      const [emps, records] = await Promise.all([
-        getEmployees(),
+      const [allEmps, records] = await Promise.all([
+        getEmployees(false),
         getAttendanceByDate(dateToLoad)
       ]);
       
-      setEmployees(emps);
+      // Date-aware employee filtering:
+      // 1. August 2026 and older: keep all employees intact (Requirement 5)
+      // 2. Sept 1, 2026 onwards:
+      //    - If an employee has saved attendance on dateToLoad, always show them (preserve data)
+      //    - If an employee left on leftDate:
+      //      - If dateToLoad <= leftDate: show them (they worked on or before left date)
+      //      - If dateToLoad > leftDate:
+      //        - If employee rejoined on rejoinDate and dateToLoad >= rejoinDate: show them
+      //        - Otherwise: hide them from daily entry sheet (Requirement 1)
+      const eligibleEmps = allEmps.filter(emp => {
+        const hasExistingRecord = records.some(
+          r => r.employeeId === emp.id && (r.present > 0 || r.otHours > 0 || r.refreshment > 0)
+        );
+        if (hasExistingRecord) return true;
+
+        if (dateToLoad < '2026-09-01') {
+          return true;
+        }
+
+        const isLeft = emp.status === 'LEFT' || Boolean(emp.leftDate);
+        if (isLeft) {
+          if (emp.leftDate && dateToLoad <= emp.leftDate) {
+            return true;
+          }
+          if (emp.rejoinDate && dateToLoad >= emp.rejoinDate) {
+            return true;
+          }
+          return false;
+        }
+
+        return emp.isActive !== false;
+      });
+
+      setEmployees(eligibleEmps);
       setLoadedDate(dateToLoad);
       
       // Initialize form state
       const attState: Record<string, DailyAttendanceFormState> = {};
       
-      emps.forEach(emp => {
+      eligibleEmps.forEach(emp => {
         const existing = records.find(r => r.employeeId === emp.id);
         if (existing) {
           attState[emp.id!] = {
@@ -92,6 +139,9 @@ export default function DailyEntryTab() {
     }
 
     const numVal = parseFloat(val) || 0;
+    const effectiveDate = loadedDate || pendingDate;
+    const dateIsSunday = isSunday(effectiveDate);
+    const isSept2026OrLater = effectiveDate >= '2026-09-01';
 
     setAttendance(prev => {
       const current = prev[empId] || { present: 0, otHours: 0, refreshment: 0 };
@@ -99,12 +149,27 @@ export default function DailyEntryTab() {
       const currentRef = Number(current.refreshment) || 0;
 
       let newRef: string | number = current.refreshment;
-      // Auto formula: Agar OT hours 6 se jyada hai (> 6) to 60 rupees refreshment automatic add ho jaye
-      if (numVal > 6 && (prevOT <= 6 || currentRef === 0)) {
-        newRef = 60;
-      } else if (numVal <= 6 && currentRef === 60 && prevOT > 6) {
-        // Agar OT wapas 6 ya usse kam ho jaye to auto 60 hata kar 0 karein
-        newRef = 0;
+
+      if (isSept2026OrLater) {
+        if (dateIsSunday) {
+          // Requirement 4: Sunday ko minimum 6 hrs OT duty karne par auto 60 refreshment add hoga
+          if (numVal >= 6 && (prevOT < 6 || currentRef === 0)) {
+            newRef = 60;
+          } else if (numVal < 6 && currentRef === 60 && prevOT >= 6) {
+            newRef = 0;
+          }
+        } else {
+          // Requirement 4: Baaki dino me OT hours me refreshment ka paisa automatically add nahi hoga
+          // If refreshment was previously set to 60 by accident on a weekday, revert if user desires,
+          // otherwise keep manual refreshment as is without auto-triggering 60.
+        }
+      } else {
+        // Pre-September 2026: keep old behavior untouched (Requirement 5)
+        if (numVal > 6 && (prevOT <= 6 || currentRef === 0)) {
+          newRef = 60;
+        } else if (numVal <= 6 && currentRef === 60 && prevOT > 6) {
+          newRef = 0;
+        }
       }
 
       return {
@@ -209,16 +274,36 @@ export default function DailyEntryTab() {
     return true;
   });
 
+  const activeDate = loadedDate || pendingDate;
+  const isSelectedDateSunday = isSunday(activeDate);
+  const dayName = getDayName(activeDate);
   const dateChanged = pendingDate !== loadedDate;
   const thClass = "px-3 py-3 border-b border-border text-left font-medium text-muted-foreground whitespace-nowrap";
   const tdClass = "px-3 py-2 border-b border-border";
 
   return (
     <div className="flex flex-col h-full space-y-4">
+      {/* Top Controls Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-card p-4 rounded-lg border border-border shadow-sm gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Daily Attendance & OT</h2>
-          <p className="text-sm text-muted-foreground">Enter day-wise present, OT hours, and refreshment</p>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-foreground">Daily Attendance & OT</h2>
+            {/* Sunday vs Weekday Badge */}
+            {isSelectedDateSunday ? (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                <Sun className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                Sunday (OT ≥ 6h: Auto ₹60 Ref)
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                <Briefcase className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                {dayName || 'Working Day'} (No Auto Ref)
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Enter day-wise present, OT hours, and refreshment
+          </p>
         </div>
         
         <div className="flex items-center gap-3 flex-wrap">
@@ -226,31 +311,33 @@ export default function DailyEntryTab() {
             <Calendar className="w-5 h-5 text-muted-foreground" />
             <input 
               type="date" 
-              className="px-3 py-2 border border-input rounded-md bg-background"
+              className="px-3 py-2 border border-input rounded-md bg-background text-sm font-medium"
               value={pendingDate}
               onChange={(e) => setPendingDate(e.target.value)}
               max={new Date().toISOString().split('T')[0]}
             />
           </div>
-          {/* Load Button - explicitly loads data for the selected date */}
+
+          {/* Load Button */}
           <button
             onClick={() => loadData(pendingDate)}
             disabled={isLoading}
-            className={`flex items-center px-4 py-2 font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50 ${
+            className={`flex items-center px-4 py-2 font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50 text-sm ${
               dateChanged 
                 ? 'bg-amber-500 text-white hover:bg-amber-600 animate-pulse' 
                 : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
             }`}
           >
-            {isLoading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <RefreshCw className="w-5 h-5 mr-2" />}
+            {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
             {dateChanged ? 'Load Date' : 'Reload'}
           </button>
+
           <button
             onClick={handleSave}
             disabled={isSaving || isLoading || !loadedDate}
-            className="flex items-center px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
+            className="flex items-center px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 text-sm"
           >
-            {isSaving ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Save className="w-5 h-5 mr-2" />}
+            {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
             Save Entry
           </button>
         </div>
@@ -260,7 +347,7 @@ export default function DailyEntryTab() {
         <div className="text-xs text-center text-muted-foreground">
           {dateChanged 
             ? <span className="text-amber-600 font-medium">⚠ Date changed — press "Load Date" to load {pendingDate}'s data (current entries are still safe)</span>
-            : <span className="text-green-600 font-medium">✓ Showing data for: {loadedDate}</span>
+            : <span className="text-green-600 font-medium">✓ Showing data for: {loadedDate} ({dayName})</span>
           }
         </div>
       )}
@@ -297,6 +384,7 @@ export default function DailyEntryTab() {
         </div>
       )}
 
+      {/* Category Filter Tabs */}
       <div className="flex gap-2">
         {(['ALL', 'COMPANY', 'WAGES_DINESH', 'WAGES_VIKAS'] as const).map(f => (
           <button
@@ -313,6 +401,7 @@ export default function DailyEntryTab() {
         ))}
       </div>
 
+      {/* Attendance Table */}
       <div className="bg-card border border-border rounded-lg shadow-sm flex-1 overflow-hidden flex flex-col min-h-0">
         <div className="overflow-x-auto flex-1 custom-scrollbar">
           <table className="w-full text-sm text-left">
@@ -345,100 +434,111 @@ export default function DailyEntryTab() {
               ) : filteredEmployees.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center py-8 text-muted-foreground">
-                    No employees found for this filter.
+                    No active employees found for this date.
                   </td>
                 </tr>
               ) : (
-                filteredEmployees.map((emp, idx) => {
+                filteredEmployees.map((emp) => {
                   const att = attendance[emp.id!] || { present: 0, otHours: 0, refreshment: 0 };
                   const { perDayAmount, otAmount } = calculateAmounts(emp, att);
-                  const currentRef = parseFloat(String(att.refreshment || 0)) || 0;
-                  const rowTotal = perDayAmount + otAmount + currentRef;
+                  const refVal = Number(att.refreshment) || 0;
+                  const totalEst = Math.round(perDayAmount + otAmount + refVal);
 
                   return (
-                    <tr key={emp.id} className={`transition-colors ${(Number(att.present) || 0) === 0 ? 'bg-red-50/20' : 'hover:bg-muted/50'}`}>
-                      <td className="px-3 py-2 border-b border-border text-muted-foreground text-xs font-mono">
-                        {emp.employeeCode ?? (idx + 1)}
+                    <tr key={emp.id} className="hover:bg-muted/50 transition-colors border-b border-border">
+                      <td className="px-3 py-2 font-bold text-primary">
+                        {emp.employeeCode ?? '-'}
                       </td>
-                      <td className={`${tdClass} font-medium`}>
-                        {emp.name}
-                        <span className="block text-xs text-muted-foreground">
-                          {emp.category === 'COMPANY' ? 'Company' : `Wages ${emp.contractorName ? `(${emp.contractorName})` : ''}`}
-                        </span>
+                      <td className="px-3 py-2">
+                        <div className="font-semibold text-foreground">{emp.name}</div>
+                        {emp.fatherName && (
+                          <div className="text-[11px] text-muted-foreground">
+                            S/O: {emp.fatherName}
+                          </div>
+                        )}
+                        <div className="text-xs text-muted-foreground">
+                          {emp.category === 'COMPANY' ? 'Company' : `Wages (${emp.contractorName || 'N/A'})`}
+                        </div>
                       </td>
-                      <td className={tdClass}>{emp.designation}</td>
-                      <td className={tdClass}>₹{emp.basicSalary.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{emp.designation}</td>
+                      <td className="px-3 py-2 font-medium">₹ {emp.basicSalary?.toLocaleString() ?? 0}</td>
                       
-                      <td className={tdClass}>
-                        <select 
-                          className={`w-28 px-2 py-1.5 border rounded-md text-sm font-medium transition-colors ${
-                            Number(att.present) === 1 
-                              ? 'bg-green-50 border-green-300 text-green-800 dark:bg-green-950/50 dark:text-green-300 dark:border-green-800 font-semibold' 
-                              : 'bg-background border-input text-muted-foreground'
-                          }`}
-                          value={att.present !== undefined ? att.present : 0}
-                          onChange={(e) => handleInputChange(emp.id!, 'present', Number(e.target.value))}
-                        >
-                          <option value="0">Absent</option>
-                          <option value="1">Present</option>
-                        </select>
+                      {/* Attendance Radio Pills */}
+                      <td className="px-3 py-2">
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleInputChange(emp.id!, 'present', 1)}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                              att.present === 1 
+                                ? 'bg-green-600 text-white shadow-sm' 
+                                : 'bg-muted hover:bg-green-50 hover:text-green-600 text-muted-foreground'
+                            }`}
+                          >
+                            P (1)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleInputChange(emp.id!, 'present', 0.5)}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                              att.present === 0.5 
+                                ? 'bg-amber-500 text-white shadow-sm' 
+                                : 'bg-muted hover:bg-amber-50 hover:text-amber-600 text-muted-foreground'
+                            }`}
+                          >
+                            H (0.5)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleInputChange(emp.id!, 'present', 0)}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                              att.present === 0 
+                                ? 'bg-red-600 text-white shadow-sm' 
+                                : 'bg-muted hover:bg-red-50 hover:text-red-600 text-muted-foreground'
+                            }`}
+                          >
+                            A (0)
+                          </button>
+                        </div>
                       </td>
-                      
-                      <td className={tdClass}>
-                        <div className="flex items-center w-24">
-                          <Clock className="w-4 h-4 text-muted-foreground mr-1.5 shrink-0" />
+
+                      {/* OT Hours */}
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-1.5">
                           <input 
                             type="text"
                             inputMode="decimal"
-                            className="w-full px-2 py-1.5 border border-input rounded-md bg-background text-sm font-medium text-center focus:outline-none focus:ring-1 focus:ring-primary"
-                            value={att.otHours !== undefined && att.otHours !== null ? att.otHours : ''}
+                            className="w-16 px-2 py-1 border border-input rounded-md text-sm font-medium text-center bg-background"
+                            value={att.otHours === 0 ? '' : att.otHours}
                             onChange={(e) => handleOTChange(emp.id!, e.target.value)}
                             placeholder="0"
                           />
+                          <span className="text-xs text-muted-foreground">hrs</span>
                         </div>
                       </td>
-                      
-                      <td className={tdClass}>
-                        <div className="flex items-center w-28 relative">
-                          <IndianRupee className="w-4 h-4 text-muted-foreground mr-1 shrink-0" />
+
+                      {/* Refreshment */}
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-muted-foreground">₹</span>
                           <input 
                             type="text"
                             inputMode="numeric"
-                            className="w-full px-2 py-1.5 border border-input rounded-md bg-background text-sm font-medium text-center pr-6 focus:outline-none focus:ring-1 focus:ring-primary"
-                            value={att.refreshment !== undefined && att.refreshment !== null ? att.refreshment : ''}
+                            className="w-16 px-2 py-1 border border-input rounded-md text-sm font-medium text-center bg-background"
+                            value={att.refreshment === 0 ? '' : att.refreshment}
                             onChange={(e) => handleRefreshmentChange(emp.id!, e.target.value)}
                             placeholder="0"
                           />
-                          {Boolean(att.refreshment && Number(att.refreshment) > 0) && (
-                            <button
-                              type="button"
-                              onClick={() => handleRefreshmentChange(emp.id!, '0')}
-                              className="absolute right-1.5 text-muted-foreground hover:text-red-500 p-0.5 rounded transition-colors"
-                              title="Remove refreshment (₹0)"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
                         </div>
                       </td>
-                      
-                      <td className={tdClass}>
-                        <div className="flex flex-col text-xs space-y-1">
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Salary:</span>
-                            <span className="font-medium text-foreground">₹{perDayAmount.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">OT:</span>
-                            <span className="font-medium text-foreground">₹{otAmount.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Ref:</span>
-                            <span className="font-medium text-foreground">₹{currentRef.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between border-t border-border pt-1 mt-1 font-bold">
-                            <span>Total:</span>
-                            <span className="text-primary">₹{rowTotal.toFixed(2)}</span>
+
+                      {/* Auto Calculation Column */}
+                      <td className="px-3 py-2">
+                        <div className="text-xs space-y-0.5">
+                          <div className="text-foreground font-medium">₹{totalEst} total</div>
+                          <div className="text-muted-foreground text-[11px]">
+                            Duty: ₹{Math.round(perDayAmount)} | OT: ₹{Math.round(otAmount)}
+                            {refVal > 0 && ` | Ref: ₹${refVal}`}
                           </div>
                         </div>
                       </td>

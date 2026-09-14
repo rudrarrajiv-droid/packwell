@@ -15,6 +15,11 @@ export interface Employee {
   designation: string;
   basicSalary: number;
   isActive: boolean;
+  fatherName?: string;
+  address?: string;
+  status?: 'ACTIVE' | 'LEFT';
+  leftDate?: string;
+  rejoinDate?: string;
   createdAt?: any;
   updatedAt?: any;
   createdBy?: string;
@@ -30,11 +35,16 @@ export interface Employee {
 //   designation            -> designation
 //   basic_salary           -> basicSalary
 //   is_active              -> isActive
+//   father_name            -> fatherName
+//   address                -> address
+//   status                 -> status
+//   left_date              -> leftDate
+//   rejoin_date            -> rejoinDate
 //   created_by / updated_by -> createdBy / updatedBy
 //   created_at / updated_at -> createdAt / updatedAt
 
 const SELECT_COLUMNS =
-  'firestore_document_id, employee_code, name, category, contractor_name, designation, basic_salary, is_active, created_by, updated_by, created_at, updated_at';
+  'firestore_document_id, employee_code, name, category, contractor_name, designation, basic_salary, is_active, created_by, updated_by, created_at, updated_at, father_name, address, status, left_date, rejoin_date';
 
 const mapRow = (row: any): Employee => ({
   id: row.firestore_document_id,
@@ -45,6 +55,11 @@ const mapRow = (row: any): Employee => ({
   designation: row.designation,
   basicSalary: row.basic_salary,
   isActive: row.is_active,
+  fatherName: row.father_name ?? row.raw_data?.father_name ?? undefined,
+  address: row.address ?? row.raw_data?.address ?? undefined,
+  status: row.status ?? (row.is_active === false ? 'LEFT' : 'ACTIVE'),
+  leftDate: row.left_date ?? row.raw_data?.left_date ?? undefined,
+  rejoinDate: row.rejoin_date ?? row.raw_data?.rejoin_date ?? undefined,
   createdBy: row.created_by,
   updatedBy: row.updated_by,
   createdAt: row.created_at,
@@ -52,16 +67,21 @@ const mapRow = (row: any): Employee => ({
 });
 
 /**
- * Fetches active employees, sorted by employeeCode ascending with NULL
- * codes last - matching the previous Firestore `getEmployees()` behavior
- * (which sorted client-side using `employeeCode ?? 99999`).
+ * Fetches employees sorted by employeeCode ascending.
+ * By default returns both active and left employees so calling components
+ * have date-aware complete records without breaking historical months.
  */
-export const getEmployees = async (): Promise<Employee[]> => {
-  const { data, error } = await supabase
+export const getEmployees = async (onlyActive: boolean = false): Promise<Employee[]> => {
+  let query = supabase
     .from('employees')
     .select(SELECT_COLUMNS)
-    .eq('is_active', true)
     .order('employee_code', { ascending: true, nullsFirst: false });
+
+  if (onlyActive) {
+    query = query.eq('is_active', true);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error('Error fetching employees:', error);
@@ -72,18 +92,13 @@ export const getEmployees = async (): Promise<Employee[]> => {
 };
 
 /**
- * Creates a new employee. Mirrors the previous Firestore `createEmployee`
- * behavior: same fields persisted, audit fields populated, and the same
- * 'Added Employee: <name>' activity log entry is written. The primary key
- * (firestore_document_id) has no DB default, so a UUID is generated
- * client-side. `raw_data` is NOT NULL with no default, so it is populated
- * with the same record being written.
+ * Creates a new employee. Supports optional fatherName and address.
  */
 export const createEmployee = async (employee: Omit<Employee, 'id'>, user: string): Promise<string> => {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  const record = {
+  const record: Record<string, any> = {
     firestore_document_id: id,
     employee_code: employee.employeeCode ?? null,
     name: employee.name,
@@ -92,6 +107,11 @@ export const createEmployee = async (employee: Omit<Employee, 'id'>, user: strin
     designation: employee.designation,
     basic_salary: employee.basicSalary,
     is_active: true,
+    status: 'ACTIVE',
+    father_name: employee.fatherName?.trim() || null,
+    address: employee.address?.trim() || null,
+    left_date: null,
+    rejoin_date: null,
     created_by: user,
     updated_by: user,
     created_at: now,
@@ -119,9 +139,7 @@ export const createEmployee = async (employee: Omit<Employee, 'id'>, user: strin
 };
 
 /**
- * Updates an employee. Mirrors the previous Firestore `updateEmployee`
- * behavior: only the fields the current app ever sends (employeeCode,
- * name, designation, basicSalary) are updated, alongside updatedBy/updatedAt.
+ * Updates an employee's details.
  */
 export const updateEmployee = async (employeeId: string, updates: Partial<Employee>, user: string): Promise<void> => {
   const patch: Record<string, unknown> = {
@@ -130,8 +148,16 @@ export const updateEmployee = async (employeeId: string, updates: Partial<Employ
   };
   if (updates.employeeCode !== undefined) patch.employee_code = updates.employeeCode ?? null;
   if (updates.name !== undefined) patch.name = updates.name;
+  if (updates.category !== undefined) patch.category = updates.category;
+  if (updates.contractorName !== undefined) patch.contractor_name = updates.contractorName ?? null;
   if (updates.designation !== undefined) patch.designation = updates.designation;
   if (updates.basicSalary !== undefined) patch.basic_salary = updates.basicSalary;
+  if (updates.fatherName !== undefined) patch.father_name = updates.fatherName?.trim() || null;
+  if (updates.address !== undefined) patch.address = updates.address?.trim() || null;
+  if (updates.status !== undefined) patch.status = updates.status;
+  if (updates.leftDate !== undefined) patch.left_date = updates.leftDate || null;
+  if (updates.rejoinDate !== undefined) patch.rejoin_date = updates.rejoinDate || null;
+  if (updates.isActive !== undefined) patch.is_active = updates.isActive;
 
   const { error } = await supabase
     .from('employees')
@@ -146,6 +172,87 @@ export const updateEmployee = async (employeeId: string, updates: Partial<Employ
   await logActivity({
     user,
     action: `Updated Employee`,
+    entity: 'employees',
+    referenceId: employeeId,
+  });
+};
+
+/**
+ * Marks an employee as Left on a specified leftDate.
+ * Historical records before/on leftDate remain untouched.
+ */
+export const markEmployeeLeft = async (
+  employeeId: string,
+  employeeName: string,
+  leftDate: string,
+  user: string
+): Promise<void> => {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from('employees')
+    .update({
+      status: 'LEFT',
+      left_date: leftDate,
+      is_active: false,
+      updated_by: user,
+      updated_at: now,
+    })
+    .eq('firestore_document_id', employeeId);
+
+  if (error) {
+    console.error('Error marking employee as left:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: `Marked Employee Left: ${employeeName} on ${leftDate}`,
+    entity: 'employees',
+    referenceId: employeeId,
+  });
+};
+
+/**
+ * Rejoins an existing employee as of rejoinDate.
+ * Restores status to ACTIVE with new rejoinDate and any updated details.
+ */
+export const rejoinEmployee = async (
+  employeeId: string,
+  employeeName: string,
+  rejoinDate: string,
+  updates: Partial<Employee>,
+  user: string
+): Promise<void> => {
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    status: 'ACTIVE',
+    rejoin_date: rejoinDate,
+    is_active: true,
+    updated_by: user,
+    updated_at: now,
+  };
+
+  if (updates.employeeCode !== undefined) patch.employee_code = updates.employeeCode ?? null;
+  if (updates.category !== undefined) patch.category = updates.category;
+  if (updates.contractorName !== undefined) patch.contractor_name = updates.contractorName ?? null;
+  if (updates.designation !== undefined) patch.designation = updates.designation;
+  if (updates.basicSalary !== undefined) patch.basic_salary = updates.basicSalary;
+  if (updates.fatherName !== undefined) patch.father_name = updates.fatherName?.trim() || null;
+  if (updates.address !== undefined) patch.address = updates.address?.trim() || null;
+
+  const { error } = await supabase
+    .from('employees')
+    .update(patch)
+    .eq('firestore_document_id', employeeId);
+
+  if (error) {
+    console.error('Error rejoining employee:', error);
+    throw error;
+  }
+
+  await logActivity({
+    user,
+    action: `Rejoined Employee: ${employeeName} as of ${rejoinDate}`,
     entity: 'employees',
     referenceId: employeeId,
   });

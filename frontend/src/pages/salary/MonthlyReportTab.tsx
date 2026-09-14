@@ -223,6 +223,10 @@ export default function MonthlyReportTab() {
         };
       })
       .filter(emp => {
+        const isLeftBeforePeriod = Boolean(emp.leftDate && emp.leftDate < fromDate && (!emp.rejoinDate || emp.rejoinDate > toDate));
+        if (isLeftBeforePeriod && emp.totalPresent === 0 && emp.totalOTHours === 0) {
+          return false;
+        }
         if (!showAllEmployeesInMatrix && emp.totalPresent === 0 && emp.totalOTHours === 0) {
           return false;
         }

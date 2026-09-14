@@ -131,7 +131,9 @@ export default function LedgerTab() {
             onChange={(e) => setSelectedEmpId(e.target.value)}
           >
             {filteredEmployees.map(emp => (
-              <option key={emp.id} value={emp.id}>{emp.name} ({emp.category === 'COMPANY' ? 'Company' : `Wages - ${emp.contractorName}`})</option>
+              <option key={emp.id} value={emp.id}>
+                {emp.name} ({emp.category === 'COMPANY' ? 'Company' : `Wages - ${emp.contractorName}`}){emp.status === 'LEFT' ? ` [Left: ${emp.leftDate || 'N/A'}]` : ''}
+              </option>
             ))}
           </select>
         </div>
