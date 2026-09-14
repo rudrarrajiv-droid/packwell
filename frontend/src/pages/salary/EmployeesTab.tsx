@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, Users, Building2, HardHat, Upload, Loader2, Trash2, Pencil, 
-  UserMinus, UserCheck, Calendar, MapPin, User, AlertCircle, CheckCircle2 
+  UserMinus, UserCheck, Calendar, MapPin, User, AlertCircle, CheckCircle2, Search 
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../../contexts/AuthContext';
@@ -19,6 +19,9 @@ export default function EmployeesTab() {
   const [isImporting, setIsImporting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Edit employee state
   const [editingEmp, setEditingEmp] = useState<Employee | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -30,6 +33,9 @@ export default function EmployeesTab() {
   const [editBasicSalary, setEditBasicSalary] = useState('');
   const [editFatherName, setEditFatherName] = useState('');
   const [editAddress, setEditAddress] = useState('');
+  const [editLeftDate, setEditLeftDate] = useState('');
+  const [editRejoinDate, setEditRejoinDate] = useState('');
+  const [editStatus, setEditStatus] = useState<'ACTIVE' | 'LEFT'>('ACTIVE');
 
   // Mark Left state & modal
   const [leavingEmp, setLeavingEmp] = useState<Employee | null>(null);
@@ -258,6 +264,9 @@ export default function EmployeesTab() {
     setEditBasicSalary(emp.basicSalary?.toString() || '');
     setEditFatherName(emp.fatherName || '');
     setEditAddress(emp.address || '');
+    setEditLeftDate(emp.leftDate || '');
+    setEditRejoinDate(emp.rejoinDate || '');
+    setEditStatus(emp.status === 'LEFT' || emp.isActive === false ? 'LEFT' : 'ACTIVE');
   };
 
   const handleUpdate = async (e: React.FormEvent) => {
@@ -274,6 +283,10 @@ export default function EmployeesTab() {
         basicSalary: Number(editBasicSalary),
         fatherName: editFatherName.trim() || undefined,
         address: editAddress.trim() || undefined,
+        status: editStatus,
+        leftDate: editStatus === 'LEFT' ? (editLeftDate || undefined) : (editLeftDate || undefined),
+        rejoinDate: editRejoinDate || undefined,
+        isActive: editStatus === 'ACTIVE',
       }, user?.name || 'System');
       setEditingEmp(null);
       fetchEmployees();
@@ -334,12 +347,21 @@ export default function EmployeesTab() {
 
   const filteredEmployees = employees.filter(emp => {
     const isLeft = emp.status === 'LEFT' || emp.isActive === false;
-    if (filter === 'ALL') return true;
-    if (filter === 'ACTIVE') return !isLeft;
-    if (filter === 'LEFT') return isLeft;
-    if (filter === 'COMPANY') return emp.category === 'COMPANY';
-    if (filter === 'WAGES_DINESH') return emp.category === 'WAGES' && emp.contractorName === 'Dinesh';
-    if (filter === 'WAGES_VIKAS') return emp.category === 'WAGES' && emp.contractorName === 'Vikas';
+    if (filter === 'ACTIVE' && isLeft) return false;
+    if (filter === 'LEFT' && !isLeft) return false;
+    if (filter === 'COMPANY' && emp.category !== 'COMPANY') return false;
+    if (filter === 'WAGES_DINESH' && !(emp.category === 'WAGES' && emp.contractorName === 'Dinesh')) return false;
+    if (filter === 'WAGES_VIKAS' && !(emp.category === 'WAGES' && emp.contractorName === 'Vikas')) return false;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const matchName = emp.name.toLowerCase().includes(q);
+      const matchFather = (emp.fatherName || '').toLowerCase().includes(q);
+      const matchCode = String(emp.employeeCode || '').includes(q);
+      const matchDesig = (emp.designation || '').toLowerCase().includes(q);
+      const matchDate = (emp.leftDate || '').includes(q) || (emp.rejoinDate || '').includes(q);
+      return matchName || matchFather || matchCode || matchDesig || matchDate;
+    }
     return true;
   });
 
@@ -377,28 +399,52 @@ export default function EmployeesTab() {
         </div>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex gap-2 mb-2 flex-wrap">
-        {[
-          { id: 'ALL', label: `All (${employees.length})` },
-          { id: 'ACTIVE', label: `Active (${activeCount})` },
-          { id: 'LEFT', label: `Left (${leftCount})` },
-          { id: 'COMPANY', label: 'Company' },
-          { id: 'WAGES_DINESH', label: 'Wages (Dinesh)' },
-          { id: 'WAGES_VIKAS', label: 'Wages (Vikas)' }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setFilter(tab.id as any)}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-              filter === tab.id 
-                ? 'bg-primary text-primary-foreground border-primary' 
-                : 'bg-card text-muted-foreground border-border hover:bg-muted'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* Search & Filter Controls */}
+      <div className="flex flex-col md:flex-row gap-2 justify-between items-stretch md:items-center">
+        {/* Filter tabs */}
+        <div className="flex gap-1.5 flex-wrap">
+          {[
+            { id: 'ALL', label: `All (${employees.length})` },
+            { id: 'ACTIVE', label: `Active (${activeCount})` },
+            { id: 'LEFT', label: `Left (${leftCount})` },
+            { id: 'COMPANY', label: 'Company' },
+            { id: 'WAGES_DINESH', label: 'Wages (Dinesh)' },
+            { id: 'WAGES_VIKAS', label: 'Wages (Vikas)' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setFilter(tab.id as any)}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
+                filter === tab.id 
+                  ? 'bg-primary text-primary-foreground border-primary' 
+                  : 'bg-card text-muted-foreground border-border hover:bg-muted'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Search Input Box */}
+        <div className="relative w-full md:w-72">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            className="w-full pl-9 pr-7 py-1.5 border border-input rounded-md bg-background text-sm"
+            placeholder="Search by name, father, date..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+              title="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Employees Table */}
@@ -468,26 +514,33 @@ export default function EmployeesTab() {
                       <td className="px-3 py-3 font-medium">₹ {emp.basicSalary?.toLocaleString() ?? 0}</td>
                       <td className="px-3 py-3">
                         {isLeft ? (
-                          <div className="inline-flex flex-col">
+                          <div className="inline-flex flex-col items-start gap-1">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-200">
                               <UserMinus className="w-3 h-3 mr-1" />
                               Left
                             </span>
-                            {emp.leftDate && (
-                              <span className="text-[11px] text-rose-600 mt-0.5 font-medium">
-                                {emp.leftDate}
+                            {emp.leftDate ? (
+                              <span className="text-xs font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                📅 Left: {emp.leftDate}
                               </span>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground">Left: Date N/A</span>
                             )}
                           </div>
                         ) : (
-                          <div className="inline-flex flex-col">
+                          <div className="inline-flex flex-col items-start gap-1">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
                               <UserCheck className="w-3 h-3 mr-1" />
                               Active
                             </span>
                             {emp.rejoinDate && (
-                              <span className="text-[11px] text-muted-foreground mt-0.5">
-                                Rejoined: {emp.rejoinDate}
+                              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                🔄 Rejoined: {emp.rejoinDate}
+                              </span>
+                            )}
+                            {emp.leftDate && (
+                              <span className="text-[11px] text-muted-foreground">
+                                (Prev. Left: {emp.leftDate})
                               </span>
                             )}
                           </div>
@@ -1100,6 +1153,67 @@ export default function EmployeesTab() {
                   value={editBasicSalary}
                   onChange={(e) => setEditBasicSalary(e.target.value)}
                 />
+              </div>
+
+              {/* Service Status & Dates Section */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-3">
+                <div className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-primary" />
+                  Service Status & Employment Dates
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1">Current Status</label>
+                  <div className="flex gap-4">
+                    <label className="inline-flex items-center gap-1.5 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="editStatus"
+                        value="ACTIVE"
+                        checked={editStatus === 'ACTIVE'}
+                        onChange={() => setEditStatus('ACTIVE')}
+                        className="text-primary"
+                      />
+                      <span className="font-medium text-emerald-700">Active</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="editStatus"
+                        value="LEFT"
+                        checked={editStatus === 'LEFT'}
+                        onChange={() => setEditStatus('LEFT')}
+                        className="text-rose-600"
+                      />
+                      <span className="font-medium text-rose-700">Left Service</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      Job Left Date {editStatus === 'LEFT' ? '*' : '(if left earlier)'}
+                    </label>
+                    <input
+                      type="date"
+                      className="w-full px-2.5 py-1.5 border border-input bg-background rounded-md text-xs font-medium"
+                      value={editLeftDate}
+                      onChange={(e) => setEditLeftDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      Rejoin Date (if rejoined)
+                    </label>
+                    <input
+                      type="date"
+                      className="w-full px-2.5 py-1.5 border border-input bg-background rounded-md text-xs font-medium"
+                      value={editRejoinDate}
+                      onChange={(e) => setEditRejoinDate(e.target.value)}
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="mt-6 pt-4 border-t border-border flex justify-end gap-3">
