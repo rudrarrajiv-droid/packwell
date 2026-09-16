@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2 } from 'lucide-react';
+import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { getReels, getReelTransactions, updateReelTransactionDate } from '../lib/supabase/reelService';
+import { getReels, getReelTransactions, updateReelTransactionDate, type Reel } from '../lib/supabase/reelService';
 import BulkInwardModal from './inventory/BulkInwardModal';
 import OutwardModal from './inventory/OutwardModal';
 import ReelHistoryModal from './inventory/ReelHistoryModal';
+import EditReelModal from './inventory/EditReelModal';
 import ExportButtons from '../components/ExportButtons';
 import JobFinderTab from './inventory/JobFinderTab';
 import ReverseCalculatorTab from './inventory/ReverseCalculatorTab';
@@ -17,6 +18,8 @@ export default function Inventory() {
   const [isBulkInwardOpen, setIsBulkInwardOpen] = useState(false);
   const [isOutwardOpen, setIsOutwardOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [editingReel, setEditingReel] = useState<Reel | null>(null);
+  const [purchaseViewMode, setPurchaseViewMode] = useState<'DETAIL' | 'SUMMARY'>('DETAIL');
   const [search, setSearch] = useState('');
   const [paperTypeFilter, setPaperTypeFilter] = useState('ALL');
   const [reportDate, setReportDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -233,6 +236,30 @@ export default function Inventory() {
 
     return report;
   }, [transactions, reels, reportDate, activeTab]);
+
+  // Purchased Reels for selected Date (Detailed List)
+  const purchasedReelsForDate = useMemo(() => {
+    if (activeTab !== 'PURCHASE_REPORT') return [];
+
+    const inTxs = transactions.filter(tx => tx.type === 'INWARD' && tx.date && tx.date.startsWith(reportDate));
+    const txReelIds = new Set(inTxs.map(tx => tx.reelId));
+
+    const matched = reels.filter(r => txReelIds.has(r.id) || (r.inwardDate && r.inwardDate.startsWith(reportDate)));
+
+    return matched.sort((a, b) => (a.reelNumber || '').localeCompare(b.reelNumber || '', undefined, { numeric: true }));
+  }, [transactions, reels, reportDate, activeTab]);
+
+  const { purchasedTotalWeight, purchasedTotalValue } = useMemo(() => {
+    let tw = 0;
+    let tv = 0;
+    purchasedReelsForDate.forEach(r => {
+      const w = Number(r.weight) || 0;
+      const rate = Number(r.rate) || 0;
+      tw += w;
+      tv += w * rate;
+    });
+    return { purchasedTotalWeight: Math.round(tw), purchasedTotalValue: Math.round(tv) };
+  }, [purchasedReelsForDate]);
 
   const monthlySummaryData = useMemo(() => {
     if (activeTab !== 'MONTHLY_SUMMARY') return null;
@@ -555,27 +582,74 @@ export default function Inventory() {
               </div>
             </>
           ) : (
-            <div className="flex gap-4 items-center">
-               <label className="font-medium text-sm flex items-center">
-                 <Calendar className="w-4 h-4 mr-2 text-muted-foreground" />
-                 {activeTab === 'MONTHLY_SUMMARY' ? 'Select Month:' : 'Select Date:'}
-               </label>
-               <input 
-                 type={activeTab === 'MONTHLY_SUMMARY' ? 'month' : 'date'}
-                 value={activeTab === 'MONTHLY_SUMMARY' ? reportDate.substring(0, 7) : reportDate}
-                 onChange={e => setReportDate(activeTab === 'MONTHLY_SUMMARY' ? `${e.target.value}-01` : e.target.value)}
-                 className="px-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring font-medium"
-               />
-               
-               {hasRole('ADMIN') && (activeTab === 'ISSUED_REPORT' || activeTab === 'PURCHASE_REPORT') && (
-                 <button
-                   onClick={() => setShowBulkEditModal(true)}
-                   className="ml-4 bg-orange-100 text-orange-700 px-3 py-2 flex items-center text-sm font-medium rounded-md border border-orange-200 hover:bg-orange-200 transition-colors"
-                 >
-                   <Edit2 className="w-4 h-4 mr-2" />
-                   Change Date for All
-                 </button>
-               )}
+            <div className="flex gap-4 items-center justify-between w-full flex-wrap">
+              <div className="flex gap-4 items-center flex-wrap">
+                <label className="font-medium text-sm flex items-center">
+                  <Calendar className="w-4 h-4 mr-2 text-muted-foreground" />
+                  {activeTab === 'MONTHLY_SUMMARY' ? 'Select Month:' : 'Select Date:'}
+                </label>
+                <input 
+                  type={activeTab === 'MONTHLY_SUMMARY' ? 'month' : 'date'}
+                  value={activeTab === 'MONTHLY_SUMMARY' ? reportDate.substring(0, 7) : reportDate}
+                  onChange={e => setReportDate(activeTab === 'MONTHLY_SUMMARY' ? `${e.target.value}-01` : e.target.value)}
+                  className="px-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring font-medium"
+                />
+                
+                {hasRole('ADMIN') && (activeTab === 'ISSUED_REPORT' || activeTab === 'PURCHASE_REPORT') && (
+                  <button
+                    onClick={() => setShowBulkEditModal(true)}
+                    className="bg-orange-100 text-orange-700 px-3 py-2 flex items-center text-sm font-medium rounded-md border border-orange-200 hover:bg-orange-200 transition-colors"
+                  >
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Change Date for All
+                  </button>
+                )}
+
+                {activeTab === 'PURCHASE_REPORT' && (
+                  <div className="flex bg-secondary/80 p-0.5 rounded-lg border border-border">
+                    <button
+                      type="button"
+                      onClick={() => setPurchaseViewMode('DETAIL')}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5",
+                        purchaseViewMode === 'DETAIL'
+                          ? "bg-background text-foreground shadow-sm font-bold"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      <ListFilter className="w-3.5 h-3.5" />
+                      Purchased Reels ({purchasedReelsForDate.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPurchaseViewMode('SUMMARY')}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5",
+                        purchaseViewMode === 'SUMMARY'
+                          ? "bg-background text-foreground shadow-sm font-bold"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      Grouped Summary
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {activeTab === 'PURCHASE_REPORT' && (
+                <div className="flex gap-3 text-xs flex-wrap">
+                  <div className="bg-primary/10 text-primary px-3 py-1.5 rounded-md font-medium border border-primary/20 shadow-sm">
+                    Reels: <span className="font-bold">{purchasedReelsForDate.length}</span>
+                  </div>
+                  <div className="bg-primary/10 text-primary px-3 py-1.5 rounded-md font-medium border border-primary/20 shadow-sm">
+                    Total Weight: <span className="font-bold">{purchasedTotalWeight.toLocaleString()} Kg</span>
+                  </div>
+                  <div className="bg-green-100 text-green-800 px-3 py-1.5 rounded-md font-medium border border-green-200 shadow-sm">
+                    Total Value: <span className="font-bold">₹{Math.round(purchasedTotalValue).toLocaleString()}</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -637,6 +711,83 @@ export default function Inventory() {
                 </tfoot>
               )}
             </table>
+          ) : (activeTab === 'PURCHASE_REPORT' && purchaseViewMode === 'DETAIL') ? (
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-muted-foreground uppercase bg-secondary/50 border-b border-border sticky top-0 z-10">
+                <tr>
+                  <th className="px-6 py-3 font-medium">Reel No</th>
+                  <th className="px-6 py-3 font-medium">Specs (Type/Size/BF/GSM)</th>
+                  <th className="px-6 py-3 font-medium">Supplier</th>
+                  <th className="px-6 py-3 font-medium">Rate</th>
+                  <th className="px-6 py-3 font-medium text-blue-600">Initial Wt</th>
+                  <th className="px-6 py-3 font-medium text-red-600">Consumed</th>
+                  <th className="px-6 py-3 font-medium text-green-600">Balance</th>
+                  <th className="px-6 py-3 font-medium">Inward Date</th>
+                  <th className="px-6 py-3 font-medium text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {purchasedReelsForDate.map((reel: any) => {
+                  const consumed = Math.max(0, (Number(reel.weight) || 0) - (Number(reel.currentBalance) || 0));
+                  return (
+                    <tr key={reel.id} className="hover:bg-muted/50 transition-colors group">
+                      <td className="px-6 py-4 font-mono font-bold text-foreground">
+                        <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                          {reel.reelNumber}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-medium">
+                        {reel.paperType} | {reel.reelSize}" | {reel.bf} BF | {reel.gsm} GSM
+                      </td>
+                      <td className="px-6 py-4 text-muted-foreground">
+                        <div className="text-foreground font-medium">{reel.supplierName || '-'}</div>
+                        {reel.manufacturerName && reel.manufacturerName !== reel.supplierName && (
+                          <div className="text-xs text-muted-foreground">Mfr: {reel.manufacturerName}</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
+                        {reel.rate ? `₹${Number(reel.rate).toFixed(2)}` : '-'}
+                      </td>
+                      <td className="px-6 py-4 text-blue-600 font-bold">{Math.round(reel.weight)} Kg</td>
+                      <td className="px-6 py-4 text-red-600">{consumed > 0 ? `${Math.round(consumed)} Kg` : '-'}</td>
+                      <td className="px-6 py-4 font-bold text-green-600">{Math.round(reel.currentBalance)} Kg</td>
+                      <td className="px-6 py-4 text-muted-foreground">
+                        {reel.inwardDate ? new Date(reel.inwardDate).toLocaleDateString('en-IN') : '-'}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setEditingReel(reel)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground border border-primary/20 transition-all shadow-sm"
+                          title="Edit purchased reel specifications, weight, date or supplier"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {purchasedReelsForDate.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-6 py-12 text-center text-muted-foreground">
+                      <Package className="w-12 h-12 mx-auto text-muted mb-3" />
+                      <p>No purchased reels found for {new Date(reportDate).toLocaleDateString('en-IN')}.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              {purchasedReelsForDate.length > 0 && (
+                <tfoot className="bg-secondary/80 font-bold border-t-2 border-border sticky bottom-0">
+                  <tr>
+                    <td colSpan={4} className="px-6 py-3.5 text-right text-foreground uppercase tracking-wider text-xs">Total for Date:</td>
+                    <td className="px-6 py-3.5 text-blue-700 text-base">{purchasedTotalWeight.toLocaleString()} Kg</td>
+                    <td colSpan={2} className="px-6 py-3.5 text-green-700 text-base">₹{Math.round(purchasedTotalValue).toLocaleString()}</td>
+                    <td colSpan={2} className="px-6 py-3.5 text-right text-muted-foreground text-xs">{purchasedReelsForDate.length} Reels</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
           ) : (activeTab === 'ISSUED_REPORT' || activeTab === 'PURCHASE_REPORT') ? (
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-muted-foreground uppercase bg-secondary/50 border-b border-border sticky top-0 z-10">
@@ -689,6 +840,7 @@ export default function Inventory() {
                   <th className="px-6 py-3 font-medium text-red-600">Consumed</th>
                   <th className="px-6 py-3 font-medium text-green-600">Balance</th>
                   <th className="px-6 py-3 font-medium">Date</th>
+                  <th className="px-6 py-3 font-medium text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -716,12 +868,23 @@ export default function Inventory() {
                       <td className="px-6 py-4 text-muted-foreground">
                         {reel.inwardDate ? new Date(reel.inwardDate).toLocaleDateString('en-IN') : '-'}
                       </td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setEditingReel(reel)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-primary hover:text-primary-foreground border border-border hover:border-primary transition-all"
+                          title="Edit reel purchase details"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
                 {sortedAndFilteredReels.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-6 py-12 text-center text-muted-foreground">
                       <Package className="w-12 h-12 mx-auto text-muted mb-3" />
                       <p>No {activeTab === 'EMPTY' ? 'empty' : 'active'} reels found.</p>
                     </td>
@@ -761,6 +924,18 @@ export default function Inventory() {
         <ReelHistoryModal
           reels={reels}
           onClose={() => setIsHistoryOpen(false)}
+        />
+      )}
+
+      {editingReel && (
+        <EditReelModal
+          reel={editingReel}
+          onClose={() => setEditingReel(null)}
+          onSuccess={() => {
+            setEditingReel(null);
+            refetch();
+            refetchTx();
+          }}
         />
       )}
 

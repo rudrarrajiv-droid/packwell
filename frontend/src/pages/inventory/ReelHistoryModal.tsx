@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, X, History, FilterX, ArrowDownToLine, ArrowUpFromLine, Receipt, Trash2, CalendarDays, Check, XCircle } from 'lucide-react';
+import { Search, X, History, FilterX, ArrowDownToLine, ArrowUpFromLine, Receipt, Trash2, CalendarDays, Check, XCircle, Edit2 } from 'lucide-react';
 import { getReelTransactionsByReelId, deleteReelTransaction, updateReelTransactionDate } from '../../lib/supabase/reelService';
 import { useAuth } from '../../contexts/AuthContext';
+import EditReelModal from './EditReelModal';
 
 interface ReelHistoryModalProps {
   reels: any[];
@@ -14,6 +15,7 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [editingDateTx, setEditingDateTx] = useState<string | null>(null);
   const [newDateValue, setNewDateValue] = useState('');
+  const [editingReel, setEditingReel] = useState<any | null>(null);
 
   // Filtering States
   const [search, setSearch] = useState('');
@@ -263,7 +265,16 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
                       </p>
                     </div>
                     
-                    <div className="flex gap-4">
+                    <div className="flex gap-3 items-center">
+                      <button
+                        type="button"
+                        onClick={() => setEditingReel(selectedReel)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground border border-primary/20 rounded-lg text-xs font-bold transition-all shadow-sm"
+                        title="Edit reel purchase specifications and details"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        Edit Reel
+                      </button>
                       <div className="text-right bg-blue-50 px-4 py-2 rounded-lg border border-blue-100">
                         <div className="text-[10px] uppercase text-blue-600 font-bold tracking-wider">Original Wt</div>
                         <div className="text-xl font-bold text-blue-700">{selectedReel.weight} Kg</div>
@@ -409,6 +420,17 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
           </div>
         </div>
       </div>
+
+      {editingReel && (
+        <EditReelModal
+          reel={editingReel}
+          onClose={() => setEditingReel(null)}
+          onSuccess={() => {
+            setEditingReel(null);
+            refetch();
+          }}
+        />
+      )}
     </div>
   );
 }

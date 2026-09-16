@@ -703,3 +703,229 @@ export const unfreezeReel = async (reelId: string, user: string = 'System'): Pro
 
   return true;
 };
+
+export interface UpdatePurchasedReelInput {
+  reelId: string;
+  reelNumber: string;
+  paperType: string;
+  reelSize: number | string;
+  bf: string;
+  gsm: number | string;
+  rate: number;
+  weight: number;
+  inwardDate: string;
+  supplierName?: string;
+  manufacturerName?: string;
+  consumedWeight?: number;
+}
+
+export const updatePurchasedReel = async (
+  input: UpdatePurchasedReelInput,
+  user: string = 'System'
+): Promise<boolean> => {
+  const normalizedDate = normalizeIsoDate(input.inwardDate);
+  const cleanReelNo = (input.reelNumber || '').trim().toUpperCase();
+  const weight = Math.round(Number(input.weight));
+  const rate = Number(input.rate) || 0;
+  const gsm = Number(input.gsm) || 0;
+  const reelSize = Number(input.reelSize) || 0;
+  const bf = String(input.bf || '').trim();
+  const paperType = (input.paperType || '').trim();
+  const supplierName = (input.supplierName || '').trim();
+  const manufacturerName = (input.manufacturerName || '').trim();
+
+  // Try RPC first
+  const { data: rpcSuccess, error: rpcError } = await supabase.rpc('update_purchased_reel', {
+    p_reel_id: input.reelId,
+    p_reel_number: cleanReelNo,
+    p_paper_type: paperType,
+    p_reel_size: reelSize,
+    p_bf: bf,
+    p_gsm: gsm,
+    p_rate: rate,
+    p_weight: weight,
+    p_inward_date: normalizedDate,
+    p_supplier_name: supplierName,
+    p_manufacturer_name: manufacturerName,
+    p_user: user,
+    p_consumed_weight: input.consumedWeight !== undefined ? Number(input.consumedWeight) : null,
+  });
+
+  if (!rpcError && rpcSuccess === true) {
+    await logActivity({
+      user,
+      action: 'Updated Purchased Reel',
+      entity: 'reels',
+      referenceId: input.reelId,
+      details: `Reel #${cleanReelNo}, Weight: ${weight} Kg, Date: ${normalizedDate}`,
+    });
+    return true;
+  }
+
+  // Fallback: Direct database updates if RPC is not present or failed
+  console.warn('RPC update_purchased_reel failed or not found, falling back to direct update:', rpcError?.message);
+
+  const existingRow = await getRawReelRow(input.reelId);
+  const existingReel = mapReelRow(existingRow);
+  const existingConsumed = Math.max(0, (Number(existingReel.weight) || 0) - (Number(existingReel.currentBalance) || 0));
+
+  let newConsumed = existingConsumed;
+  if (input.consumedWeight !== undefined) {
+    newConsumed = Math.max(0, Math.min(weight, Number(input.consumedWeight)));
+  } else if ((Number(existingReel.currentBalance) || 0) <= 0) {
+    // Reel was previously completely consumed, so whole new weight goes to consumption
+    newConsumed = weight;
+  } else {
+    newConsumed = Math.max(0, Math.min(weight, existingConsumed));
+  }
+
+  const newBalance = Math.max(0, weight - newConsumed);
+  const now = new Date().toISOString();
+
+  const columns = {
+    reel_number: cleanReelNo,
+    paper_type: paperType,
+    reel_size: reelSize,
+    bf: bf,
+    gsm: gsm,
+    rate: rate,
+    weight: weight,
+    current_balance: newBalance,
+    supplier_name: supplierName || null,
+    supplier: supplierName || null,
+    manufacturer_name: manufacturerName || null,
+    inward_date: normalizedDate,
+    updated_at: now,
+    updated_by: user,
+  };
+
+  const rawData = {
+    ...(existingRow.raw_data ?? {}),
+    reelNumber: cleanReelNo,
+    paperType,
+    reelSize,
+    bf,
+    gsm,
+    rate,
+    weight,
+    currentBalance: newBalance,
+    supplierName: supplierName || null,
+    manufacturerName: manufacturerName || null,
+    inwardDate: normalizedDate,
+    updatedAt: now,
+    updatedBy: user,
+  };
+
+  const { error: reelUpdateError } = await supabase
+    .from('reels')
+    .update({ ...columns, raw_data: rawData })
+    .eq('firestore_document_id', input.reelId);
+
+  if (reelUpdateError) {
+    console.error('Error updating reel:', reelUpdateError);
+    throw reelUpdateError;
+  }
+
+  // Update INWARD transaction
+  try {
+    const { data: txList } = await supabase
+      .from('reel_transactions')
+      .select('firestore_document_id, raw_data')
+      .eq('reel_id', input.reelId)
+      .eq('type', 'INWARD')
+      .eq('is_archived', false)
+      .limit(1);
+
+    if (txList && txList.length > 0) {
+      const txId = txList[0].firestore_document_id;
+      const txRaw = txList[0].raw_data || {};
+      await supabase
+        .from('reel_transactions')
+        .update({
+          reel_number: cleanReelNo,
+          quantity: weight,
+          remaining_balance: weight,
+          transaction_date: normalizedDate,
+          updated_at: now,
+          updated_by: user,
+          raw_data: {
+            ...txRaw,
+            reelNumber: cleanReelNo,
+            quantity: weight,
+            remainingBalance: weight,
+            date: normalizedDate,
+            updatedAt: now,
+            updatedBy: user,
+          },
+        })
+        .eq('firestore_document_id', txId);
+    }
+  } catch (txErr) {
+    console.warn('Could not update INWARD transaction directly:', txErr);
+  }
+
+  // Update OUTWARD transaction(s) automatically
+  try {
+    const { data: outwardTxs } = await supabase
+      .from('reel_transactions')
+      .select('firestore_document_id, quantity, raw_data')
+      .eq('reel_id', input.reelId)
+      .eq('type', 'OUTWARD')
+      .eq('is_archived', false)
+      .order('transaction_date', { ascending: false });
+
+    if (outwardTxs && outwardTxs.length > 0) {
+      const oldOutwardSum = outwardTxs.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0);
+      const outwardDiff = newConsumed - oldOutwardSum;
+
+      if (outwardDiff !== 0) {
+        const latestTx = outwardTxs[0];
+        const currentTxQty = Number(latestTx.quantity) || 0;
+        const updatedLatestQty = Math.max(0, currentTxQty + outwardDiff);
+        const txRaw = latestTx.raw_data || {};
+
+        await supabase
+          .from('reel_transactions')
+          .update({
+            quantity: updatedLatestQty,
+            remaining_balance: newBalance,
+            reel_number: cleanReelNo,
+            updated_at: now,
+            updated_by: user,
+            raw_data: {
+              ...txRaw,
+              quantity: updatedLatestQty,
+              remainingBalance: newBalance,
+              reelNumber: cleanReelNo,
+              updatedAt: now,
+              updatedBy: user,
+            },
+          })
+          .eq('firestore_document_id', latestTx.firestore_document_id);
+      } else {
+        // Sync reel_number if changed
+        await supabase
+          .from('reel_transactions')
+          .update({
+            reel_number: cleanReelNo,
+            updated_at: now,
+            updated_by: user,
+          })
+          .eq('reel_id', input.reelId)
+          .eq('type', 'OUTWARD');
+      }
+    }
+  } catch (outwardErr) {
+    console.warn('Could not update OUTWARD transactions directly:', outwardErr);
+  }
+
+  await logActivity({
+    user,
+    action: 'Updated Purchased Reel',
+    entity: 'reels',
+    referenceId: input.reelId,
+    details: `Reel #${cleanReelNo}, Weight: ${weight} Kg, Date: ${normalizedDate}`,
+  });
+
+  return true;
+};

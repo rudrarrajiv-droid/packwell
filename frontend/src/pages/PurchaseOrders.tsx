@@ -17,7 +17,7 @@ import { useAuth } from '../contexts/AuthContext';
 import BulkClosePOModal from './po-management/BulkClosePOModal';
 import { downloadPOTemplate } from '../utils/exportUtils';
 
-type SortField = 'statusPriority' | 'poNo' | 'poDate' | 'deliveryDate' | 'customerName' | 'orderQty' | 'inQty' | 'outQty' | 'closingBal' | 'value';
+type SortField = 'statusPriority' | 'poNo' | 'poDate' | 'deliveryDate' | 'customerName' | 'productName' | 'orderQty' | 'inQty' | 'outQty' | 'closingBal' | 'value';
 type SortDir = 'asc' | 'desc';
 type ViewMode = 'ALL' | 'ITEM_WISE' | 'SUMMARY' | 'DETAIL' | 'MONTHLY';
 
@@ -107,8 +107,8 @@ export default function PurchaseOrders() {
   const [deliveryDateFrom, setDeliveryDateFrom] = useState('');
   const [deliveryDateTo, setDeliveryDateTo] = useState('');
   
-  // Sorting State - default to status priority sequence: Overdue -> Pending -> Partially Completed -> Cancelled -> Completed
-  const [sortField, setSortField] = useState<SortField>('statusPriority');
+  // Sorting State - default: 4th column Customer Name (A-Z), then 5th column Item Name (A-Z / 0-9)
+  const [sortField, setSortField] = useState<SortField>('customerName');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   // View State (Phase 9 & 12)
@@ -166,6 +166,8 @@ export default function PurchaseOrders() {
     setPoDateTo('');
     setDeliveryDateFrom('');
     setDeliveryDateTo('');
+    setSortField('customerName');
+    setSortDir('asc');
   };
 
   const isFilterActive = searchTerm || statusFilter || customerFilter || poDateFrom || poDateTo || deliveryDateFrom || deliveryDateTo;
@@ -248,6 +250,44 @@ export default function PurchaseOrders() {
         return poDateB - poDateA;
       }
 
+      if (sortField === 'customerName') {
+        const custCompare = (a.customerName || '').trim().localeCompare(
+          (b.customerName || '').trim(),
+          undefined,
+          { sensitivity: 'base', numeric: true }
+        );
+        if (custCompare !== 0) return sortDir === 'asc' ? custCompare : -custCompare;
+        
+        // Secondary sort by Item Name (A-Z / 0-9)
+        const itemCompare = (a.productName || '').trim().localeCompare(
+          (b.productName || '').trim(),
+          undefined,
+          { sensitivity: 'base', numeric: true }
+        );
+        if (itemCompare !== 0) return itemCompare;
+        
+        return new Date(b.poDate).getTime() - new Date(a.poDate).getTime();
+      }
+
+      if (sortField === 'productName') {
+        const itemCompare = (a.productName || '').trim().localeCompare(
+          (b.productName || '').trim(),
+          undefined,
+          { sensitivity: 'base', numeric: true }
+        );
+        if (itemCompare !== 0) return sortDir === 'asc' ? itemCompare : -itemCompare;
+        
+        // Secondary sort by Customer Name (A-Z)
+        const custCompare = (a.customerName || '').trim().localeCompare(
+          (b.customerName || '').trim(),
+          undefined,
+          { sensitivity: 'base', numeric: true }
+        );
+        if (custCompare !== 0) return custCompare;
+
+        return new Date(b.poDate).getTime() - new Date(a.poDate).getTime();
+      }
+
       let aVal: any = a[sortField as keyof PurchaseOrder];
       let bVal: any = b[sortField as keyof PurchaseOrder];
 
@@ -262,11 +302,21 @@ export default function PurchaseOrders() {
         bVal = bBal * b.rate;
       }
 
-      if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        const strComp = aVal.trim().localeCompare(bVal.trim(), undefined, { sensitivity: 'base', numeric: true });
+        if (strComp !== 0) return sortDir === 'asc' ? strComp : -strComp;
+      } else {
+        if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+      }
       
-      // Secondary tie-breaker by status rank
-      if (rankA !== rankB) return rankA - rankB;
+      // Secondary tie-breaker by Customer Name, then Item Name
+      const custTie = (a.customerName || '').trim().localeCompare((b.customerName || '').trim(), undefined, { sensitivity: 'base', numeric: true });
+      if (custTie !== 0) return custTie;
+      
+      const itemTie = (a.productName || '').trim().localeCompare((b.productName || '').trim(), undefined, { sensitivity: 'base', numeric: true });
+      if (itemTie !== 0) return itemTie;
+
       return 0;
     });
 
@@ -546,8 +596,24 @@ export default function PurchaseOrders() {
       return true;
     });
 
-    // Sort by PO Date
-    filtered.sort((a, b) => new Date(b.poDate).getTime() - new Date(a.poDate).getTime());
+    // Sort by Customer Name, then Item Name, then PO Date
+    filtered.sort((a, b) => {
+      const custCompare = (a.customerName || '').trim().localeCompare(
+        (b.customerName || '').trim(),
+        undefined,
+        { sensitivity: 'base', numeric: true }
+      );
+      if (custCompare !== 0) return custCompare;
+
+      const itemCompare = (a.productName || '').trim().localeCompare(
+        (b.productName || '').trim(),
+        undefined,
+        { sensitivity: 'base', numeric: true }
+      );
+      if (itemCompare !== 0) return itemCompare;
+
+      return new Date(b.poDate).getTime() - new Date(a.poDate).getTime();
+    });
 
     return filtered;
   }, [purchaseOrders, poTransactions, viewMode, selectedMonth, searchTerm, statusFilter, customerFilter]);
@@ -1260,7 +1326,9 @@ export default function PurchaseOrders() {
                 <th className={thClass} onClick={() => handleSort('customerName')}>
                   <div className="flex items-center">4. CUSTOMER NAME <SortIcon field="customerName" /></div>
                 </th>
-                <th className="px-3 py-3 border-b border-border min-w-[220px]">5. ITEM NAME</th>
+                <th className={cn(thClass, "min-w-[220px]")} onClick={() => handleSort('productName')}>
+                  <div className="flex items-center">5. ITEM NAME <SortIcon field="productName" /></div>
+                </th>
                 <th className="px-3 py-3 border-b border-border text-right">6. RATE</th>
                 <th className={cn(thClass, "text-right")} onClick={() => handleSort('closingBal')}>
                   <div className="flex items-center justify-end">7. CLOSING BAL <SortIcon field="closingBal" /></div>
