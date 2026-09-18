@@ -7,7 +7,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
   const roundWeight = (w: any) => Math.round(Number(w) || 0);
 
   return (
-    <div id="job-card-print-area" className="print-view-container w-[210mm] min-h-[297mm] mx-auto bg-white text-black p-[10mm] text-[12px] font-sans leading-snug box-border relative">
+    <div id="job-card-print-area" className="print-view-container w-[210mm] h-[297mm] print:h-[100vh] print:max-h-[100vh] overflow-hidden flex flex-col mx-auto bg-white text-black p-[5mm] sm:p-[10mm] text-[12px] font-sans leading-snug box-border relative">
       
       {/* HEADER */}
       <div className="grid grid-cols-3 items-center border-b-2 border-black pb-2 mb-2">
@@ -394,7 +394,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
       })()}
 
       {/* PREPARED / CHECKED / PRODUCTION HEAD */}
-      <div className="grid grid-cols-3 gap-8 mt-6 pt-4 text-center text-gray-800 font-bold uppercase text-[10px] break-inside-avoid relative bottom-0">
+      <div className="grid grid-cols-3 gap-8 mt-auto pt-4 text-center text-gray-800 font-bold uppercase text-[10px] break-inside-avoid relative bottom-0">
         <div className="border-t border-black pt-1">
           Prepared By<br/>
           <span className="font-normal text-[11px] uppercase">MR. SHUBHAM CHAUHAN</span>
