@@ -600,7 +600,7 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
                   <th className="px-3 py-3 border-b border-border w-[180px]">Status & Problems</th>
                   <th className="px-3 py-3 border-b border-border">1. PO NO.</th>
                   <th className="px-3 py-3 border-b border-border">2. PO DT</th>
-                  <th className="px-3 py-3 border-b border-border">3. DELIVERY DATE</th>
+                  <th className="px-3 py-3 border-b border-border text-muted-foreground">3. PLY/FLUTE</th>
                   <th className="px-3 py-3 border-b border-border">4. CUSTOMER NAME</th>
                   <th className="px-3 py-3 border-b border-border max-w-[150px] truncate">5. CONSIGNEE</th>
                   <th className="px-3 py-3 border-b border-border">6. ARTWORK NO.</th>
@@ -647,7 +647,12 @@ export default function ExcelImportPreviewModal({ onClose, existingPOs, onSucces
                     </td>
                     <td className="px-3 py-2 font-bold text-foreground">{row.poNo}</td>
                     <td className="px-3 py-2 text-muted-foreground">{row.poDate}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{row.deliveryDate}</td>
+                    <td className="px-3 py-2 text-muted-foreground font-semibold">
+                      {(() => {
+                        const prod = products.find((p: any) => p.itemName === row.itemName);
+                        return prod ? `${prod.ply || '-'}/${prod.flute || '-'}` : '-/-';
+                      })()}
+                    </td>
                     <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={row.customerName}>{row.customerName}</td>
                     <td className="px-3 py-2 text-muted-foreground truncate max-w-[150px]" title={row.consignee}>{row.consignee}</td>
                     <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{row.artworkNo}</td>

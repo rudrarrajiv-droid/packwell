@@ -930,7 +930,7 @@ export default function AddPOModal({
       const oldPOs = await getPendingPOsForCustomerAndProducts(customerId, productIds);
 
       // Exclude the current PO itself so we don't ask to NIL the PO we are appending items to
-      const filteredOldPOs = oldPOs.filter(p => p.poNo?.trim() !== commonData.poNo.trim());
+      const filteredOldPOs = oldPOs.filter(p => (p.poNo || '').trim().toUpperCase() !== commonData.poNo.trim().toUpperCase());
 
       if (filteredOldPOs.length > 0) {
         setPendingOldPOs(filteredOldPOs);

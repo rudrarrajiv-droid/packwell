@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Users, Package, X, CircleDashed, ChevronDown, ChevronUp, Trash2, Edit, FilterX } from 'lucide-react';
+import { Plus, Search, Users, Package, X, CircleDashed, ChevronDown, ChevronUp, Trash2, Edit, FilterX, GitMerge } from 'lucide-react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { cn, getCustomerDisplayLabel } from '../lib/utils';
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer, checkCustomerUsage, migrateCustomer } from '../lib/supabase/customerService';
@@ -30,6 +30,7 @@ export default function MasterData() {
   const [showTradingModal,  setShowTradingModal]  = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [mergeData, setMergeData] = useState<{ entity: Customer | Product; type: 'customer' | 'product' } | null>(null);
 
   // Dependency/Migration State
   const [isCheckingUsage, setIsCheckingUsage] = useState(false);
@@ -58,9 +59,10 @@ export default function MasterData() {
     queryFn: () => getFinishGoods() as unknown as Promise<any[]> 
   });
   
-  const { user } = useAuth();
-  const canDelete = user?.email === 'admin@packwell.com' || user?.email === 'packwell@packwell.com';
-  const showCosting = user?.email === 'admin@packwell.com' || user?.email === 'packwell@packwell.com';
+  const { user, hasRole } = useAuth();
+  const isAdmin = hasRole('ADMIN') || user?.email === 'admin@packwell.com' || user?.email === 'packwell@packwell.com';
+  const canDelete = isAdmin;
+  const showCosting = isAdmin;
 
   const handleDeleteCustomer = async (customer: Customer) => {
     setIsCheckingUsage(true);
@@ -105,7 +107,13 @@ export default function MasterData() {
   // Derived Filtering
   const filteredCustomers = useMemo(() => {
     const searchLower = (search || '').toLowerCase().trim();
-    return customers.filter(c => (c?.name || '').toLowerCase().includes(searchLower));
+    let res = customers.filter(c => (c?.name || '').toLowerCase().includes(searchLower));
+    res.sort((a, b) => {
+       const custA = (a.name || '').trim();
+       const custB = (b.name || '').trim();
+       return custA.localeCompare(custB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return res;
   }, [customers, search]);
 
   const filteredProducts = useMemo(() => {
@@ -154,13 +162,13 @@ export default function MasterData() {
       // 2. Customer Name
       const custA = (a.customerName || '').trim();
       const custB = (b.customerName || '').trim();
-      const custDiff = custA.localeCompare(custB);
+      const custDiff = custA.localeCompare(custB, undefined, { numeric: true, sensitivity: 'base' });
       if (custDiff !== 0) return custDiff;
 
       // 3. Item Name
       const itemA = (a.itemName || '').trim();
       const itemB = (b.itemName || '').trim();
-      return itemA.localeCompare(itemB);
+      return itemA.localeCompare(itemB, undefined, { numeric: true, sensitivity: 'base' });
     });
 
     return enriched;
@@ -449,13 +457,14 @@ export default function MasterData() {
         {/* Table */}
         <div className="flex-1 overflow-auto">
           {tab === 'customers' ? (
-            <CustomersTable data={filteredCustomers} isLoading={loadingC} onEdit={handleEditCustomer} onDelete={canDelete ? handleDeleteCustomer : undefined} />
+            <CustomersTable data={filteredCustomers} products={products} isLoading={loadingC} onEdit={isAdmin ? handleEditCustomer : undefined} onDelete={canDelete ? handleDeleteCustomer : undefined} onMerge={canDelete ? (c) => setMergeData({ entity: c, type: 'customer' }) : undefined} />
           ) : (
             <ProductsTable 
               data={filteredProducts} 
               isLoading={loadingP} 
               onEdit={handleEditProduct} 
               onDelete={canDelete ? handleDeleteProduct : undefined}
+              onMerge={canDelete ? (p) => setMergeData({ entity: p, type: 'product' }) : undefined}
               selectedProducts={selectedProducts}
               onToggleSelect={toggleProductSelection}
               onToggleSelectAll={toggleSelectAll}
@@ -488,6 +497,19 @@ export default function MasterData() {
           onSuccess={() => { setShowTradingModal(false); qc.invalidateQueries({ queryKey: ['products'] }); }}
         />
       )}
+      {mergeData && (
+        <MergeModal
+          data={mergeData}
+          customers={customers}
+          products={products}
+          onClose={() => setMergeData(null)}
+          onSuccess={() => {
+            setMergeData(null);
+            qc.invalidateQueries({ queryKey: ['customers'] });
+            qc.invalidateQueries({ queryKey: ['products'] });
+          }}
+        />
+      )}
       {dependencyData && (
         <DependencyModal
           data={dependencyData}
@@ -513,15 +535,71 @@ export default function MasterData() {
   );
 }
 
+// ─── Customer Products Modal ──────────────────────────────────────────────────
+function CustomerProductsModal({ customer, products, onClose }: { customer: Customer; products: Product[]; onClose: () => void }) {
+  const custProducts = products.filter(p => p.customerId === customer.id || p.customerName === customer.name);
+  
+  const sorted = [...custProducts].sort((a, b) => {
+    return (a.itemName || '').trim().localeCompare((b.itemName || '').trim(), undefined, { numeric: true, sensitivity: 'base' });
+  });
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card w-full max-w-4xl rounded-xl shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-6 border-b border-border">
+          <h2 className="text-xl font-bold text-foreground">
+            Products for {customer.name} ({sorted.length})
+          </h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-4">
+          <table className="w-full text-sm text-left border border-border">
+            <thead className="bg-secondary text-xs uppercase font-medium text-muted-foreground sticky top-0">
+              <tr>
+                <th className="px-4 py-2 border-b">#</th>
+                <th className="px-4 py-2 border-b">Item Name</th>
+                <th className="px-4 py-2 border-b">Ply / Flute</th>
+                <th className="px-4 py-2 border-b">Size (L×W×H)</th>
+                <th className="px-4 py-2 border-b">Reel Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.length === 0 ? (
+                <tr><td colSpan={5} className="text-center p-4">No products found</td></tr>
+              ) : (
+                sorted.map((p, i) => (
+                  <tr key={p.id} className="border-b border-border/50 hover:bg-muted/50">
+                    <td className="px-4 py-2">{i + 1}</td>
+                    <td className="px-4 py-2 font-semibold">{p.itemName || '-'}</td>
+                    <td className="px-4 py-2">{p.ply ? `${p.ply} Ply ${p.flute ? `/ ${p.flute}` : ''}` : '-'}</td>
+                    <td className="px-4 py-2">{p.length && p.width && p.height ? `${p.length}×${p.width}×${p.height}` : '-'}</td>
+                    <td className="px-4 py-2">{p.reelSize ? `${p.reelSize}"` : '-'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Customers Table ──────────────────────────────────────────────────────────
-function CustomersTable({ data, isLoading, onEdit, onDelete }: { data: Customer[]; isLoading: boolean, onEdit: (c: Customer) => void, onDelete?: (c: Customer) => void }) {
+function CustomersTable({ data, products, isLoading, onEdit, onDelete, onMerge }: { data: Customer[]; products: Product[]; isLoading: boolean, onEdit?: (c: Customer) => void, onDelete?: (c: Customer) => void, onMerge?: (c: Customer) => void }) {
+  const [selectedCustomerForProducts, setSelectedCustomerForProducts] = useState<Customer | null>(null);
+
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
   return (
+    <>
     <table className="w-full text-sm text-left">
       <thead className="text-xs text-muted-foreground uppercase bg-secondary/50 border-b border-border sticky top-0 z-10">
         <tr>
           <th className="px-6 py-3 font-medium">#</th>
           <th className="px-6 py-3 font-medium">Customer Name</th>
+          <th className="px-6 py-3 font-medium">Items Created</th>
           <th className="px-6 py-3 font-medium">Created At</th>
           <th className="px-6 py-3 font-medium text-right">Actions</th>
         </tr>
@@ -531,14 +609,34 @@ function CustomersTable({ data, isLoading, onEdit, onDelete }: { data: Customer[
           <tr key={c.id} className="hover:bg-muted/50 transition-colors group">
             <td className="px-6 py-4 text-muted-foreground">{i + 1}</td>
             <td className="px-6 py-4 font-semibold text-foreground">{c.name}</td>
+            <td className="px-6 py-4">
+              {(() => {
+                const count = products.filter(p => p.customerId === c.id || p.customerName === c.name).length;
+                return (
+                  <button 
+                     onClick={() => setSelectedCustomerForProducts(c)}
+                     className="text-primary font-bold hover:underline"
+                  >
+                    {count}
+                  </button>
+                );
+              })()}
+            </td>
             <td className="px-6 py-4 text-muted-foreground">
               {c.createdAt ? new Date(c.createdAt?.toDate ? c.createdAt.toDate() : c.createdAt).toLocaleDateString('en-IN') : 'N/A'}
             </td>
             <td className="px-6 py-4 text-right flex justify-end gap-2">
               <RoleGuard requireRole="ADMIN">
-                <button onClick={() => onEdit(c)} className="text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Edit">
-                  <Edit className="w-4 h-4" />
-                </button>
+                {onMerge && (
+                  <button onClick={() => onMerge(c)} className="text-orange-500 hover:bg-orange-500/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Merge">
+                    <GitMerge className="w-4 h-4" />
+                  </button>
+                )}
+                {onEdit && (
+                  <button onClick={() => onEdit(c)} className='text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100' title='Edit'>
+                    <Edit className='w-4 h-4' />
+                  </button>
+                )}
               </RoleGuard>
               {onDelete && (
                 <button onClick={() => onDelete(c)} className="text-destructive hover:bg-destructive/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Delete">
@@ -550,7 +648,7 @@ function CustomersTable({ data, isLoading, onEdit, onDelete }: { data: Customer[
         ))}
         {data.length === 0 && (
           <tr>
-            <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+            <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
               <Users className="w-12 h-12 mx-auto text-muted mb-3" />
               <p>No customers found.</p>
             </td>
@@ -558,15 +656,23 @@ function CustomersTable({ data, isLoading, onEdit, onDelete }: { data: Customer[
         )}
       </tbody>
     </table>
+    {selectedCustomerForProducts && (
+      <CustomerProductsModal
+        customer={selectedCustomerForProducts}
+        products={products}
+        onClose={() => setSelectedCustomerForProducts(null)}
+      />
+    )}
+    </>
   );
 }
 
 // ─── Products Table ───────────────────────────────────────────────────────────
-function ProductsTable({ 
-  data, isLoading, onEdit, onDelete,
+function ProductsTable({
+  data, isLoading, onEdit, onDelete, onMerge,
   selectedProducts, onToggleSelect, onToggleSelectAll, showCosting
-}: { 
-  data: any[]; isLoading: boolean, onEdit: (p: Product) => void, onDelete?: (p: Product) => void,
+}: {
+  data: any[]; isLoading: boolean, onEdit?: (p: Product) => void, onDelete?: (p: Product) => void, onMerge?: (p: Product) => void,
   selectedProducts?: Set<string>, onToggleSelect?: (id: string) => void, onToggleSelectAll?: () => void, showCosting?: boolean
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -618,7 +724,15 @@ function ProductsTable({
                 </td>
               )}
               <td className="px-6 py-4 font-bold text-primary">{p.artworkNo || '-'}</td>
-              <td className="px-6 py-4 font-semibold text-foreground">{p.itemName || '-'}</td>
+              <td className="px-6 py-4">
+                {onEdit ? (
+                  <button onClick={() => onEdit(p)} className='font-semibold text-primary hover:underline text-left'>
+                    {p.itemName || '-'}
+                  </button>
+                ) : (
+                  <span className='font-semibold text-foreground'>{p.itemName || '-'}</span>
+                )}
+              </td>
               <td className="px-6 py-4 text-muted-foreground">{p.customerName || '-'}</td>
               <td className="px-6 py-4">{p.length && p.width && p.height ? `${p.length}×${p.width}×${p.height}` : '-'}</td>
               <td className="px-6 py-4">{p.ply ? `${p.ply} Ply ${p.flute ? `/ ${p.flute}` : ''}` : '-'}</td>
@@ -643,9 +757,16 @@ function ProductsTable({
               </td>
               <td className="px-6 py-4 text-right flex justify-end gap-2">
                 <RoleGuard requireRole="ADMIN">
-                  <button onClick={() => onEdit(p)} className="text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Edit">
-                    <Edit className="w-4 h-4" />
-                  </button>
+                  {onMerge && (
+                    <button onClick={() => onMerge(p)} className="text-orange-500 hover:bg-orange-500/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Merge">
+                      <GitMerge className="w-4 h-4" />
+                    </button>
+                  )}
+                  {onEdit && (
+                    <button onClick={() => onEdit(p)} className='text-primary hover:bg-primary/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100' title='Edit'>
+                      <Edit className='w-4 h-4' />
+                    </button>
+                  )}
                 </RoleGuard>
                 {onDelete && (
                   <button onClick={() => onDelete(p)} className="text-destructive hover:bg-destructive/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Delete">
@@ -997,6 +1118,90 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
   );
 }
 
+// ─── Searchable Dropdown for Modal ─────────────────────────────────────
+function SearchableDropdown({
+  options,
+  value,
+  onChange,
+  placeholder = "Search..."
+}: {
+  options: { id: string; label: string; group?: string }[];
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+}) {
+  const [search, setSearch] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+
+  const selectedOption = options.find(o => o.id === value);
+
+  const openMenu = () => {
+    setSearch('');
+    setIsOpen(true);
+  };
+
+  const filtered = options.filter(o => 
+    o.label.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="relative w-full">
+      {!isOpen ? (
+        <button 
+          type="button"
+          onClick={openMenu}
+          className="w-full text-left text-sm rounded-md border border-input px-3 py-2 bg-background hover:bg-muted focus:outline-none focus:ring-1 focus:ring-primary font-medium truncate shadow-sm"
+        >
+          {selectedOption ? (
+            <span className="text-foreground">{selectedOption.label}</span>
+          ) : (
+            <span className="text-muted-foreground">{placeholder}</span>
+          )}
+        </button>
+      ) : (
+        <div className="relative z-50">
+          <input
+            autoFocus
+            type="text"
+            className="w-full text-sm rounded-md border border-primary px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+            placeholder="Type to search..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onBlur={() => setTimeout(() => setIsOpen(false), 200)}
+          />
+          <div className="absolute top-full left-0 w-full mt-1 bg-card border border-border rounded-md shadow-xl max-h-64 overflow-y-auto z-50">
+            {filtered.length > 0 ? (
+              filtered.map((opt, i) => {
+                const showGroup = i === 0 || filtered[i - 1].group !== opt.group;
+                return (
+                  <div key={`${opt.group || ''}-${opt.id}`}>
+                    {showGroup && opt.group && (
+                      <div className="bg-muted px-3 py-1 text-[10px] font-bold text-muted-foreground uppercase sticky top-0">
+                        {opt.group}
+                      </div>
+                    )}
+                    <div
+                      onMouseDown={() => {
+                        onChange(opt.id);
+                        setIsOpen(false);
+                      }}
+                      className="px-3 py-2 text-sm hover:bg-muted cursor-pointer border-b border-border/50 last:border-0"
+                    >
+                      <span className={opt.id === value ? "font-bold text-primary" : ""}>{opt.label}</span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="px-3 py-2 text-sm text-muted-foreground">No matches found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DependencyModal({
   data,
   customers,
@@ -1041,6 +1246,18 @@ function DependencyModal({
     }
   };
 
+  const dropdownOptions = useMemo(() => {
+    if (data.type === 'customer') {
+      return customers
+        .filter(c => c.id !== data.entity.id)
+        .map(c => ({ id: c.id!, label: getCustomerDisplayLabel(c, customers) }));
+    } else {
+      return products
+        .filter(p => p.id !== data.entity.id)
+        .map(p => ({ id: p.id!, label: `${p.itemName} (${p.artworkNo})` }));
+    }
+  }, [data, customers, products]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-card w-full max-w-lg rounded-xl shadow-2xl">
@@ -1069,20 +1286,12 @@ function DependencyModal({
             <label className="block text-sm font-medium mb-2">
               Select another {data.type} to transfer these records to:
             </label>
-            <select
+            <SearchableDropdown
+              options={dropdownOptions}
               value={selectedTargetId}
-              onChange={e => setSelectedTargetId(e.target.value)}
-              className="w-full text-sm rounded-md border border-input px-3 py-2 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              <option value="">-- Select Replacement --</option>
-              {data.type === 'customer'
-                ? customers.filter(c => c.id !== data.entity.id).map(c => (
-                    <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, customers)}</option>
-                  ))
-                : products.filter(p => p.id !== data.entity.id).map(p => (
-                    <option key={p.id} value={p.id!}>{p.itemName} ({p.artworkNo})</option>
-                  ))}
-            </select>
+              onChange={(val) => setSelectedTargetId(val)}
+              placeholder="-- Select Replacement --"
+            />
             <p className="text-xs text-muted-foreground mt-2">
               * By migrating, all historical records will be updated to point to the new selection, and the current {data.type} will be deleted.
             </p>
@@ -1099,6 +1308,112 @@ function DependencyModal({
             >
               {isMigrating && <CircleDashed className="w-4 h-4 mr-2 animate-spin" />}
               Migrate & Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MergeModal({
+  data,
+  customers,
+  products,
+  onClose,
+  onSuccess
+}: {
+  data: { entity: any; type: 'customer' | 'product' };
+  customers: Customer[];
+  products: Product[];
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const { user } = useAuth();
+  const [selectedTargetId, setSelectedTargetId] = useState('');
+  const [isMigrating, setIsMigrating] = useState(false);
+
+  const handleMerge = async () => {
+    if (!selectedTargetId) return;
+    if (!confirm(`Are you sure you want to merge this into the selected ${data.type}? This will transfer all records and DELETE the current one.`)) return;
+    
+    setIsMigrating(true);
+    try {
+      if (data.type === 'customer') {
+        const target = customers.find(c => c.id === selectedTargetId);
+        if (target) {
+          await migrateCustomer(data.entity.id, target as any, user?.name);
+          await deleteCustomer(data.entity.id, user?.name);
+        }
+      } else {
+        const target = products.find(p => p.id === selectedTargetId);
+        if (target) {
+          await migrateProduct(data.entity.id, target as any, user?.name);
+          await deleteProduct(data.entity.id, user?.name);
+        }
+      }
+      onSuccess();
+    } catch (err: any) {
+      alert(err.message || 'Merge failed');
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const dropdownOptions = useMemo(() => {
+    if (data.type === 'customer') {
+      return customers
+        .filter(c => c.id !== data.entity.id)
+        .map(c => ({ id: c.id!, label: getCustomerDisplayLabel(c, customers) }));
+    } else {
+      return products
+        .filter(p => p.id !== data.entity.id)
+        .map(p => ({ id: p.id!, label: `${p.itemName} (${p.artworkNo})` }));
+    }
+  }, [data, customers, products]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-card w-full max-w-lg rounded-xl shadow-2xl">
+        <div className="flex items-center justify-between p-6 border-b border-border">
+          <h2 className="text-xl font-bold text-foreground flex items-center text-orange-500">
+            <GitMerge className="w-5 h-5 mr-2" /> Merge {data.type === 'customer' ? 'Customer' : 'Product'}
+          </h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-sm">
+            Merge <strong>{data.type === 'customer' ? data.entity.name : data.entity.itemName}</strong> into another {data.type}.
+          </p>
+          
+          <div className="pt-2">
+            <label className="block text-sm font-medium mb-2">
+              Select destination {data.type}:
+            </label>
+            <SearchableDropdown
+              options={dropdownOptions}
+              value={selectedTargetId}
+              onChange={(val) => setSelectedTargetId(val)}
+              placeholder="-- Select Destination --"
+            />
+            <p className="text-xs text-muted-foreground mt-2">
+              * By merging, all historical records will be updated to point to the new selection, and the current {data.type} will be deleted permanently.
+            </p>
+          </div>
+          
+          <div className="flex justify-end gap-3 pt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-md border border-input bg-background hover:bg-secondary transition-colors">
+               Cancel
+            </button>
+            <button
+              onClick={handleMerge}
+              disabled={!selectedTargetId || isMigrating}
+              className="px-6 py-2 text-sm font-medium rounded-md bg-orange-500 text-white hover:bg-orange-600 transition-colors flex items-center disabled:opacity-50"
+            >
+              {isMigrating && <CircleDashed className="w-4 h-4 mr-2 animate-spin" />}
+              Merge & Delete
             </button>
           </div>
         </div>

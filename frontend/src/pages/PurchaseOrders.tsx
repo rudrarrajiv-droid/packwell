@@ -16,6 +16,7 @@ import { Edit2, Trash2, Download, FileX2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import BulkClosePOModal from './po-management/BulkClosePOModal';
 import { downloadPOTemplate } from '../utils/exportUtils';
+import { getProducts } from '../lib/supabase/productService';
 
 type SortField = 'statusPriority' | 'poNo' | 'poDate' | 'deliveryDate' | 'customerName' | 'productName' | 'orderQty' | 'inQty' | 'outQty' | 'closingBal' | 'value';
 type SortDir = 'asc' | 'desc';
@@ -106,6 +107,7 @@ export default function PurchaseOrders() {
   const [poDateTo, setPoDateTo] = useState('');
   const [deliveryDateFrom, setDeliveryDateFrom] = useState('');
   const [deliveryDateTo, setDeliveryDateTo] = useState('');
+  const [flutePlyFilter, setFlutePlyFilter] = useState('');
   
   // Sorting State - default: 4th column Customer Name (A-Z), then 5th column Item Name (A-Z / 0-9)
   const [sortField, setSortField] = useState<SortField>('customerName');
@@ -125,6 +127,20 @@ export default function PurchaseOrders() {
     queryKey: ['purchaseOrders'],
     queryFn: () => getPurchaseOrders()
   });
+
+  const { data: products = [] } = useQuery({
+    queryKey: ['products'],
+    queryFn: () => getProducts()
+  });
+
+  const productMap = useMemo(() => {
+    const map = new Map<string, { flute?: string; ply?: number }>();
+    products.forEach(p => {
+      if (p.id) map.set(p.id.toLowerCase(), { flute: p.flute, ply: p.ply });
+      if (p.itemName) map.set(p.itemName.toLowerCase().trim(), { flute: p.flute, ply: p.ply });
+    });
+    return map;
+  }, [products]);
 
   // Fetch Transactions for Monthly View (Client-side aggregation Phase 12)
   const { data: poTransactions = [], isLoading: loadingTx } = useQuery({
@@ -168,9 +184,10 @@ export default function PurchaseOrders() {
     setDeliveryDateTo('');
     setSortField('customerName');
     setSortDir('asc');
+    setFlutePlyFilter('');
   };
 
-  const isFilterActive = searchTerm || statusFilter || customerFilter || poDateFrom || poDateTo || deliveryDateFrom || deliveryDateTo;
+  const isFilterActive = searchTerm || statusFilter || customerFilter || poDateFrom || poDateTo || deliveryDateFrom || deliveryDateTo || flutePlyFilter;
 
   // Filter and Sort Logic (Client-Side Only - Phase 5)
   const displayData = useMemo(() => {
@@ -178,12 +195,20 @@ export default function PurchaseOrders() {
       // 1. Global Search (Partial match across multiple fields)
       if (searchTerm) {
         const term = searchTerm.toLowerCase();
+        
+        const poProdId = (po.productId || '').toLowerCase();
+        const poProdName = (po.productName || '').toLowerCase().trim();
+        const prod = poProdId && productMap.has(poProdId) ? productMap.get(poProdId) : productMap.get(poProdName);
+        const flutePlyStr = prod ? `${prod.ply || '-'}/${prod.flute || '-'}` : '';
+        
         const matches = 
           (po.poNo || '').toLowerCase().includes(term) ||
           (po.customerName || '').toLowerCase().includes(term) ||
           (po.consignee || '').toLowerCase().includes(term) ||
           (po.artworkNo || '').toLowerCase().includes(term) ||
-          (po.productName || '').toLowerCase().includes(term);
+          (po.productName || '').toLowerCase().includes(term) ||
+          flutePlyStr.toLowerCase().includes(term);
+          
         if (!matches) return false;
       }
 
@@ -227,6 +252,28 @@ export default function PurchaseOrders() {
       // 5. Delivery Date Filter
       if (deliveryDateFrom && po.deliveryDate < deliveryDateFrom) return false;
       if (deliveryDateTo && po.deliveryDate > deliveryDateTo) return false;
+
+      // 6. Ply/Flute Filter
+      if (flutePlyFilter) {
+        const filterNorm = flutePlyFilter.toLowerCase().trim();
+        const poProdId = (po.productId || '').toLowerCase();
+        const poProdName = (po.productName || '').toLowerCase().trim();
+        
+        const nameMatches = poProdName.includes(filterNorm);
+        const prod = poProdId && productMap.has(poProdId) ? productMap.get(poProdId) : productMap.get(poProdName);
+        
+        let flutePlyMatches = false;
+        if (prod) {
+          const flute = (prod.flute || '').toString().toLowerCase().trim();
+          const ply = (prod.ply || '').toString().toLowerCase().trim();
+          const combined = `${ply}/${flute}`;
+          flutePlyMatches = flute.includes(filterNorm) || ply.includes(filterNorm) || combined.includes(filterNorm);
+        }
+
+        if (!nameMatches && !flutePlyMatches) {
+          return false;
+        }
+      }
 
       return true;
     });
@@ -321,7 +368,7 @@ export default function PurchaseOrders() {
     });
 
     return filtered;
-  }, [purchaseOrders, searchTerm, statusFilter, customerFilter, poDateFrom, poDateTo, deliveryDateFrom, deliveryDateTo, sortField, sortDir, viewMode, selectedCustomerId]);
+  }, [purchaseOrders, searchTerm, statusFilter, customerFilter, poDateFrom, poDateTo, deliveryDateFrom, deliveryDateTo, sortField, sortDir, viewMode, selectedCustomerId, flutePlyFilter, productMap]);
 
   // Item Wise Grouping Computation
   const [showMultipleOnly, setShowMultipleOnly] = useState(false);
@@ -1294,6 +1341,12 @@ export default function PurchaseOrders() {
                 <input type="date" value={deliveryDateTo} onChange={(e) => setDeliveryDateTo(e.target.value)} className="w-full px-2 py-1.5 text-sm rounded border border-input bg-background focus:outline-none" />
               </div>
             </div>
+            <div className="flex-1 flex gap-2">
+              <div className="flex-1">
+                <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Ply/Flute Filter</label>
+                <input type="text" placeholder="e.g. 5/B" value={flutePlyFilter} onChange={(e) => setFlutePlyFilter(e.target.value)} className="w-full px-2 py-1.5 text-sm rounded border border-input bg-background focus:outline-none" />
+              </div>
+            </div>
           </div>
           )}
         </div>
@@ -1320,8 +1373,8 @@ export default function PurchaseOrders() {
                 <th className={thClass} onClick={() => handleSort('poDate')}>
                   <div className="flex items-center">2. PO DT <SortIcon field="poDate" /></div>
                 </th>
-                <th className={thClass} onClick={() => handleSort('deliveryDate')}>
-                  <div className="flex items-center">3. DELIVERY DATE <SortIcon field="deliveryDate" /></div>
+                <th className={thClass}>
+                  <div className="flex items-center">3. PLY/FLUTE</div>
                 </th>
                 <th className={thClass} onClick={() => handleSort('customerName')}>
                   <div className="flex items-center">4. CUSTOMER NAME <SortIcon field="customerName" /></div>
@@ -1362,7 +1415,14 @@ export default function PurchaseOrders() {
                     <tr key={po.id} className="hover:bg-muted/30 transition-colors group">
                       <td className="px-3 py-2 font-bold text-foreground">{po.poNo}</td>
                       <td className="px-3 py-2 text-muted-foreground">{formatDate(po.poDate)}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{formatDate(po.deliveryDate)}</td>
+                      <td className="px-3 py-2 text-muted-foreground font-semibold">
+                        {(() => {
+                          const poProdId = (po.productId || '').toLowerCase();
+                          const poProdName = (po.productName || '').toLowerCase().trim();
+                          const prod = poProdId && productMap.has(poProdId) ? productMap.get(poProdId) : productMap.get(poProdName);
+                          return prod ? `${prod.ply || '-'}/${prod.flute || '-'}` : '-/-';
+                        })()}
+                      </td>
                       <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
                       <td className="px-3 py-2 font-medium min-w-[220px] max-w-[360px] whitespace-normal">
                         <div className="flex flex-col gap-0.5">
@@ -1496,7 +1556,7 @@ export default function PurchaseOrders() {
                 <tr>
                   <th className="px-3 py-3 border-b border-border cursor-pointer hover:bg-muted/50">1. PO NO.</th>
                   <th className="px-3 py-3 border-b border-border cursor-pointer hover:bg-muted/50">2. PO DT</th>
-                  <th className="px-3 py-3 border-b border-border cursor-pointer hover:bg-muted/50">3. DELIVERY DATE</th>
+                  <th className="px-3 py-3 border-b border-border text-muted-foreground">3. PLY/FLUTE</th>
                   <th className="px-3 py-3 border-b border-border cursor-pointer hover:bg-muted/50">4. CUSTOMER NAME</th>
                   <th className="px-3 py-3 border-b border-border truncate max-w-[100px]">5. ARTWORK NO.</th>
                   <th className="px-3 py-3 border-b border-border min-w-[200px]">6. ITEM NAME</th>
@@ -1526,7 +1586,14 @@ export default function PurchaseOrders() {
                       <tr key={po.id} className="hover:bg-muted/30 transition-colors group">
                         <td className="px-3 py-2 font-bold text-foreground">{po.poNo}</td>
                         <td className="px-3 py-2 text-muted-foreground">{formatDate(po.poDate)}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{formatDate(po.deliveryDate)}</td>
+                        <td className="px-3 py-2 text-muted-foreground font-semibold">
+                          {(() => {
+                            const poProdId = (po.productId || '').toLowerCase();
+                            const poProdName = (po.productName || '').toLowerCase().trim();
+                            const prod = poProdId && productMap.has(poProdId) ? productMap.get(poProdId) : productMap.get(poProdName);
+                            return prod ? `${prod.ply || '-'}/${prod.flute || '-'}` : '-/-';
+                          })()}
+                        </td>
                         <td className="px-3 py-2 font-semibold truncate max-w-[150px]" title={po.customerName}>{po.customerName}</td>
                         <td className="px-3 py-2 font-mono text-xs text-muted-foreground max-w-[100px] truncate" title={po.artworkNo}>{po.artworkNo || '-'}</td>
                         <td className="px-3 py-2 font-medium min-w-[200px] max-w-[320px] whitespace-normal">
