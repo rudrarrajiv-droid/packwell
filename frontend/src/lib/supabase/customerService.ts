@@ -131,6 +131,34 @@ export const updateCustomer = async (id: string, name: string, user: string = 'S
     throw error;
   }
 
+  // Update denormalized customer names in related tables
+  const { data: prods } = await supabase.from('products').select('*').eq('customer_id', id);
+  if (prods) {
+    for (const p of prods) {
+      const raw = p.raw_data || {};
+      raw.customerName = name;
+      await supabase.from('products').update({ customer_name: name, raw_data: raw }).eq('firestore_document_id', p.firestore_document_id);
+    }
+  }
+
+  const { data: pos } = await supabase.from('purchase_orders').select('*').or(`customer_id_raw.eq.${id},resolved_customer_id.eq.${id}`);
+  if (pos) {
+    for (const po of pos) {
+      const raw = po.raw_data || {};
+      raw.customerName = name;
+      await supabase.from('purchase_orders').update({ customer_name: name, raw_data: raw }).eq('firestore_document_id', po.firestore_document_id);
+    }
+  }
+
+  const { data: jcs } = await supabase.from('job_cards').select('*').or(`customer_id_raw.eq.${id},resolved_customer_id.eq.${id}`);
+  if (jcs) {
+    for (const jc of jcs) {
+      const raw = jc.raw_data || {};
+      raw.customerName = name;
+      await supabase.from('job_cards').update({ customer_name: name, raw_data: raw }).eq('firestore_document_id', jc.firestore_document_id);
+    }
+  }
+
   await logActivity({
     user,
     action: 'Updated',

@@ -271,6 +271,57 @@ export const updateProduct = async (id: string, data: Record<string, any>, user:
     throw error;
   }
 
+  // Update denormalized product details in related tables
+  const newName = data.itemName;
+  const newArtwork = data.artworkNo;
+  const newSize = data.length && data.width && data.height ? `${data.length}×${data.width}×${data.height}` : undefined;
+
+  const { data: pos } = await supabase.from('purchase_orders').select('*').or(`product_id_raw.eq.${id},resolved_product_id.eq.${id}`);
+  if (pos) {
+    for (const po of pos) {
+      const raw = po.raw_data || {};
+      if (newName) raw.productName = newName;
+      if (newArtwork) raw.artworkNo = newArtwork;
+      if (newSize) raw.size = newSize;
+      
+      const updatePayload: any = { raw_data: raw };
+      if (newName) updatePayload.product_name = newName;
+      if (newArtwork) updatePayload.artwork_no = newArtwork;
+      if (newSize) updatePayload.size = newSize;
+      
+      await supabase.from('purchase_orders').update(updatePayload).eq('firestore_document_id', po.firestore_document_id);
+    }
+  }
+
+  const { data: jcs } = await supabase.from('job_cards').select('*').or(`product_id_raw.eq.${id},resolved_product_id.eq.${id}`);
+  if (jcs) {
+    for (const jc of jcs) {
+      const raw = jc.raw_data || {};
+      if (newName) raw.itemName = newName;
+      if (newArtwork) raw.artworkNo = newArtwork;
+      if (newSize) raw.size = newSize;
+
+      const updatePayload: any = { raw_data: raw };
+      if (newName) updatePayload.product_name = newName;
+      if (newArtwork) updatePayload.artwork_no = newArtwork;
+      if (newSize) updatePayload.size = newSize;
+      
+      await supabase.from('job_cards').update(updatePayload).eq('firestore_document_id', jc.firestore_document_id);
+    }
+  }
+
+  const { data: fgs } = await supabase.from('finish_goods').select('*').eq('product_id', id);
+  if (fgs) {
+    for (const fg of fgs) {
+      const raw = fg.raw_data || {};
+      if (newName) raw.productName = newName;
+
+      const updatePayload: any = { raw_data: raw };
+      
+      await supabase.from('finish_goods').update(updatePayload).eq('firestore_document_id', fg.firestore_document_id);
+    }
+  }
+
   await logActivity({
     user,
     action: 'Updated',
