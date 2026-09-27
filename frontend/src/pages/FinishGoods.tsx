@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PackageCheck, Search, ArrowDownToLine, ArrowUpFromLine, FileText, History, Calendar, FileSpreadsheet, Edit, Sliders, AlertTriangle } from 'lucide-react';
+import { PackageCheck, Search, ArrowDownToLine, ArrowUpFromLine, FileText, History, Calendar, FileSpreadsheet, Edit, Sliders, AlertTriangle, Printer } from 'lucide-react';
 import { cn } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import BulkInModal from './finish-goods/BulkInModal';
@@ -11,6 +11,7 @@ import ItemLedgerModal from './finish-goods/ItemLedgerModal';
 import CustomerLedgerTab from './finish-goods/CustomerLedgerTab';
 import FinishGoodAdjustmentModal from './finish-goods/FinishGoodAdjustmentModal';
 import { getFinishGoods, getFinishGoodTransactions } from '../lib/supabase/finishGoodService';
+import PrintableFGAudit from './finish-goods/PrintableFGAudit';
 
 export default function FinishGoods() {
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'EMPTY' | 'REPORT' | 'CUSTOMER_LEDGER'>('ACTIVE');
@@ -77,10 +78,10 @@ export default function FinishGoods() {
         if (!aHasNon && bHasNon) return 1;
       }
 
-      // Default sort by customer name then product name
-      const custCompare = (a.customerName || '').localeCompare(b.customerName || '');
-      if (custCompare !== 0) return custCompare;
-      return (a.productName || '').localeCompare(b.productName || '');
+      // Default sort by product name then customer name
+      const prodCompare = (a.productName || '').localeCompare(b.productName || '');
+      if (prodCompare !== 0) return prodCompare;
+      return (a.customerName || '').localeCompare(b.customerName || '');
     });
   }, [fgList, search, stockFilter, activeTab]);
 
@@ -148,7 +149,8 @@ export default function FinishGoods() {
   }, [transactions, reportDate, activeTab, fgList]);
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col gap-4 p-4 md:p-6 max-w-7xl mx-auto w-full">
+    <>
+    <div className="h-[calc(100vh-4rem)] flex flex-col gap-4 p-4 md:p-6 max-w-7xl mx-auto w-full print:hidden">
       {/* Header with Title and Overall Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 shrink-0">
         <div>
@@ -256,6 +258,13 @@ export default function FinishGoods() {
         )}
 
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto pb-2 sm:pb-0">
+          <button 
+            onClick={() => window.print()}
+            className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
+          >
+            <Printer className="w-4 h-4 mr-2 text-primary" />
+            Print Audit
+          </button>
           {activeTab !== 'REPORT' && (
             <ExportButtons 
               data={exportData} 
@@ -504,5 +513,7 @@ export default function FinishGoods() {
       />
       
     </div>
+    <PrintableFGAudit finishGoods={fgList} />
+    </>
   );
 }

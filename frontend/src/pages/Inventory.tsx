@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet } from 'lucide-react';
+import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
 import { getReels, getReelTransactions, updateReelTransactionDate, type Reel } from '../lib/supabase/reelService';
@@ -11,6 +11,7 @@ import EditReelModal from './inventory/EditReelModal';
 import ExportButtons from '../components/ExportButtons';
 import JobFinderTab from './inventory/JobFinderTab';
 import ReverseCalculatorTab from './inventory/ReverseCalculatorTab';
+import PrintableReelAudit from './inventory/PrintableReelAudit';
 
 export default function Inventory() {
   const { user, hasRole } = useAuth();
@@ -370,13 +371,22 @@ export default function Inventory() {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <>
+    <div className="h-full flex flex-col print:hidden">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Reel Inventory</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage paper reels and transactions</p>
         </div>
         <div className="flex gap-3">
+          <button 
+            onClick={() => window.print()}
+            className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-secondary/80 transition-colors"
+          >
+            <Printer className="w-4 h-4 mr-2 text-primary" />
+            Print Audit
+          </button>
+          
           {activeTab !== 'ISSUED_REPORT' && (
             <ExportButtons 
               data={sortedAndFilteredReels} 
@@ -980,5 +990,7 @@ export default function Inventory() {
         </div>
       )}
     </div>
+    <PrintableReelAudit reels={reels} />
+    </>
   );
 }
