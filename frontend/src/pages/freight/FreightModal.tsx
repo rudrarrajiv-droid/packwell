@@ -3,6 +3,7 @@ import { X, Save, Plus, Truck, Calendar, FileText, MapPin, Hash, DollarSign } fr
 import { addFreightRecord, updateFreightRecord, deleteFreightRecord, type FreightRecordPayload } from '../../lib/supabase/finishGoodService';
 import { createCustomer } from '../../lib/supabase/customerService';
 import { useAuth } from '../../contexts/AuthContext';
+import SmartInput from '../../components/SmartInput';
 
 interface FreightModalProps {
   isOpen: boolean;
@@ -12,6 +13,7 @@ interface FreightModalProps {
   transporterOptions?: string[];
   sizeOptions?: string[];
   customerOptions?: string[];
+  placeOptions?: string[];
 }
 
 export default function FreightModal({
@@ -21,7 +23,8 @@ export default function FreightModal({
   initialData,
   transporterOptions = [],
   sizeOptions = [],
-  customerOptions = []
+  customerOptions = [],
+  placeOptions = []
 }: FreightModalProps) {
   const { user } = useAuth();
   const isEditing = !!initialData;
@@ -251,19 +254,13 @@ export default function FreightModal({
 
             <div>
               <label className={labelClass}>Transporter Name</label>
-              <input
-                type="text"
-                list="transporter-list"
-                placeholder="e.g. BHAICHARA TRANSPORT"
+              <SmartInput
                 value={transporterName}
-                onChange={e => setTransporterName(e.target.value)}
+                onChange={setTransporterName}
+                options={transporterOptions}
+                placeholder="e.g. BHAICHARA TRANSPORT"
                 className={inputClass}
               />
-              <datalist id="transporter-list">
-                {transporterOptions.map((t, i) => (
-                  <option key={i} value={t} />
-                ))}
-              </datalist>
             </div>
           </div>
 
@@ -276,11 +273,11 @@ export default function FreightModal({
                   Destination / Place
                 </span>
               </label>
-              <input
-                type="text"
-                placeholder="e.g. BHALGARH, KUNDLI"
+              <SmartInput
                 value={place}
-                onChange={e => setPlace(e.target.value)}
+                onChange={setPlace}
+                options={placeOptions}
+                placeholder="e.g. BHALGARH, KUNDLI"
                 className={inputClass}
               />
             </div>

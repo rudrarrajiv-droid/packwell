@@ -6,6 +6,7 @@ import { executeFinishGoodOutwardTransaction, getFinishGoods, getFinishGoodTrans
 import { getProducts } from '../../lib/supabase/productService';
 import { getPurchaseOrders, getPurchaseOrderBalance, type PurchaseOrder } from '../../lib/supabase/purchaseOrderService';
 import BulkInModal from './BulkInModal';
+import SmartInput from '../../components/SmartInput';
 
 interface FGRow {
   productId: string;
@@ -450,17 +451,23 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
               </div>
               <div>
                 <label className="block text-xs font-semibold mb-1">Place</label>
-                <input type="text" list="place-list" {...register('place')} className={inputCls} placeholder="City/Location" />
-                <datalist id="place-list">
-                  {uniquePlaces.map((v: any) => <option key={v} value={v} />)}
-                </datalist>
+                <SmartInput
+                  value={watch('place') || ''}
+                  onChange={(val) => setValue('place', val)}
+                  options={uniquePlaces}
+                  placeholder="City/Location"
+                  className={inputCls}
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold mb-1">Transporter Name</label>
-                <input type="text" list="transporter-list" {...register('transporterName')} className={inputCls} placeholder="Transporter..." />
-                <datalist id="transporter-list">
-                  {uniqueTransporters.map((v: any) => <option key={v} value={v} />)}
-                </datalist>
+                <SmartInput
+                  value={watch('transporterName') || ''}
+                  onChange={(val) => setValue('transporterName', val)}
+                  options={uniqueTransporters}
+                  placeholder="Transporter..."
+                  className={inputCls}
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold mb-1">Vehicle No.</label>

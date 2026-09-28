@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Truck, Search, CircleDollarSign, FileText, Plus, Edit2, CheckCircle2 } from 'lucide-react';
+import { Truck, Search, CircleDollarSign, FileText, Plus, Edit2, CheckCircle2, ListPlus } from 'lucide-react';
 import type { FinishGoodTransaction } from '../lib/types/models';
 import ExportButtons from '../components/ExportButtons';
 import { format } from 'date-fns';
@@ -11,15 +11,19 @@ import autoTable from 'jspdf-autotable';
 import { getFinishGoods, getFinishGoodTransactions, markFreightReceived } from '../lib/supabase/finishGoodService';
 import { getCustomers } from '../lib/supabase/customerService';
 import FreightModal from './freight/FreightModal';
+import BulkFreightModal from './freight/BulkFreightModal';
 
 export default function FreightCharge() {
   const [search, setSearch] = useState('');
   const [transporterFilter, setTransporterFilter] = useState('ALL');
   const [sizeFilter, setSizeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [selectedFreightItem, setSelectedFreightItem] = useState<any | null>(null);
   
   const { user } = useAuth();
@@ -43,13 +47,14 @@ export default function FreightCharge() {
   const isLoading = txLoading || fgLoading;
 
   // Process data to unique invoices
-  const { uniqueInvoices, transporterOptions, sizeOptions, customerOptions } = useMemo(() => {
+  const { uniqueInvoices, transporterOptions, sizeOptions, customerOptions, placeOptions } = useMemo(() => {
     const outwards = transactions.filter(t => t.type === 'OUT' && t.invoiceNo);
     
     const invoiceMap = new Map<string, any>();
     const transporters = new Set<string>();
     const sizes = new Set<string>();
     const customers = new Set<string>();
+    const places = new Set<string>();
 
     // Seed customers from Master Data
     registeredCustomers.forEach(c => {
@@ -62,8 +67,12 @@ export default function FreightCharge() {
     });
 
     outwards.forEach(tx => {
-      if (tx.transporterName) transporters.add(tx.transporterName);
+      const normalizedTransporter = tx.transporterName ? tx.transporterName.trim().toUpperCase() : '';
+      if (normalizedTransporter) transporters.add(normalizedTransporter);
       if (tx.vehicleSize) sizes.add(tx.vehicleSize);
+      
+      const normalizedPlace = tx.place ? tx.place.trim().toUpperCase() : '';
+      if (normalizedPlace) places.add(normalizedPlace);
 
       if (!invoiceMap.has(tx.invoiceNo!)) {
         // Find customer name: transaction specific customer takes top priority, then finishGoods
@@ -78,7 +87,7 @@ export default function FreightCharge() {
           id: tx.id, // Just using the first transaction's id as a key
           date: tx.date || tx.createdAt,
           invoiceNo: tx.invoiceNo,
-          transporterName: tx.transporterName || '',
+          transporterName: normalizedTransporter,
           customerName: resolvedCustomer,
           place: tx.place || '',
           vehicleNo: tx.vehicleNo || '',
@@ -120,13 +129,30 @@ export default function FreightCharge() {
       uniqueInvoices: sortedInvoices,
       transporterOptions: Array.from(transporters).sort(),
       sizeOptions: Array.from(sizes).sort(),
-      customerOptions: Array.from(customers).sort()
+      customerOptions: Array.from(customers).sort(),
+      placeOptions: Array.from(places).sort()
     };
   }, [transactions, finishGoods]);
 
   // Apply filters
   const filteredData = useMemo(() => {
     return uniqueInvoices.filter(item => {
+      let itemDate = '';
+      if (item.date) {
+        try {
+          if (typeof item.date === 'string') {
+            itemDate = item.date.substring(0, 10);
+          } else {
+            itemDate = new Date(item.date).toISOString().substring(0, 10);
+          }
+        } catch (e) {
+          itemDate = '';
+        }
+      }
+      
+      if (startDate && itemDate && itemDate < startDate) return false;
+      if (endDate && itemDate && itemDate > endDate) return false;
+      
       const searchStr = `${item.invoiceNo} ${item.transporterName} ${item.customerName} ${item.vehicleNo} ${item.place}`.toLowerCase();
       if (!searchStr.includes(search.toLowerCase())) return false;
       if (transporterFilter !== 'ALL' && item.transporterName !== transporterFilter) return false;
@@ -134,7 +160,7 @@ export default function FreightCharge() {
       if (statusFilter !== 'ALL' && item.receivingStatus !== statusFilter) return false;
       return true;
     });
-  }, [uniqueInvoices, search, transporterFilter, sizeFilter, statusFilter]);
+  }, [uniqueInvoices, search, transporterFilter, sizeFilter, statusFilter, startDate, endDate]);
 
   // Calculate overall total
   const overallTotalFreight = useMemo(() => {
@@ -196,20 +222,30 @@ export default function FreightCharge() {
     ];
 
     // TABLE DATA
-    const tableData = filteredData.map(item => [
-      item.date ? format(new Date(item.date), 'dd/MM/yy') : '-',
-      item.invoiceNo,
-      item.customerName,
-      item.place,
-      item.vehicleNo,
-      item.vehicleSize,
-      item.freight ? item.freight.toString() : '0',
-      item.holding ? item.holding.toString() : '0',
-      item.point ? item.point.toString() : '0',
-      item.others ? item.others.toString() : '0',
-      item.receivingStatus,
-      item.totalFreight ? item.totalFreight.toString() : '0'
-    ]);
+    const tableData = filteredData.map(item => {
+      let fDate = '-';
+      if (item.date) {
+        try {
+          fDate = format(new Date(item.date), 'dd/MM/yy');
+        } catch (e) {
+          fDate = '-';
+        }
+      }
+      return [
+        fDate,
+        item.invoiceNo,
+        item.customerName,
+        item.place,
+        item.vehicleNo,
+        item.vehicleSize,
+        item.freight ? item.freight.toString() : '0',
+        item.holding ? item.holding.toString() : '0',
+        item.point ? item.point.toString() : '0',
+        item.others ? item.others.toString() : '0',
+        item.receivingStatus,
+        item.totalFreight ? item.totalFreight.toString() : '0'
+      ];
+    });
 
     // Calculate totals
     const tFreight = filteredData.reduce((acc, curr) => acc + (curr.freight || 0), 0);
@@ -271,6 +307,25 @@ export default function FreightCharge() {
         </div>
         
         <div className="flex justify-end items-center gap-3">
+          {/* Date Filter Moved Here */}
+          <div className="hidden lg:flex items-center gap-1.5 shrink-0 bg-muted/30 p-1.5 rounded-lg border border-border mr-2">
+            <input 
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className={`${inputCls} py-1 text-xs bg-transparent border-0 ring-0 focus:ring-0 shadow-none`}
+              title="From Date"
+            />
+            <span className="text-muted-foreground text-[10px] font-bold uppercase">TO</span>
+            <input 
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className={`${inputCls} py-1 text-xs bg-transparent border-0 ring-0 focus:ring-0 shadow-none`}
+              title="To Date"
+            />
+          </div>
+
           <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-3.5 py-2.5 rounded-xl flex items-center shadow-sm">
             <div className="bg-blue-100 dark:bg-blue-900 p-2 rounded-full mr-2.5">
               <Truck className="w-4 h-4 text-blue-700 dark:text-blue-300" />
@@ -351,13 +406,21 @@ export default function FreightCharge() {
         </div>
 
         <div className="flex items-center gap-2.5 w-full lg:w-auto justify-end">
+          <button
+            onClick={() => setIsBulkModalOpen(true)}
+            className="inline-flex items-center justify-center px-4 py-2 text-xs font-bold text-primary-foreground bg-primary/90 rounded-lg shadow-sm hover:bg-primary transition-all focus:outline-none focus:ring-2 focus:ring-primary/30 whitespace-nowrap"
+          >
+            <ListPlus className="w-4 h-4 mr-1.5" />
+            Bulk Entry
+          </button>
+
           {/* Add New Vehicle / Bill Button */}
           <button
             onClick={handleOpenAdd}
             className="inline-flex items-center justify-center px-4 py-2 text-xs font-bold text-primary-foreground bg-primary rounded-lg shadow-sm hover:bg-primary/90 transition-all focus:outline-none focus:ring-2 focus:ring-primary/30 whitespace-nowrap"
           >
             <Plus className="w-4 h-4 mr-1.5" />
-            Add Vehicle / Freight Bill
+            Add Bill
           </button>
 
           {transporterFilter !== 'ALL' && (
@@ -421,7 +484,14 @@ export default function FreightCharge() {
                 {filteredData.map((item) => (
                   <tr key={item.id} className="hover:bg-muted/50 transition-colors bg-card">
                     <td className="px-4 py-3 font-medium whitespace-nowrap">
-                      {item.date ? format(new Date(item.date), 'dd MMM yyyy') : '-'}
+                      {(() => {
+                        if (!item.date) return '-';
+                        try {
+                          return format(new Date(item.date), 'dd MMM yyyy');
+                        } catch (e) {
+                          return '-';
+                        }
+                      })()}
                     </td>
                     <td className="px-4 py-3 font-bold text-foreground">
                       {item.invoiceNo}
@@ -490,6 +560,18 @@ export default function FreightCharge() {
                   </tr>
                 ))}
 
+                {filteredData.length > 0 && (
+                  <tr className="bg-muted/50 font-black text-foreground border-t-2 border-border/80">
+                    <td colSpan={6} className="px-4 py-3 text-right uppercase tracking-wider text-xs">Total (Filtered):</td>
+                    <td className="px-4 py-3 text-right">₹{filteredData.reduce((acc, curr) => acc + (curr.freight || 0), 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-amber-700 dark:text-amber-400">₹{filteredData.reduce((acc, curr) => acc + (curr.holding || 0), 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-purple-700 dark:text-purple-400">₹{filteredData.reduce((acc, curr) => acc + (curr.point || 0), 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right">₹{filteredData.reduce((acc, curr) => acc + (curr.others || 0), 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-primary text-base">₹{filteredData.reduce((acc, curr) => acc + (curr.totalFreight || 0), 0).toLocaleString()}</td>
+                    <td colSpan={2}></td>
+                  </tr>
+                )}
+
                 {filteredData.length === 0 && (
                   <tr>
                     <td colSpan={13} className="px-6 py-12 text-center text-muted-foreground">
@@ -512,7 +594,18 @@ export default function FreightCharge() {
         transporterOptions={transporterOptions}
         sizeOptions={sizeOptions}
         customerOptions={customerOptions}
+        placeOptions={placeOptions}
       />
+
+      {isBulkModalOpen && (
+        <BulkFreightModal
+          onClose={() => setIsBulkModalOpen(false)}
+          onSuccess={handleModalSuccess}
+          customerOptions={customerOptions}
+          transporterOptions={transporterOptions}
+          placeOptions={placeOptions}
+        />
+      )}
 
     </div>
   );
