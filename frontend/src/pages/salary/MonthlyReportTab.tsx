@@ -305,7 +305,7 @@ export default function MonthlyReportTab() {
           else if (rec.present === 0.5) dutyStr = 'HD';
           else if (rec.present === 0) dutyStr = 'A';
 
-          if (rec.otHours > 0) otVal = rec.otHours;
+          if (rec.otHours !== 0) otVal = rec.otHours;
           if (rec.refreshment > 0) refVal = rec.refreshment;
         }
 

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { getReels, getReelTransactions, updateReelTransactionDate, type Reel } from '../lib/supabase/reelService';
+import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInwardDate, type Reel } from '../lib/supabase/reelService';
 import BulkInwardModal from './inventory/BulkInwardModal';
 import OutwardModal from './inventory/OutwardModal';
 import ReelHistoryModal from './inventory/ReelHistoryModal';
@@ -104,24 +104,15 @@ export default function Inventory() {
     return result;
   }, [reels, search, paperTypeFilter, activeTab, showReservedOnly]);
 
-  const { totalReels, totalWeight, totalValue, shortReels, shortReelsWeight, fullReels, fullReelsWeight } = useMemo(() => {
-    let tr = 0, tw = 0, tv = 0, sr = 0, sw = 0, fr = 0, fw = 0;
+  const { totalReels, totalWeight, totalValue } = useMemo(() => {
+    let tr = 0, tw = 0, tv = 0;
 
     if (metricFilter === 'CLOSING' || activeTab !== 'ACTIVE') {
       sortedAndFilteredReels.forEach(r => {
         const bal = Number(r.currentBalance) || 0;
-        const origWt = Number(r.weight) || 0;
         tr++;
         tw += bal;
         tv += bal * (Number(r.rate) || 0);
-        // Short reel = partially consumed (balance < original weight)
-        if (origWt > 0 && bal < origWt) {
-          sr++;
-          sw += bal;
-        } else {
-          fr++;
-          fw += bal;
-        }
       });
     } else {
       // Include all reels (active + empty) that match the search/type filter
@@ -173,7 +164,7 @@ export default function Inventory() {
       });
     }
 
-    return { totalReels: tr, totalWeight: Math.round(tw), totalValue: Math.round(tv), shortReels: sr, shortReelsWeight: Math.round(sw), fullReels: fr, fullReelsWeight: Math.round(fw) };
+    return { totalReels: tr, totalWeight: Math.round(tw), totalValue: Math.round(tv) };
   }, [reels, search, paperTypeFilter, sortedAndFilteredReels, metricFilter, metricMonth, transactions, activeTab]);
 
   // Generate Issued Report
@@ -352,6 +343,11 @@ export default function Inventory() {
         const originalTime = tx.date && tx.date.includes('T') ? tx.date.split('T')[1] : '00:00:00Z';
         const newDateTime = `${newBulkDate}T${originalTime}`;
         await updateReelTransactionDate(tx.id, newDateTime, user?.name || 'System');
+        
+        if (txType === 'INWARD') {
+          await updateReelInwardDate(tx.reelId, newDateTime, user?.name || 'System');
+        }
+        
         successCount++;
       }
       
@@ -580,12 +576,7 @@ export default function Inventory() {
                 <div className="bg-primary/10 text-primary px-3 py-1.5 rounded-md font-medium border border-primary/20 shadow-sm">
                   कुल Weight: <span className="font-bold">{totalWeight.toLocaleString()} Kg</span>
                 </div>
-                <div className="bg-orange-100 text-orange-800 px-3 py-1.5 rounded-md font-medium border border-orange-200 shadow-sm" title="Short Reels = partially consumed reels">
-                  Short Reels: <span className="font-bold">{shortReels}</span> &nbsp;|&nbsp; <span className="font-bold">{shortReelsWeight.toLocaleString()} Kg</span>
-                </div>
-                <div className="bg-blue-100 text-blue-800 px-3 py-1.5 rounded-md font-medium border border-blue-200 shadow-sm" title="Full Reels = untouched / new reels">
-                  Full Reels: <span className="font-bold">{fullReels}</span> &nbsp;|&nbsp; <span className="font-bold">{fullReelsWeight.toLocaleString()} Kg</span>
-                </div>
+
                 <div className="bg-green-100 text-green-800 px-3 py-1.5 rounded-md font-medium border border-green-200 shadow-sm">
                   Total Value: <span className="font-bold">Rs. {totalValue.toLocaleString()}</span>
                 </div>

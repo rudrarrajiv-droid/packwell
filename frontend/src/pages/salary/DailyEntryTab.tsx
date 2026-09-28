@@ -73,7 +73,7 @@ export default function DailyEntryTab() {
       //        - Otherwise: hide them from daily entry sheet (Requirement 1)
       const eligibleEmps = allEmps.filter(emp => {
         const hasExistingRecord = records.some(
-          r => r.employeeId === emp.id && (r.present > 0 || r.otHours > 0 || r.refreshment > 0)
+          r => r.employeeId === emp.id && (r.present > 0 || r.otHours !== 0 || r.refreshment > 0)
         );
         if (hasExistingRecord) return true;
 
@@ -138,8 +138,12 @@ export default function DailyEntryTab() {
   };
 
   const handleOTChange = (empId: string, inputVal: string) => {
-    // Only allow digits and up to 1 decimal place (e.g. 3.5, 2.5, 1, 4.5, 7.5, 8)
-    let val = inputVal.replace(/[^0-9.]/g, '');
+    // Only allow digits, minus sign, and up to 1 decimal place (e.g. 3.5, 2.5, -1, -4.5, 7.5, 8)
+    let val = inputVal.replace(/[^0-9.-]/g, '');
+    // Ensure minus sign is only at the beginning
+    if (val.lastIndexOf('-') > 0) {
+      val = val.replace(/(?!^)-/g, '');
+    }
     const parts = val.split('.');
     if (parts.length > 2) {
       val = `${parts[0]}.${parts.slice(1).join('')}`;
@@ -253,7 +257,7 @@ export default function DailyEntryTab() {
         const otVal = parseFloat(String(att?.otHours || 0)) || 0;
         const refVal = Number(att?.refreshment) || 0;
 
-        if (att && (presentVal > 0 || otVal > 0 || refVal > 0)) {
+        if (att && (presentVal > 0 || otVal !== 0 || refVal > 0)) {
           const { perDayAmount, otAmount } = calculateAmounts(emp, att);
           
           recordsToSave.push({
@@ -290,7 +294,7 @@ export default function DailyEntryTab() {
 
     const activeCount = employees.filter(emp => {
       const att = attendance[emp.id!];
-      return att && (att.present > 0 || parseFloat(String(att.otHours || 0)) > 0 || Number(att.refreshment || 0) > 0);
+      return att && (att.present > 0 || parseFloat(String(att.otHours || 0)) !== 0 || Number(att.refreshment || 0) > 0);
     }).length;
 
     if (activeCount === 0) {
@@ -320,7 +324,7 @@ export default function DailyEntryTab() {
           refVal = 60;
         }
 
-        if (att && (presentVal > 0 || otVal > 0 || refVal > 0)) {
+        if (att && (presentVal > 0 || otVal !== 0 || refVal > 0)) {
           const { perDayAmount, otAmount } = calculateAmounts(
             emp, 
             { present: presentVal, otHours: otVal, refreshment: refVal }, 
@@ -373,7 +377,7 @@ export default function DailyEntryTab() {
 
   const totalFilledEntries = employees.filter(e => {
     const a = attendance[e.id!];
-    return a && (a.present > 0 || parseFloat(String(a.otHours || 0)) > 0 || Number(a.refreshment || 0) > 0);
+    return a && (a.present > 0 || parseFloat(String(a.otHours || 0)) !== 0 || Number(a.refreshment || 0) > 0);
   }).length;
 
   return (

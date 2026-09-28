@@ -430,7 +430,7 @@ export default function MonthlyActivityMatrix({
                           <td
                             className={`py-1.5 px-0.5 text-center border-b border-r border-border/40 text-[11px] font-mono ${cellBg}`}
                           >
-                            {ot > 0 ? (
+                            {ot !== 0 ? (
                               <span className="font-bold text-blue-600 dark:text-blue-400">{ot}</span>
                             ) : (
                               <span className="text-muted-foreground/30">-</span>
@@ -509,7 +509,7 @@ export default function MonthlyActivityMatrix({
                           className={`py-2 px-0.5 text-center font-bold text-[11px] text-blue-600 dark:text-blue-400 border-r border-border/50 ${bgTotal}`}
                           title={`Total OT Hours on ${dateStr}`}
                         >
-                          {dt.ot > 0 ? dt.ot : '-'}
+                          {dt.ot !== 0 ? dt.ot : '-'}
                         </td>
                         <td
                           className={`py-2 px-0.5 text-center font-bold text-[11px] text-purple-600 dark:text-purple-400 border-r-2 border-border/80 ${bgTotal}`}

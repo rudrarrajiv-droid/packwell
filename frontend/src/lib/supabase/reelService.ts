@@ -678,6 +678,38 @@ export const updateReelTransactionDate = async (
   });
 };
 
+export const updateReelInwardDate = async (
+  reelId: string,
+  newDate: string,
+  user: string = 'System'
+): Promise<void> => {
+  const normalizedDate = normalizeIsoDate(newDate);
+  const now = new Date().toISOString();
+
+  const existingRow = await getRawReelRow(reelId);
+  const rawData = {
+    ...(existingRow.raw_data ?? {}),
+    inwardDate: normalizedDate,
+    updatedAt: now,
+    updatedBy: user,
+  };
+
+  const { error } = await supabase
+    .from('reels')
+    .update({
+      inward_date: normalizedDate,
+      updated_at: now,
+      updated_by: user,
+      raw_data: rawData,
+    })
+    .eq('firestore_document_id', reelId);
+
+  if (error) {
+    console.error('Error updating reel inward date:', error);
+    throw error;
+  }
+};
+
 export const unfreezeReel = async (reelId: string, user: string = 'System'): Promise<boolean> => {
   const existing = await getRawReelRow(reelId);
   const now = new Date().toISOString();
