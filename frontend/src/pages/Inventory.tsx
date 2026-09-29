@@ -19,7 +19,13 @@ export default function Inventory() {
   const [isBulkInwardOpen, setIsBulkInwardOpen] = useState(false);
   const [isOutwardOpen, setIsOutwardOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historySelectedReel, setHistorySelectedReel] = useState<Reel | null>(null);
   const [editingReel, setEditingReel] = useState<Reel | null>(null);
+
+  const handleViewHistory = (reel: Reel) => {
+    setHistorySelectedReel(reel);
+    setIsHistoryOpen(true);
+  };
   const [purchaseViewMode, setPurchaseViewMode] = useState<'DETAIL' | 'SUMMARY'>('DETAIL');
   const [search, setSearch] = useState('');
   const [paperTypeFilter, setPaperTypeFilter] = useState('ALL');
@@ -402,7 +408,10 @@ export default function Inventory() {
             />
           )}
           <button 
-            onClick={() => setIsHistoryOpen(true)}
+            onClick={() => {
+              setHistorySelectedReel(null);
+              setIsHistoryOpen(true);
+            }}
             className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-secondary/80 transition-colors"
           >
             <History className="w-4 h-4 mr-2 text-primary" />
@@ -849,8 +858,15 @@ export default function Inventory() {
                   const consumed = (Number(reel.weight) || 0) - (Number(reel.currentBalance) || 0);
                   
                   return (
-                    <tr key={reel.id} className="hover:bg-muted/50 transition-colors">
-                      <td className="px-6 py-4 font-bold text-foreground">{reel.reelNumber}</td>
+                    <tr 
+                      key={reel.id} 
+                      className="hover:bg-muted/50 transition-colors cursor-pointer group"
+                      onClick={() => handleViewHistory(reel)}
+                    >
+                      <td className="px-6 py-4 font-bold text-blue-600 group-hover:text-blue-800 flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-blue-400 group-hover:text-blue-600" />
+                        {reel.reelNumber}
+                      </td>
                       <td className="px-6 py-4 font-medium">
                         {reel.paperType} | {reel.reelSize}" | {reel.bf} BF | {reel.gsm} GSM
                       </td>
@@ -872,7 +888,7 @@ export default function Inventory() {
                       <td className="px-6 py-4 text-right">
                         <button
                           type="button"
-                          onClick={() => setEditingReel(reel)}
+                          onClick={(e) => { e.stopPropagation(); setEditingReel(reel); }}
                           className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md bg-secondary text-secondary-foreground hover:bg-primary hover:text-primary-foreground border border-border hover:border-primary transition-all"
                           title="Edit reel purchase details"
                         >
@@ -924,7 +940,11 @@ export default function Inventory() {
       {isHistoryOpen && (
         <ReelHistoryModal
           reels={reels}
-          onClose={() => setIsHistoryOpen(false)}
+          onClose={() => {
+            setIsHistoryOpen(false);
+            setHistorySelectedReel(null);
+          }}
+          initialSelectedReel={historySelectedReel}
         />
       )}
 

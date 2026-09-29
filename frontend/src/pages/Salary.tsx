@@ -5,9 +5,12 @@ import EmployeesTab from './salary/EmployeesTab';
 import DailyEntryTab from './salary/DailyEntryTab';
 import MonthlyReportTab from './salary/MonthlyReportTab';
 import LedgerTab from './salary/LedgerTab';
+import SalarySheetTab from './salary/SalarySheetTab';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Salary() {
-  const [activeView, setActiveView] = useState<'DAILY' | 'MONTHLY' | 'LEDGER' | 'EMPLOYEES'>('DAILY');
+  const { hasRole } = useAuth();
+  const [activeView, setActiveView] = useState<'DAILY' | 'MONTHLY' | 'LEDGER' | 'EMPLOYEES' | 'SALARY_SHEET'>('DAILY');
 
   return (
     <div className="flex flex-col h-full space-y-6 animate-fade-in print:h-auto print:block">
@@ -66,6 +69,19 @@ export default function Salary() {
             <BookOpen className="w-4 h-4 mr-2" />
             Employee Ledger
           </button>
+
+          {hasRole('ADMIN') && (
+            <button
+              onClick={() => setActiveView('SALARY_SHEET')}
+              className={cn(
+                "px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center",
+                activeView === 'SALARY_SHEET' ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}
+            >
+              <FileBarChart2 className="w-4 h-4 mr-2" />
+              Salary Sheet
+            </button>
+          )}
         </div>
       </div>
 
@@ -74,6 +90,7 @@ export default function Salary() {
         {activeView === 'MONTHLY' && <MonthlyReportTab />}
         {activeView === 'EMPLOYEES' && <EmployeesTab />}
         {activeView === 'LEDGER' && <LedgerTab />}
+        {activeView === 'SALARY_SHEET' && hasRole('ADMIN') && <SalarySheetTab />}
       </div>
     </div>
   );

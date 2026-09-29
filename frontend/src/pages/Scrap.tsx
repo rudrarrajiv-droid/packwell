@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Trash2, Search, Plus, Loader2, AlertCircle, Archive, X, Printer, Edit2 } from 'lucide-react';
 import { getScrapEntries, createScrapEntry, updateScrapEntry, deleteScrapEntry } from '../lib/supabase/scrapService';
+import { getReelTransactions } from '../lib/supabase/reelService';
 import type { ScrapEntry } from '../lib/types/models';
 import { useAuth } from '../contexts/AuthContext';
 import ExportButtons from '../components/ExportButtons';
@@ -10,6 +11,15 @@ import { format } from 'date-fns';
 export default function Scrap() {
   const { user } = useAuth();
   const [search, setSearch] = useState('');
+  
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date();
+    d.setDate(1); // Default to first of current month
+    return d.toISOString().split('T')[0];
+  });
+  const [toDate, setToDate] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
   
   const [isAddOpen, setIsAddOpen] = useState(false);
   
@@ -37,19 +47,61 @@ export default function Scrap() {
     queryFn: () => getScrapEntries()
   });
 
-  const filteredScrap = useMemo(() => {
-    return scrapList.filter(item => 
-      (item.description || '').toLowerCase().includes(search.toLowerCase())
-    );
-  }, [scrapList, search]);
+  const { data: reelTxns = [] } = useQuery({
+    queryKey: ['reelTransactions'],
+    queryFn: getReelTransactions
+  });
 
-  const { totalCash, totalBilling } = useMemo(() => {
+  const filteredScrap = useMemo(() => {
+    return scrapList.filter(item => {
+      const matchSearch = (item.description || '').toLowerCase().includes(search.toLowerCase());
+      
+      const itemDate = new Date(item.date);
+      itemDate.setHours(0, 0, 0, 0);
+      
+      const start = new Date(fromDate);
+      start.setHours(0, 0, 0, 0);
+      
+      const end = new Date(toDate);
+      end.setHours(23, 59, 59, 999);
+      
+      const matchDate = itemDate >= start && itemDate <= end;
+      
+      return matchSearch && matchDate;
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [scrapList, search, fromDate, toDate]);
+
+  const { totalCash, totalBilling, totalScrapWeight } = useMemo(() => {
     return filteredScrap.reduce((acc, curr) => {
       if (curr.paymentType === 'CASH') acc.totalCash += curr.totalValue;
       if (curr.paymentType === 'BILLING') acc.totalBilling += curr.totalValue;
+      acc.totalScrapWeight += Number(curr.weight) || 0;
       return acc;
-    }, { totalCash: 0, totalBilling: 0 });
+    }, { totalCash: 0, totalBilling: 0, totalScrapWeight: 0 });
   }, [filteredScrap]);
+
+  const { paperConsumptionWeight, scrapRatio } = useMemo(() => {
+    let paperConsumptionWeight = 0;
+    
+    const start = new Date(fromDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(toDate);
+    end.setHours(23, 59, 59, 999);
+
+    reelTxns.forEach(txn => {
+      if (txn.type === 'OUTWARD' || txn.type === 'ALLOCATION') {
+        const itemDate = new Date(txn.date);
+        itemDate.setHours(0, 0, 0, 0);
+        if (itemDate >= start && itemDate <= end) {
+          paperConsumptionWeight += Number(txn.quantity) || 0;
+        }
+      }
+    });
+
+    const scrapRatio = paperConsumptionWeight > 0 ? (totalScrapWeight / paperConsumptionWeight) * 100 : 0;
+
+    return { paperConsumptionWeight, scrapRatio };
+  }, [reelTxns, fromDate, toDate, totalScrapWeight]);
 
   const totalValueCalc = useMemo(() => {
     const w = Number(weight) || 0;
@@ -171,6 +223,26 @@ export default function Scrap() {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <div className="flex items-center bg-gradient-to-r from-red-500/10 to-orange-500/10 border border-orange-200 dark:border-orange-900/50 rounded-xl px-4 py-2 shadow-sm relative overflow-hidden group">
+            <div className="absolute inset-0 bg-gradient-to-r from-red-500/10 to-orange-500/10 translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-500"></div>
+            <div className="flex flex-col relative z-10">
+              <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider">Scrap Ratio</span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-xl font-black text-red-600 dark:text-red-400">{scrapRatio.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div className="w-px h-8 bg-orange-200 dark:bg-orange-800 mx-4 relative z-10"></div>
+            <div className="flex flex-col relative z-10 text-right">
+              <span className="text-[10px] text-muted-foreground uppercase">Paper</span>
+              <span className="text-sm font-semibold text-foreground">{paperConsumptionWeight.toLocaleString()} kg</span>
+            </div>
+            <div className="w-px h-8 bg-orange-200 dark:bg-orange-800 mx-4 relative z-10"></div>
+            <div className="flex flex-col relative z-10 text-left">
+              <span className="text-[10px] text-muted-foreground uppercase">Scrap</span>
+              <span className="text-sm font-semibold text-foreground">{totalScrapWeight.toLocaleString()} kg</span>
+            </div>
+          </div>
+
           <div className="flex items-center gap-4 px-4 py-2 bg-secondary/50 rounded-lg border border-border">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Cash Revenue:</span>
@@ -210,8 +282,8 @@ export default function Scrap() {
 
       <div className="flex-1 overflow-auto p-6">
         <div className="bg-background rounded-xl shadow-sm border border-border flex flex-col h-full">
-          <div className="p-4 border-b border-border">
-            <div className="relative max-w-md">
+          <div className="p-4 border-b border-border flex flex-wrap gap-4 items-center justify-between">
+            <div className="relative w-full max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <input
                 type="text"
@@ -219,6 +291,22 @@ export default function Scrap() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-secondary/50 border-none rounded-lg focus:ring-2 focus:ring-orange-500/20 transition-all"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 print:hidden">
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="px-3 py-2 bg-secondary/50 border-none rounded-lg focus:ring-2 focus:ring-orange-500/20 text-sm"
+              />
+              <span className="text-muted-foreground text-sm font-medium px-1">to</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className="px-3 py-2 bg-secondary/50 border-none rounded-lg focus:ring-2 focus:ring-orange-500/20 text-sm"
               />
             </div>
           </div>

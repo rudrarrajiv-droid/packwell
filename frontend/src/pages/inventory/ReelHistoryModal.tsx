@@ -8,9 +8,10 @@ import EditReelModal from './EditReelModal';
 interface ReelHistoryModalProps {
   reels: any[];
   onClose: () => void;
+  initialSelectedReel?: any;
 }
 
-export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalProps) {
+export default function ReelHistoryModal({ reels, onClose, initialSelectedReel }: ReelHistoryModalProps) {
   const { user, hasRole } = useAuth();
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [editingDateTx, setEditingDateTx] = useState<string | null>(null);
@@ -26,7 +27,8 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
   const [filterPaperType, setFilterPaperType] = useState('');
   
   // Selection State
-  const [selectedReel, setSelectedReel] = useState<any | null>(null);
+  const [selectedReel, setSelectedReel] = useState<any | null>(initialSelectedReel || null);
+  const [showEmptyReels, setShowEmptyReels] = useState<boolean>(initialSelectedReel ? Number(initialSelectedReel.currentBalance) <= 0 : false);
 
   // Derived filtered reels
   const filteredReels = useMemo(() => {
@@ -44,12 +46,12 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
       const matchWeight = filterWeight ? String(r.weight) === filterWeight : true;
       const matchPaperType = filterPaperType ? (r.paperType || '').toLowerCase() === filterPaperType.toLowerCase() : true;
 
-      // Only show reels that have a positive balance
+      // Only show reels that have a positive balance unless showEmptyReels is true
       const hasBalance = Number(r.currentBalance) > 0;
 
-      return hasBalance && searchMatch && matchSize && matchBF && matchGSM && matchWeight && matchPaperType;
+      return (showEmptyReels || hasBalance) && searchMatch && matchSize && matchBF && matchGSM && matchWeight && matchPaperType;
     }).sort((a, b) => Number(a.currentBalance) - Number(b.currentBalance));
-  }, [reels, search, filterSize, filterBF, filterGSM, filterWeight, filterPaperType]);
+  }, [reels, search, filterSize, filterBF, filterGSM, filterWeight, filterPaperType, showEmptyReels]);
 
   // Total weight stats for filtered reels
   const filteredStats = useMemo(() => {
@@ -160,6 +162,17 @@ export default function ReelHistoryModal({ reels, onClose }: ReelHistoryModalPro
                   {uniquePaperTypes.map(v => <option key={v as string} value={v as string}>{v}</option>)}
                 </select>
               </div>
+              
+              <label className="flex items-center space-x-2 text-xs font-medium bg-secondary/50 px-3 py-1.5 rounded-md border border-border cursor-pointer hover:bg-secondary transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={showEmptyReels} 
+                  onChange={e => setShowEmptyReels(e.target.checked)} 
+                  className="rounded border-border text-primary focus:ring-primary w-3.5 h-3.5 cursor-pointer" 
+                />
+                <span>Include Empty / Nil Reels</span>
+              </label>
+
               <div className="grid grid-cols-2 gap-2">
                 <select className={inputCls + " py-1.5"} value={filterSize} onChange={e => setFilterSize(e.target.value)}>
                   <option value="">Size</option>
