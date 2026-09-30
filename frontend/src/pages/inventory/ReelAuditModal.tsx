@@ -161,6 +161,8 @@ export default function ReelAuditModal({ isOpen, onClose, onSuccess }: ReelAudit
   const totalOut = auditRows.reduce((sum, row) => sum + (Number(row.auditedOut) || 0), 0);
   const netDifference = auditRows.reduce((sum, row) => sum + ((Number(row.auditedBalance) || 0) - (Number(row.reel.currentBalance) || 0)), 0);
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-background rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden border border-border">

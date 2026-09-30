@@ -17,6 +17,8 @@ export interface ReelAudit {
   audit_date: string;
   created_by: string;
   total_difference: number;
+  total_in: number;
+  total_out: number;
   created_at: string;
 }
 
@@ -132,3 +134,15 @@ export const updateReelAuditItem = async (
   return true;
 };
 
+export const deleteReelAudit = async (auditId: string): Promise<boolean> => {
+  const { data, error } = await supabase.rpc('delete_reel_audit', {
+    p_audit_id: auditId,
+  });
+
+  if (error) {
+    console.error('Error deleting reel audit:', error);
+    throw error;
+  }
+
+  return true;
+};

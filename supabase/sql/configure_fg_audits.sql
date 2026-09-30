@@ -4,6 +4,8 @@ create table if not exists public.fg_audits (
   created_by text,
   total_qty_difference numeric default 0,
   total_value_difference numeric default 0,
+  total_qty_in numeric default 0,
+  total_qty_out numeric default 0,
   created_at timestamptz not null default now()
 );
 
@@ -63,22 +65,26 @@ declare
   v_nm_diff numeric;
   v_total_qty_diff numeric := 0;
   v_total_value_diff numeric := 0;
+  v_total_qty_in numeric := 0;
+  v_total_qty_out numeric := 0;
   v_rate numeric;
   v_fg_record public.finish_goods%rowtype;
+  v_existing_item public.fg_audit_items%rowtype;
+  v_reg_delta numeric;
+  v_nm_delta numeric;
 begin
-  insert into public.fg_audits (audit_date, created_by, created_at)
-  values (p_audit_date, p_user, v_now)
-  returning id into v_audit_id;
+  select id into v_audit_id from public.fg_audits where audit_date = p_audit_date limit 1;
+
+  if v_audit_id is null then
+    insert into public.fg_audits (audit_date, created_by, created_at)
+    values (p_audit_date, p_user, v_now)
+    returning id into v_audit_id;
+  end if;
 
   for v_item in select * from jsonb_array_elements(p_items)
   loop
     v_fg_id := v_item->>'fgId';
-    v_reg_diff := (v_item->>'audRegBal')::numeric - coalesce((v_item->>'sysRegBal')::numeric, 0);
-    v_nm_diff := (v_item->>'audNmBal')::numeric - coalesce((v_item->>'sysNmBal')::numeric, 0);
-    v_rate := (v_item->>'rate')::numeric;
-
-    v_total_qty_diff := v_total_qty_diff + v_reg_diff + v_nm_diff;
-    v_total_value_diff := v_total_value_diff + ((v_reg_diff + v_nm_diff) * coalesce(v_rate, 0));
+    v_rate := coalesce((v_item->>'rate')::numeric, 0);
 
     if v_fg_id is null or v_fg_id = '' then
       v_fg_id := gen_random_uuid()::text;
@@ -88,97 +94,129 @@ begin
         created_by, updated_by, created_at, updated_at, is_archived, raw_data
       ) values (
         v_fg_id, v_item->>'productId', v_item->>'productName', v_item->>'customerId', v_item->>'customerName',
-        0, 0, 0, 0, 0, (v_item->>'rate')::numeric,
+        0, 0, 0, 0, 0, v_rate,
         p_user, p_user, v_now, v_now, false,
         jsonb_build_object(
           'id', v_fg_id, 'productId', v_item->>'productId', 'productName', v_item->>'productName',
           'customerId', v_item->>'customerId', 'customerName', v_item->>'customerName',
           'openingQty', 0, 'inQty', 0, 'outQty', 0, 'closingBalance', 0, 'nonMovingBalance', 0,
-          'rate', (v_item->>'rate')::numeric, 'createdBy', p_user, 'updatedBy', p_user,
+          'rate', v_rate, 'createdBy', p_user, 'updatedBy', p_user,
           'createdAt', v_now, 'updatedAt', v_now, 'isArchived', false
         )
+      );
+    end if;
+
+    select * into v_existing_item from public.fg_audit_items where audit_id = v_audit_id and finish_good_id = v_fg_id limit 1;
+
+    if v_existing_item.id is not null then
+      v_reg_diff := (v_item->>'audRegBal')::numeric - v_existing_item.system_regular_balance;
+      v_nm_diff := (v_item->>'audNmBal')::numeric - v_existing_item.system_non_moving_balance;
+
+      update public.fg_audit_items set
+        audited_regular_balance = (v_item->>'audRegBal')::numeric,
+        audited_non_moving_balance = (v_item->>'audNmBal')::numeric,
+        regular_difference = v_reg_diff,
+        non_moving_difference = v_nm_diff,
+        rate = v_rate
+      where id = v_existing_item.id;
+    else
+      v_reg_diff := (v_item->>'audRegBal')::numeric - coalesce((v_item->>'sysRegBal')::numeric, 0);
+      v_nm_diff := (v_item->>'audNmBal')::numeric - coalesce((v_item->>'sysNmBal')::numeric, 0);
+
+      insert into public.fg_audit_items (
+        audit_id, finish_good_id, product_id, product_name,
+        system_regular_balance, system_non_moving_balance,
+        audited_regular_balance, audited_non_moving_balance,
+        regular_difference, non_moving_difference, rate, created_at
+      ) values (
+        v_audit_id, v_fg_id, v_item->>'productId', v_item->>'productName',
+        coalesce((v_item->>'sysRegBal')::numeric, 0), coalesce((v_item->>'sysNmBal')::numeric, 0),
+        coalesce((v_item->>'audRegBal')::numeric, 0), coalesce((v_item->>'audNmBal')::numeric, 0),
+        v_reg_diff, v_nm_diff, v_rate, v_now
       );
     end if;
 
     select * into v_fg_record from public.finish_goods where firestore_document_id = v_fg_id for update;
 
-    update public.finish_goods
-    set closing_balance = coalesce(closing_balance, 0) + v_reg_diff,
-        non_moving_balance = coalesce(non_moving_balance, 0) + v_nm_diff,
-        rate = coalesce((v_item->>'rate')::numeric, rate),
-        updated_at = v_now,
-        updated_by = p_user,
-        raw_data = coalesce(raw_data, '{}'::jsonb) || jsonb_build_object(
-          'closingBalance', coalesce(closing_balance, 0) + v_reg_diff,
-          'nonMovingBalance', coalesce(non_moving_balance, 0) + v_nm_diff,
-          'rate', coalesce((v_item->>'rate')::numeric, rate),
-          'updatedAt', v_now,
-          'updatedBy', p_user
-        )
-    where firestore_document_id = v_fg_id;
+    v_reg_delta := (v_item->>'audRegBal')::numeric - coalesce(v_fg_record.closing_balance, 0);
+    v_nm_delta := (v_item->>'audNmBal')::numeric - coalesce(v_fg_record.non_moving_balance, 0);
 
-    insert into public.fg_audit_items (
-      audit_id, finish_good_id, product_id, product_name,
-      system_regular_balance, system_non_moving_balance,
-      audited_regular_balance, audited_non_moving_balance,
-      regular_difference, non_moving_difference, rate, created_at
-    ) values (
-      v_audit_id, v_fg_id, v_item->>'productId', v_item->>'productName',
-      coalesce((v_item->>'sysRegBal')::numeric, 0), coalesce((v_item->>'sysNmBal')::numeric, 0),
-      coalesce((v_item->>'audRegBal')::numeric, 0), coalesce((v_item->>'audNmBal')::numeric, 0),
-      v_reg_diff, v_nm_diff, (v_item->>'rate')::numeric, v_now
-    );
+    if v_reg_delta <> 0 or v_nm_delta <> 0 then
+      update public.finish_goods
+      set closing_balance = coalesce(closing_balance, 0) + v_reg_delta,
+          non_moving_balance = coalesce(non_moving_balance, 0) + v_nm_delta,
+          rate = v_rate,
+          updated_at = v_now,
+          updated_by = p_user,
+          raw_data = coalesce(raw_data, '{}'::jsonb) || jsonb_build_object(
+            'closingBalance', coalesce(closing_balance, 0) + v_reg_delta,
+            'nonMovingBalance', coalesce(non_moving_balance, 0) + v_nm_delta,
+            'rate', v_rate,
+            'updatedAt', v_now,
+            'updatedBy', p_user
+          )
+      where firestore_document_id = v_fg_id;
 
-    if v_reg_diff <> 0 then
-      v_transaction_id := gen_random_uuid()::text;
-      insert into public.finish_good_transactions (
-        firestore_document_id, finish_good_id, type, category, quantity, remaining_balance,
-        rate, transaction_date, reference_no, performed_by, created_by, updated_by,
-        created_at, updated_at, is_archived, raw_data
-      ) values (
-        v_transaction_id, v_fg_id, case when v_reg_diff > 0 then 'IN' else 'OUT' end, 'ADJUSTMENT', abs(v_reg_diff), coalesce(v_fg_record.closing_balance, 0) + v_reg_diff,
-        coalesce((v_item->>'rate')::numeric, v_fg_record.rate), p_audit_date, 'Audit Adj (Reg)', p_user, p_user, p_user,
-        v_now, v_now, false,
-        jsonb_build_object(
-          'id', v_transaction_id, 'finishGoodId', v_fg_id,
-          'type', case when v_reg_diff > 0 then 'IN' else 'OUT' end,
-          'category', 'ADJUSTMENT', 'quantity', abs(v_reg_diff),
-          'remainingBalance', coalesce(v_fg_record.closing_balance, 0) + v_reg_diff,
-          'rate', coalesce((v_item->>'rate')::numeric, v_fg_record.rate),
-          'date', p_audit_date, 'referenceNo', 'Audit Adj (Reg)',
-          'performedBy', p_user, 'createdBy', p_user, 'updatedBy', p_user,
-          'createdAt', v_now, 'updatedAt', v_now, 'isArchived', false
-        )
-      );
-    end if;
+      if v_reg_delta <> 0 then
+        v_transaction_id := gen_random_uuid()::text;
+        insert into public.finish_good_transactions (
+          firestore_document_id, finish_good_id, type, category, quantity, remaining_balance,
+          rate, transaction_date, reference_no, performed_by, created_by, updated_by,
+          created_at, updated_at, is_archived, raw_data
+        ) values (
+          v_transaction_id, v_fg_id, case when v_reg_delta > 0 then 'IN' else 'OUT' end, 'ADJUSTMENT', abs(v_reg_delta), coalesce(v_fg_record.closing_balance, 0) + v_reg_delta,
+          v_rate, p_audit_date, 'Audit Adj (Reg)', p_user, p_user, p_user,
+          v_now, v_now, false,
+          jsonb_build_object(
+            'id', v_transaction_id, 'finishGoodId', v_fg_id,
+            'type', case when v_reg_delta > 0 then 'IN' else 'OUT' end,
+            'category', 'ADJUSTMENT', 'quantity', abs(v_reg_delta),
+            'remainingBalance', coalesce(v_fg_record.closing_balance, 0) + v_reg_delta,
+            'rate', v_rate,
+            'date', p_audit_date, 'referenceNo', 'Audit Adj (Reg)',
+            'performedBy', p_user, 'createdBy', p_user, 'updatedBy', p_user,
+            'createdAt', v_now, 'updatedAt', v_now, 'isArchived', false
+          )
+        );
+      end if;
 
-    if v_nm_diff <> 0 then
-      v_transaction_id := gen_random_uuid()::text;
-      insert into public.finish_good_transactions (
-        firestore_document_id, finish_good_id, type, category, quantity, remaining_balance,
-        rate, transaction_date, reference_no, performed_by, created_by, updated_by,
-        created_at, updated_at, is_archived, raw_data
-      ) values (
-        v_transaction_id, v_fg_id, case when v_nm_diff > 0 then 'IN' else 'OUT' end, 'ADJUSTMENT', abs(v_nm_diff), coalesce(v_fg_record.non_moving_balance, 0) + v_nm_diff,
-        coalesce((v_item->>'rate')::numeric, v_fg_record.rate), p_audit_date, 'Audit Adj (NM)', p_user, p_user, p_user,
-        v_now, v_now, false,
-        jsonb_build_object(
-          'id', v_transaction_id, 'finishGoodId', v_fg_id,
-          'type', case when v_nm_diff > 0 then 'IN' else 'OUT' end,
-          'category', 'ADJUSTMENT', 'quantity', abs(v_nm_diff),
-          'remainingBalance', coalesce(v_fg_record.non_moving_balance, 0) + v_nm_diff,
-          'rate', coalesce((v_item->>'rate')::numeric, v_fg_record.rate),
-          'date', p_audit_date, 'referenceNo', 'Audit Adj (NM)',
-          'performedBy', p_user, 'createdBy', p_user, 'updatedBy', p_user,
-          'createdAt', v_now, 'updatedAt', v_now, 'isArchived', false
-        )
-      );
+      if v_nm_delta <> 0 then
+        v_transaction_id := gen_random_uuid()::text;
+        insert into public.finish_good_transactions (
+          firestore_document_id, finish_good_id, type, category, quantity, remaining_balance,
+          rate, transaction_date, reference_no, performed_by, created_by, updated_by,
+          created_at, updated_at, is_archived, raw_data
+        ) values (
+          v_transaction_id, v_fg_id, case when v_nm_delta > 0 then 'IN' else 'OUT' end, 'ADJUSTMENT', abs(v_nm_delta), coalesce(v_fg_record.non_moving_balance, 0) + v_nm_delta,
+          v_rate, p_audit_date, 'Audit Adj (NM)', p_user, p_user, p_user,
+          v_now, v_now, false,
+          jsonb_build_object(
+            'id', v_transaction_id, 'finishGoodId', v_fg_id,
+            'type', case when v_nm_delta > 0 then 'IN' else 'OUT' end,
+            'category', 'ADJUSTMENT', 'quantity', abs(v_nm_delta),
+            'remainingBalance', coalesce(v_fg_record.non_moving_balance, 0) + v_nm_delta,
+            'rate', v_rate,
+            'date', p_audit_date, 'referenceNo', 'Audit Adj (NM)',
+            'performedBy', p_user, 'createdBy', p_user, 'updatedBy', p_user,
+            'createdAt', v_now, 'updatedAt', v_now, 'isArchived', false
+          )
+        );
+      end if;
     end if;
   end loop;
 
+  select coalesce(sum(regular_difference + non_moving_difference), 0),
+         coalesce(sum((regular_difference + non_moving_difference) * rate), 0),
+         coalesce(sum(case when (regular_difference + non_moving_difference) > 0 then (regular_difference + non_moving_difference) else 0 end), 0),
+         coalesce(sum(case when (regular_difference + non_moving_difference) < 0 then abs(regular_difference + non_moving_difference) else 0 end), 0)
+  into v_total_qty_diff, v_total_value_diff, v_total_qty_in, v_total_qty_out
+  from public.fg_audit_items where audit_id = v_audit_id;
+
   update public.fg_audits
   set total_qty_difference = v_total_qty_diff,
-      total_value_difference = v_total_value_diff
+      total_value_difference = v_total_value_diff,
+      total_qty_in = v_total_qty_in,
+      total_qty_out = v_total_qty_out
   where id = v_audit_id;
 
   return v_audit_id;
@@ -297,3 +335,14 @@ end;
 $$;
 
 grant execute on function public.update_fg_audit_item(uuid, numeric, numeric, text) to anon, authenticated;
+
+create or replace function public.delete_fg_audit(p_audit_id uuid) returns boolean
+language plpgsql
+security definer
+as $$
+begin
+  delete from public.fg_audits where id = p_audit_id;
+  return true;
+end;
+$$;
+grant execute on function public.delete_fg_audit(uuid) to anon, authenticated;

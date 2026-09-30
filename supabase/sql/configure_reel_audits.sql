@@ -3,6 +3,8 @@ create table if not exists public.reel_audits (
   audit_date text not null,
   created_by text,
   total_difference numeric default 0,
+  total_in numeric default 0,
+  total_out numeric default 0,
   created_at timestamptz not null default now()
 );
 
@@ -31,7 +33,7 @@ security definer
 as $$
 declare
   v_now timestamptz := now();
-  v_audit_id uuid := gen_random_uuid();
+  v_audit_id uuid;
   v_item jsonb;
   v_reel_id text;
   v_reel public.reels%rowtype;
@@ -41,48 +43,75 @@ declare
   v_system_balance numeric;
   v_difference numeric;
   v_total_difference numeric := 0;
+  v_total_in numeric := 0;
+  v_total_out numeric := 0;
   v_transaction_id text;
+  v_existing_item public.reel_audit_items%rowtype;
+  v_balance_delta numeric;
 begin
-  -- Insert into reel_audits
-  insert into public.reel_audits (id, audit_date, created_by, created_at)
-  values (v_audit_id, p_audit_date, p_user, v_now);
+  -- Check if audit for this date already exists
+  select id into v_audit_id from public.reel_audits where audit_date = p_audit_date limit 1;
+
+  if v_audit_id is null then
+    v_audit_id := gen_random_uuid();
+    insert into public.reel_audits (id, audit_date, created_by, created_at)
+    values (v_audit_id, p_audit_date, p_user, v_now);
+  end if;
 
   for v_item in select value from jsonb_array_elements(p_items) loop
     v_reel_id := v_item ->> 'reelId';
     v_audited_weight := coalesce((v_item ->> 'auditedWeight')::numeric, 0);
     v_audited_balance := coalesce((v_item ->> 'auditedBalance')::numeric, 0);
-    v_system_weight := coalesce((v_item ->> 'systemWeight')::numeric, 0);
-    v_system_balance := coalesce((v_item ->> 'systemBalance')::numeric, 0);
-    v_difference := v_audited_balance - v_system_balance;
-    v_total_difference := v_total_difference + v_difference;
     
-    insert into public.reel_audit_items (
-      audit_id, reel_id, reel_number, system_weight, system_balance,
-      audited_weight, audited_in, audited_out, audited_balance, difference
-    ) values (
-      v_audit_id, v_reel_id, v_item ->> 'reelNumber', v_system_weight, v_system_balance,
-      v_audited_weight, coalesce((v_item ->> 'auditedIn')::numeric, 0), coalesce((v_item ->> 'auditedOut')::numeric, 0),
-      v_audited_balance, v_difference
-    );
+    select * into v_existing_item from public.reel_audit_items where audit_id = v_audit_id and reel_id = v_reel_id limit 1;
+    
+    if v_existing_item.id is not null then
+      v_system_weight := v_existing_item.system_weight;
+      v_system_balance := v_existing_item.system_balance;
+      v_difference := v_audited_balance - v_system_balance;
+      
+      update public.reel_audit_items set
+        audited_weight = v_audited_weight,
+        audited_in = coalesce((v_item ->> 'auditedIn')::numeric, 0),
+        audited_out = coalesce((v_item ->> 'auditedOut')::numeric, 0),
+        audited_balance = v_audited_balance,
+        difference = v_difference
+      where id = v_existing_item.id;
+    else
+      v_system_weight := coalesce((v_item ->> 'systemWeight')::numeric, 0);
+      v_system_balance := coalesce((v_item ->> 'systemBalance')::numeric, 0);
+      v_difference := v_audited_balance - v_system_balance;
+      
+      insert into public.reel_audit_items (
+        audit_id, reel_id, reel_number, system_weight, system_balance,
+        audited_weight, audited_in, audited_out, audited_balance, difference
+      ) values (
+        v_audit_id, v_reel_id, v_item ->> 'reelNumber', v_system_weight, v_system_balance,
+        v_audited_weight, coalesce((v_item ->> 'auditedIn')::numeric, 0), coalesce((v_item ->> 'auditedOut')::numeric, 0),
+        v_audited_balance, v_difference
+      );
+    end if;
 
     -- Update reel
     select * into v_reel from public.reels where firestore_document_id = v_reel_id for update;
     
-    update public.reels
-    set weight = v_audited_weight,
-        current_balance = v_audited_balance,
-        updated_at = v_now,
-        updated_by = p_user,
-        raw_data = coalesce(v_reel.raw_data, '{}'::jsonb) || jsonb_build_object(
-          'weight', v_audited_weight,
-          'currentBalance', v_audited_balance,
-          'updatedAt', v_now,
-          'updatedBy', p_user
-        )
-    where firestore_document_id = v_reel_id;
+    v_balance_delta := v_audited_balance - v_reel.current_balance;
 
-    -- Add transaction if there's a difference in balance
-    if v_difference <> 0 then
+    if v_balance_delta <> 0 then
+      update public.reels
+      set weight = v_audited_weight,
+          current_balance = v_audited_balance,
+          updated_at = v_now,
+          updated_by = p_user,
+          raw_data = coalesce(v_reel.raw_data, '{}'::jsonb) || jsonb_build_object(
+            'weight', v_audited_weight,
+            'currentBalance', v_audited_balance,
+            'updatedAt', v_now,
+            'updatedBy', p_user
+          )
+      where firestore_document_id = v_reel_id;
+
+      -- Add transaction
       v_transaction_id := gen_random_uuid()::text;
       insert into public.reel_transactions (
         firestore_document_id, reel_id, reel_number, type, quantity, remaining_balance,
@@ -90,14 +119,14 @@ begin
         created_at, updated_at, raw_data, imported_at, synced_at
       ) values (
         v_transaction_id, v_reel_id, v_item ->> 'reelNumber', 
-        case when v_difference > 0 then 'INWARD' else 'OUTWARD' end,
-        abs(v_difference), v_audited_balance, p_user, 'Audit Adjustment', p_audit_date,
+        case when v_balance_delta > 0 then 'INWARD' else 'OUTWARD' end,
+        abs(v_balance_delta), v_audited_balance, p_user, 'Audit Adjustment', p_audit_date,
         false, p_user, p_user, v_now, v_now,
         jsonb_build_object(
           'reelId', v_reel_id,
           'reelNumber', v_item ->> 'reelNumber',
-          'type', case when v_difference > 0 then 'INWARD' else 'OUTWARD' end,
-          'quantity', abs(v_difference),
+          'type', case when v_balance_delta > 0 then 'INWARD' else 'OUTWARD' end,
+          'quantity', abs(v_balance_delta),
           'remainingBalance', v_audited_balance,
           'performedBy', p_user,
           'date', p_audit_date,
@@ -113,7 +142,17 @@ begin
     end if;
   end loop;
 
-  update public.reel_audits set total_difference = v_total_difference where id = v_audit_id;
+  select coalesce(sum(difference), 0), 
+         coalesce(sum(case when difference > 0 then difference else 0 end), 0),
+         coalesce(sum(case when difference < 0 then abs(difference) else 0 end), 0)
+  into v_total_difference, v_total_in, v_total_out
+  from public.reel_audit_items where audit_id = v_audit_id;
+
+  update public.reel_audits set 
+    total_difference = v_total_difference,
+    total_in = v_total_in,
+    total_out = v_total_out
+  where id = v_audit_id;
 
   return true;
 end;
@@ -235,3 +274,14 @@ end;
 $$;
 
 grant execute on function public.update_reel_audit_item(uuid, numeric, numeric, numeric, numeric, text) to anon, authenticated;
+
+create or replace function public.delete_reel_audit(p_audit_id uuid) returns boolean
+language plpgsql
+security definer
+as $$
+begin
+  delete from public.reel_audits where id = p_audit_id;
+  return true;
+end;
+$$;
+grant execute on function public.delete_reel_audit(uuid) to anon, authenticated;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, ChevronRight, ArrowLeft, Edit2, Save, XCircle } from 'lucide-react';
-import { type ReelAudit, type ReelAuditItem, getReelAudits, getReelAuditItems, updateReelAuditItem } from '../../lib/supabase/reelAuditService';
+import { X, Calendar, ChevronRight, ArrowLeft, Edit2, Save, XCircle, Trash2 } from 'lucide-react';
+import { type ReelAudit, type ReelAuditItem, getReelAudits, getReelAuditItems, updateReelAuditItem, deleteReelAudit } from '../../lib/supabase/reelAuditService';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface ReelAuditHistoryModalProps {
@@ -105,6 +105,23 @@ export default function ReelAuditHistoryModal({ isOpen, onClose }: ReelAuditHist
     }
   };
 
+  const handleDeleteAudit = async (e: React.MouseEvent, auditId: string) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this audit? This will remove all audit history for this date, but will NOT revert the reel weights.')) {
+      return;
+    }
+    try {
+      setIsLoading(true);
+      await deleteReelAudit(auditId);
+      await loadAudits();
+    } catch (err) {
+      console.error('Failed to delete audit', err);
+      alert('Failed to delete audit.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -152,6 +169,18 @@ export default function ReelAuditHistoryModal({ isOpen, onClose }: ReelAuditHist
                   <span className="text-xs uppercase text-muted-foreground font-semibold">Total Audited Balance</span>
                   <span className="text-lg font-bold text-foreground">
                     {auditItems.reduce((sum, i) => sum + (Number(i.audited_balance) || 0), 0)} kg
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Total IN</span>
+                  <span className="text-lg font-bold text-blue-600">
+                    {selectedAudit.total_in || 0} kg
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Total OUT</span>
+                  <span className="text-lg font-bold text-orange-600">
+                    {selectedAudit.total_out || 0} kg
                   </span>
                 </div>
                 <div className="flex flex-col">
@@ -307,12 +336,25 @@ export default function ReelAuditHistoryModal({ isOpen, onClose }: ReelAuditHist
                         <div>
                           <div className="font-bold text-foreground">{audit.audit_date}</div>
                           <div className="text-xs text-muted-foreground mt-1 font-medium">By {audit.created_by}</div>
-                          <div className={`text-sm font-bold mt-1 ${(audit.total_difference || 0) > 0 ? 'text-green-600' : (audit.total_difference || 0) < 0 ? 'text-red-600' : 'text-foreground'}`}>
-                            Diff: {(audit.total_difference || 0) > 0 ? '+' : ''}{audit.total_difference || 0} kg
+                          <div className="flex gap-4 mt-2">
+                            <div className="text-xs font-bold text-blue-600">IN: {audit.total_in || 0} kg</div>
+                            <div className="text-xs font-bold text-orange-600">OUT: {audit.total_out || 0} kg</div>
+                            <div className={`text-xs font-bold ${(audit.total_difference || 0) > 0 ? 'text-green-600' : (audit.total_difference || 0) < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                              Net: {(audit.total_difference || 0) > 0 ? '+' : ''}{audit.total_difference || 0} kg
+                            </div>
                           </div>
                         </div>
                       </div>
-                      <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={(e) => handleDeleteAudit(e, audit.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 hover:text-red-700 rounded-full transition-colors group-hover:opacity-100 opacity-50"
+                          title="Delete Audit"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                      </div>
                     </div>
                   ))}
                 </div>

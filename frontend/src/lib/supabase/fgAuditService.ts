@@ -7,6 +7,8 @@ export interface FgAudit {
   created_by: string;
   total_qty_difference: number;
   total_value_difference: number;
+  total_qty_in: number;
+  total_qty_out: number;
   created_at: string;
 }
 
@@ -111,6 +113,19 @@ export const updateFgAuditItem = async (
     referenceId: itemId,
     details: `Updated audit item ${itemId} to regular: ${auditedRegular}, non-moving: ${auditedNonMoving}`,
   });
+
+  return true;
+};
+
+export const deleteFgAudit = async (auditId: string): Promise<boolean> => {
+  const { data, error } = await supabase.rpc('delete_fg_audit', {
+    p_audit_id: auditId,
+  });
+
+  if (error) {
+    console.error('Error deleting fg audit:', error);
+    throw error;
+  }
 
   return true;
 };

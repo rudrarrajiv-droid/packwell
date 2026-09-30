@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, ChevronRight, ArrowLeft, Edit2, Save, XCircle } from 'lucide-react';
-import { type FgAudit, type FgAuditItem, getFgAudits, getFgAuditItems, updateFgAuditItem } from '../../lib/supabase/fgAuditService';
+import { X, Calendar, ChevronRight, ArrowLeft, Edit2, Save, XCircle, Trash2 } from 'lucide-react';
+import { type FgAudit, type FgAuditItem, getFgAudits, getFgAuditItems, updateFgAuditItem, deleteFgAudit } from '../../lib/supabase/fgAuditService';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface FgAuditHistoryModalProps {
@@ -93,6 +93,23 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
     }
   };
 
+  const handleDeleteAudit = async (e: React.MouseEvent, auditId: string) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this FG audit? This will remove all audit history for this date, but will NOT revert the FG balances.')) {
+      return;
+    }
+    try {
+      setIsLoading(true);
+      await deleteFgAudit(auditId);
+      await loadAudits();
+    } catch (err) {
+      console.error('Failed to delete FG audit', err);
+      alert('Failed to delete FG audit.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -140,6 +157,18 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                   <span className="text-xs uppercase text-muted-foreground font-semibold">Total Audited Balance</span>
                   <span className="text-lg font-bold text-foreground">
                     {auditItems.reduce((sum, i) => sum + (Number(i.audited_regular_balance) || 0) + (Number(i.audited_non_moving_balance) || 0), 0)}
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Total IN</span>
+                  <span className="text-lg font-bold text-blue-600">
+                    {selectedAudit.total_qty_in || 0}
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Total OUT</span>
+                  <span className="text-lg font-bold text-orange-600">
+                    {selectedAudit.total_qty_out || 0}
                   </span>
                 </div>
                 <div className="flex flex-col">
@@ -296,8 +325,10 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                           <div className="font-bold text-foreground">{audit.audit_date}</div>
                           <div className="text-xs text-muted-foreground mt-1 font-medium">By {audit.created_by}</div>
                           <div className="flex gap-3 mt-1">
+                            <span className="text-xs font-bold text-blue-600">IN: {audit.total_qty_in || 0}</span>
+                            <span className="text-xs font-bold text-orange-600">OUT: {audit.total_qty_out || 0}</span>
                             <span className={`text-xs font-bold ${(audit.total_qty_difference || 0) > 0 ? 'text-green-600' : (audit.total_qty_difference || 0) < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
-                              Qty: {(audit.total_qty_difference || 0) > 0 ? '+' : ''}{audit.total_qty_difference || 0}
+                              Net Qty: {(audit.total_qty_difference || 0) > 0 ? '+' : ''}{audit.total_qty_difference || 0}
                             </span>
                             <span className={`text-xs font-bold ${(audit.total_value_difference || 0) > 0 ? 'text-green-600' : (audit.total_value_difference || 0) < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
                               Val: {(audit.total_value_difference || 0) > 0 ? '+₹' : (audit.total_value_difference || 0) < 0 ? '-₹' : '₹'}{Math.abs(audit.total_value_difference || 0).toFixed(2)}
@@ -305,7 +336,16 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                           </div>
                         </div>
                       </div>
-                      <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={(e) => handleDeleteAudit(e, audit.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 hover:text-red-700 rounded-full transition-colors group-hover:opacity-100 opacity-50"
+                          title="Delete Audit"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                      </div>
                     </div>
                   ))}
                 </div>
