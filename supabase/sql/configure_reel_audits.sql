@@ -279,8 +279,41 @@ create or replace function public.delete_reel_audit(p_audit_id uuid) returns boo
 language plpgsql
 security definer
 as $$
+declare
+  v_audit_date text;
+  v_item record;
+  v_weight_delta numeric;
+  v_balance_delta numeric;
 begin
+  -- Get audit date
+  select audit_date into v_audit_date from public.reel_audits where id = p_audit_id;
+  if v_audit_date is null then
+    return false;
+  end if;
+
+  -- Revert reels balance for each item in the audit
+  for v_item in select * from public.reel_audit_items where audit_id = p_audit_id loop
+    v_weight_delta := coalesce(v_item.audited_weight, 0) - coalesce(v_item.system_weight, 0);
+    v_balance_delta := coalesce(v_item.difference, 0);
+
+    if v_weight_delta <> 0 or v_balance_delta <> 0 then
+      update public.reels
+      set weight = coalesce(weight, 0) - v_weight_delta,
+          current_balance = coalesce(current_balance, 0) - v_balance_delta,
+          updated_at = now()
+      where firestore_document_id = v_item.reel_id;
+    end if;
+
+    -- Delete related transactions
+    delete from public.reel_transactions
+    where reel_id = v_item.reel_id
+      and transaction_date = v_audit_date
+      and notes in ('Audit Adjustment', 'Audit Correction');
+  end loop;
+
+  -- Finally delete the audit (cascades to items)
   delete from public.reel_audits where id = p_audit_id;
+  
   return true;
 end;
 $$;

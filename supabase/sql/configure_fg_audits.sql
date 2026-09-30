@@ -340,8 +340,41 @@ create or replace function public.delete_fg_audit(p_audit_id uuid) returns boole
 language plpgsql
 security definer
 as $$
+declare
+  v_audit_date text;
+  v_item record;
+  v_reg_delta numeric;
+  v_nm_delta numeric;
 begin
+  -- Get audit date
+  select audit_date into v_audit_date from public.fg_audits where id = p_audit_id;
+  if v_audit_date is null then
+    return false;
+  end if;
+
+  -- Revert FG balances for each item in the audit
+  for v_item in select * from public.fg_audit_items where audit_id = p_audit_id loop
+    v_reg_delta := coalesce(v_item.regular_difference, 0);
+    v_nm_delta := coalesce(v_item.non_moving_difference, 0);
+
+    if v_reg_delta <> 0 or v_nm_delta <> 0 then
+      update public.finish_goods
+      set closing_balance = coalesce(closing_balance, 0) - v_reg_delta,
+          non_moving_balance = coalesce(non_moving_balance, 0) - v_nm_delta,
+          updated_at = now()
+      where firestore_document_id = v_item.finish_good_id;
+    end if;
+
+    -- Delete related transactions
+    delete from public.finish_good_transactions
+    where finish_good_id = v_item.finish_good_id
+      and transaction_date = v_audit_date
+      and reference_no in ('Audit Adj (Reg)', 'Audit Adj (NM)', 'Audit Correction (Reg)', 'Audit Correction (NM)');
+  end loop;
+
+  -- Finally delete the audit (cascades to items)
   delete from public.fg_audits where id = p_audit_id;
+  
   return true;
 end;
 $$;
