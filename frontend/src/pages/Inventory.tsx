@@ -12,6 +12,9 @@ import ExportButtons from '../components/ExportButtons';
 import JobFinderTab from './inventory/JobFinderTab';
 import ReverseCalculatorTab from './inventory/ReverseCalculatorTab';
 import PrintableReelAudit from './inventory/PrintableReelAudit';
+import ReelAuditModal from './inventory/ReelAuditModal';
+import ReelAuditHistoryModal from './inventory/ReelAuditHistoryModal';
+import { ClipboardCheck } from 'lucide-react';
 
 export default function Inventory() {
   const { user, hasRole } = useAuth();
@@ -21,6 +24,8 @@ export default function Inventory() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historySelectedReel, setHistorySelectedReel] = useState<Reel | null>(null);
   const [editingReel, setEditingReel] = useState<Reel | null>(null);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [isAuditHistoryOpen, setIsAuditHistoryOpen] = useState(false);
 
   const handleViewHistory = (reel: Reel) => {
     setHistorySelectedReel(reel);
@@ -416,6 +421,22 @@ export default function Inventory() {
           >
             <History className="w-4 h-4 mr-2 text-primary" />
             Reel History
+          </button>
+          
+          <button 
+            onClick={() => setIsAuditHistoryOpen(true)}
+            className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-secondary/80 transition-colors"
+          >
+            <History className="w-4 h-4 mr-2 text-purple-600" />
+            Audit History
+          </button>
+
+          <button 
+            onClick={() => setIsAuditModalOpen(true)}
+            className="bg-purple-600 text-white px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-purple-700 transition-colors"
+          >
+            <ClipboardCheck className="w-4 h-4 mr-2" />
+            Audit Inventory
           </button>
           
           <button 
@@ -959,6 +980,17 @@ export default function Inventory() {
           }}
         />
       )}
+
+      <ReelAuditModal
+        isOpen={isAuditModalOpen}
+        onClose={() => setIsAuditModalOpen(false)}
+        onSuccess={() => { refetch(); refetchTx(); }}
+      />
+
+      <ReelAuditHistoryModal
+        isOpen={isAuditHistoryOpen}
+        onClose={() => setIsAuditHistoryOpen(false)}
+      />
 
       {showBulkEditModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">

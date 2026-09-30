@@ -12,6 +12,8 @@ import CustomerLedgerTab from './finish-goods/CustomerLedgerTab';
 import FinishGoodAdjustmentModal from './finish-goods/FinishGoodAdjustmentModal';
 import { getFinishGoods, getFinishGoodTransactions } from '../lib/supabase/finishGoodService';
 import PrintableFGAudit from './finish-goods/PrintableFGAudit';
+import FgAuditModal from './inventory/FgAuditModal';
+import FgAuditHistoryModal from './inventory/FgAuditHistoryModal';
 
 export default function FinishGoods() {
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'EMPTY' | 'REPORT' | 'CUSTOMER_LEDGER'>('ACTIVE');
@@ -24,6 +26,8 @@ export default function FinishGoods() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [isAdjustmentOpen, setIsAdjustmentOpen] = useState(false);
+  const [isAuditOpen, setIsAuditOpen] = useState(false);
+  const [isAuditHistoryOpen, setIsAuditHistoryOpen] = useState(false);
   const [adjustmentItem, setAdjustmentItem] = useState<any>(null);
   const [selectedFinishGood, setSelectedFinishGood] = useState<any>(null);
   const [itemToFix, setItemToFix] = useState<any>(null);
@@ -265,6 +269,23 @@ export default function FinishGoods() {
             <Printer className="w-4 h-4 mr-2 text-primary" />
             Print Audit
           </button>
+          
+          <button 
+            onClick={() => setIsAuditOpen(true)}
+            className="bg-purple-600 text-white px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-purple-700 transition-colors"
+          >
+            <FileText className="w-4 h-4 mr-2" />
+            FG Audit
+          </button>
+          
+          <button 
+            onClick={() => setIsAuditHistoryOpen(true)}
+            className="bg-purple-100 text-purple-700 border border-purple-200 px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-purple-200 transition-colors"
+          >
+            <History className="w-4 h-4 mr-2" />
+            Audit History
+          </button>
+
           {activeTab !== 'REPORT' && (
             <ExportButtons 
               data={exportData} 
@@ -514,6 +535,21 @@ export default function FinishGoods() {
       
     </div>
     <PrintableFGAudit finishGoods={fgList} />
+
+    <FgAuditModal 
+      isOpen={isAuditOpen} 
+      onClose={() => setIsAuditOpen(false)} 
+      onSuccess={() => {
+        refetch();
+        queryClient.invalidateQueries({ queryKey: ['finishGoods'] });
+        queryClient.invalidateQueries({ queryKey: ['finishGoodTransactions'] });
+      }} 
+    />
+    
+    <FgAuditHistoryModal 
+      isOpen={isAuditHistoryOpen} 
+      onClose={() => setIsAuditHistoryOpen(false)} 
+    />
     </>
   );
 }
