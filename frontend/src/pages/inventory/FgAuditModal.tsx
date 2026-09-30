@@ -179,6 +179,18 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
 
   if (!isOpen) return null;
 
+  const totalQtyDiff = auditRows.reduce((sum, row) => {
+    const regDiff = (Number(row.audRegBal) || 0) - (Number(row.sysRegBal) || 0);
+    const nmDiff = (Number(row.audNmBal) || 0) - (Number(row.sysNmBal) || 0);
+    return sum + regDiff + nmDiff;
+  }, 0);
+
+  const totalValueDiff = auditRows.reduce((sum, row) => {
+    const regDiff = (Number(row.audRegBal) || 0) - (Number(row.sysRegBal) || 0);
+    const nmDiff = (Number(row.audNmBal) || 0) - (Number(row.sysNmBal) || 0);
+    return sum + ((regDiff + nmDiff) * (Number(row.rate) || 0));
+  }, 0);
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-background rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden border border-border">
@@ -358,22 +370,39 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-border bg-secondary/30 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-secondary transition-colors"
-            disabled={isSubmitting}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={auditRows.length === 0 || isSubmitting}
-            className="px-6 py-2 text-sm font-medium rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm"
-          >
-            <ClipboardCheck className="w-4 h-4" />
-            {isSubmitting ? 'Saving...' : 'Save Audit'}
-          </button>
+        <div className="px-6 py-4 border-t border-border bg-secondary/30 flex justify-between items-center">
+          <div className="flex gap-6 text-sm">
+            <div className="flex flex-col">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total Qty Diff</span>
+              <span className={`font-bold ${totalQtyDiff > 0 ? 'text-green-600' : totalQtyDiff < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                {totalQtyDiff > 0 ? '+' : ''}{totalQtyDiff}
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total Value Diff</span>
+              <span className={`font-bold ${totalValueDiff > 0 ? 'text-green-600' : totalValueDiff < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                {totalValueDiff > 0 ? '+₹' : totalValueDiff < 0 ? '-₹' : '₹'}{Math.abs(totalValueDiff).toFixed(2)}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-secondary transition-colors"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={auditRows.length === 0 || isSubmitting}
+              className="px-6 py-2 text-sm font-medium rounded-md bg-purple-600 text-white hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm"
+            >
+              <ClipboardCheck className="w-4 h-4" />
+              {isSubmitting ? 'Saving...' : 'Save Audit'}
+            </button>
+          </div>
         </div>
 
       </div>

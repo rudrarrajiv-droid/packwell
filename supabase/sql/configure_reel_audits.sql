@@ -2,6 +2,7 @@ create table if not exists public.reel_audits (
   id uuid primary key default gen_random_uuid(),
   audit_date text not null,
   created_by text,
+  total_difference numeric default 0,
   created_at timestamptz not null default now()
 );
 
@@ -39,6 +40,7 @@ declare
   v_system_weight numeric;
   v_system_balance numeric;
   v_difference numeric;
+  v_total_difference numeric := 0;
   v_transaction_id text;
 begin
   -- Insert into reel_audits
@@ -52,6 +54,7 @@ begin
     v_system_weight := coalesce((v_item ->> 'systemWeight')::numeric, 0);
     v_system_balance := coalesce((v_item ->> 'systemBalance')::numeric, 0);
     v_difference := v_audited_balance - v_system_balance;
+    v_total_difference := v_total_difference + v_difference;
     
     insert into public.reel_audit_items (
       audit_id, reel_id, reel_number, system_weight, system_balance,
@@ -109,6 +112,8 @@ begin
       );
     end if;
   end loop;
+
+  update public.reel_audits set total_difference = v_total_difference where id = v_audit_id;
 
   return true;
 end;
@@ -177,6 +182,10 @@ begin
       audited_balance = p_audited_balance,
       difference = v_new_difference
   where id = p_item_id;
+
+  update public.reel_audits
+  set total_difference = coalesce(total_difference, 0) + (v_new_difference - coalesce(v_item.difference, 0))
+  where id = v_item.audit_id;
 
   update public.reels
   set weight = weight + v_weight_delta,

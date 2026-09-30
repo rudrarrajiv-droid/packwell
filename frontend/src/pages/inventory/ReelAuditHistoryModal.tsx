@@ -146,6 +146,22 @@ export default function ReelAuditHistoryModal({ isOpen, onClose }: ReelAuditHist
             <div className="p-12 text-center text-muted-foreground font-medium">Loading...</div>
           ) : selectedAudit ? (
             <div className="p-6">
+              {/* Summary Header */}
+              <div className="mb-4 bg-background p-4 rounded-lg border border-border shadow-sm flex items-center gap-8">
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Total Audited Balance</span>
+                  <span className="text-lg font-bold text-foreground">
+                    {auditItems.reduce((sum, i) => sum + (Number(i.audited_balance) || 0), 0)} kg
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Net Difference</span>
+                  <span className={`text-lg font-bold ${selectedAudit.total_difference > 0 ? 'text-green-600' : selectedAudit.total_difference < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                    {selectedAudit.total_difference > 0 ? '+' : ''}{selectedAudit.total_difference || 0} kg
+                  </span>
+                </div>
+              </div>
+
               <div className="bg-background rounded-lg border border-border overflow-hidden shadow-sm">
                 <table className="w-full text-sm text-left">
                   <thead className="text-xs uppercase bg-secondary/50 text-muted-foreground border-b border-border">
@@ -291,6 +307,9 @@ export default function ReelAuditHistoryModal({ isOpen, onClose }: ReelAuditHist
                         <div>
                           <div className="font-bold text-foreground">{audit.audit_date}</div>
                           <div className="text-xs text-muted-foreground mt-1 font-medium">By {audit.created_by}</div>
+                          <div className={`text-sm font-bold mt-1 ${(audit.total_difference || 0) > 0 ? 'text-green-600' : (audit.total_difference || 0) < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                            Diff: {(audit.total_difference || 0) > 0 ? '+' : ''}{audit.total_difference || 0} kg
+                          </div>
                         </div>
                       </div>
                       <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />

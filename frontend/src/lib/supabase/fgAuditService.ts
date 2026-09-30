@@ -5,6 +5,8 @@ export interface FgAudit {
   id: string;
   audit_date: string;
   created_by: string;
+  total_qty_difference: number;
+  total_value_difference: number;
   created_at: string;
 }
 

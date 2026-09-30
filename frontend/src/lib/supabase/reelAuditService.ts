@@ -16,6 +16,7 @@ export interface ReelAudit {
   id: string;
   audit_date: string;
   created_by: string;
+  total_difference: number;
   created_at: string;
 }
 

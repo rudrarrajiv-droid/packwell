@@ -157,7 +157,9 @@ export default function ReelAuditModal({ isOpen, onClose, onSuccess }: ReelAudit
     }
   };
 
-  if (!isOpen) return null;
+  const totalIn = auditRows.reduce((sum, row) => sum + (Number(row.auditedIn) || 0), 0);
+  const totalOut = auditRows.reduce((sum, row) => sum + (Number(row.auditedOut) || 0), 0);
+  const netDifference = auditRows.reduce((sum, row) => sum + ((Number(row.auditedBalance) || 0) - (Number(row.reel.currentBalance) || 0)), 0);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -342,28 +344,47 @@ export default function ReelAuditModal({ isOpen, onClose, onSuccess }: ReelAudit
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-border bg-secondary/30 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-foreground bg-background border border-input hover:bg-muted rounded-lg transition-colors"
-            disabled={isSubmitting}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={isSubmitting || auditRows.length === 0}
-            className="px-6 py-2 text-sm font-bold text-white bg-primary hover:bg-primary/90 rounded-lg shadow-md transition-colors disabled:opacity-50 flex items-center"
-          >
-            {isSubmitting ? (
-              'Saving...'
-            ) : (
-              <>
-                <Save className="w-4 h-4 mr-2" />
-                Save Audit
-              </>
-            )}
-          </button>
+        <div className="px-6 py-4 border-t border-border bg-secondary/30 flex justify-between items-center">
+          <div className="flex gap-6 text-sm">
+            <div className="flex flex-col">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total IN</span>
+              <span className="font-bold text-blue-600">{totalIn} kg</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total OUT</span>
+              <span className="font-bold text-orange-600">{totalOut} kg</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Net Difference</span>
+              <span className={`font-bold ${netDifference > 0 ? 'text-green-600' : netDifference < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                {netDifference > 0 ? '+' : ''}{netDifference} kg
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-foreground bg-background border border-input hover:bg-muted rounded-lg transition-colors"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={isSubmitting || auditRows.length === 0}
+              className="px-6 py-2 text-sm font-bold text-white bg-primary hover:bg-primary/90 rounded-lg shadow-md transition-colors disabled:opacity-50 flex items-center"
+            >
+              {isSubmitting ? (
+                'Saving...'
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Save Audit
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
       </div>

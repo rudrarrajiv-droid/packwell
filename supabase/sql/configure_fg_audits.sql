@@ -2,6 +2,8 @@ create table if not exists public.fg_audits (
   id uuid primary key default gen_random_uuid(),
   audit_date text not null,
   created_by text,
+  total_qty_difference numeric default 0,
+  total_value_difference numeric default 0,
   created_at timestamptz not null default now()
 );
 
@@ -59,6 +61,9 @@ declare
   v_transaction_id text;
   v_reg_diff numeric;
   v_nm_diff numeric;
+  v_total_qty_diff numeric := 0;
+  v_total_value_diff numeric := 0;
+  v_rate numeric;
   v_fg_record public.finish_goods%rowtype;
 begin
   insert into public.fg_audits (audit_date, created_by, created_at)
@@ -70,6 +75,10 @@ begin
     v_fg_id := v_item->>'fgId';
     v_reg_diff := (v_item->>'audRegBal')::numeric - coalesce((v_item->>'sysRegBal')::numeric, 0);
     v_nm_diff := (v_item->>'audNmBal')::numeric - coalesce((v_item->>'sysNmBal')::numeric, 0);
+    v_rate := (v_item->>'rate')::numeric;
+
+    v_total_qty_diff := v_total_qty_diff + v_reg_diff + v_nm_diff;
+    v_total_value_diff := v_total_value_diff + ((v_reg_diff + v_nm_diff) * coalesce(v_rate, 0));
 
     if v_fg_id is null or v_fg_id = '' then
       v_fg_id := gen_random_uuid()::text;
@@ -167,6 +176,11 @@ begin
     end if;
   end loop;
 
+  update public.fg_audits
+  set total_qty_difference = v_total_qty_diff,
+      total_value_difference = v_total_value_diff
+  where id = v_audit_id;
+
   return v_audit_id;
 end;
 $$;
@@ -189,6 +203,8 @@ declare
   v_reg_delta numeric;
   v_nm_delta numeric;
   v_transaction_id text;
+  v_qty_delta numeric;
+  v_value_delta numeric;
 begin
   select * into v_item from public.fg_audit_items where id = p_item_id for update;
   if not found then
@@ -202,6 +218,8 @@ begin
 
   v_reg_delta := p_audited_regular - coalesce(v_item.audited_regular_balance, 0);
   v_nm_delta := p_audited_non_moving - coalesce(v_item.audited_non_moving_balance, 0);
+  v_qty_delta := v_reg_delta + v_nm_delta;
+  v_value_delta := v_qty_delta * coalesce(v_item.rate, 0);
 
   update public.fg_audit_items
   set audited_regular_balance = p_audited_regular,
@@ -209,6 +227,11 @@ begin
       regular_difference = p_audited_regular - system_regular_balance,
       non_moving_difference = p_audited_non_moving - system_non_moving_balance
   where id = p_item_id;
+
+  update public.fg_audits
+  set total_qty_difference = coalesce(total_qty_difference, 0) + v_qty_delta,
+      total_value_difference = coalesce(total_value_difference, 0) + v_value_delta
+  where id = v_item.audit_id;
 
   update public.finish_goods
   set closing_balance = coalesce(closing_balance, 0) + v_reg_delta,

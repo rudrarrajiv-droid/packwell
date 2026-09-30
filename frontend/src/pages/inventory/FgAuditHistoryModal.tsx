@@ -134,6 +134,28 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
             <div className="p-12 text-center text-muted-foreground font-medium">Loading...</div>
           ) : selectedAudit ? (
             <div className="p-6">
+              {/* Summary Header */}
+              <div className="mb-4 bg-background p-4 rounded-lg border border-border shadow-sm flex items-center gap-8">
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Total Audited Balance</span>
+                  <span className="text-lg font-bold text-foreground">
+                    {auditItems.reduce((sum, i) => sum + (Number(i.audited_regular_balance) || 0) + (Number(i.audited_non_moving_balance) || 0), 0)}
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Qty Difference</span>
+                  <span className={`text-lg font-bold ${selectedAudit.total_qty_difference > 0 ? 'text-green-600' : selectedAudit.total_qty_difference < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                    {selectedAudit.total_qty_difference > 0 ? '+' : ''}{selectedAudit.total_qty_difference || 0}
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-xs uppercase text-muted-foreground font-semibold">Value Difference</span>
+                  <span className={`text-lg font-bold ${selectedAudit.total_value_difference > 0 ? 'text-green-600' : selectedAudit.total_value_difference < 0 ? 'text-red-600' : 'text-foreground'}`}>
+                    {selectedAudit.total_value_difference > 0 ? '+₹' : selectedAudit.total_value_difference < 0 ? '-₹' : '₹'}{Math.abs(selectedAudit.total_value_difference || 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
               <div className="bg-background rounded-lg border border-border overflow-hidden shadow-sm">
                 <table className="w-full text-sm text-left">
                   <thead className="text-xs uppercase bg-secondary/50 text-muted-foreground border-b border-border">
@@ -273,6 +295,14 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                         <div>
                           <div className="font-bold text-foreground">{audit.audit_date}</div>
                           <div className="text-xs text-muted-foreground mt-1 font-medium">By {audit.created_by}</div>
+                          <div className="flex gap-3 mt-1">
+                            <span className={`text-xs font-bold ${(audit.total_qty_difference || 0) > 0 ? 'text-green-600' : (audit.total_qty_difference || 0) < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+                              Qty: {(audit.total_qty_difference || 0) > 0 ? '+' : ''}{audit.total_qty_difference || 0}
+                            </span>
+                            <span className={`text-xs font-bold ${(audit.total_value_difference || 0) > 0 ? 'text-green-600' : (audit.total_value_difference || 0) < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+                              Val: {(audit.total_value_difference || 0) > 0 ? '+₹' : (audit.total_value_difference || 0) < 0 ? '-₹' : '₹'}{Math.abs(audit.total_value_difference || 0).toFixed(2)}
+                            </span>
+                          </div>
                         </div>
                       </div>
                       <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
