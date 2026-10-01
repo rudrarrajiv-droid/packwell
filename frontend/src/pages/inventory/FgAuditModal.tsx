@@ -14,9 +14,9 @@ interface FgAuditModalProps {
 
 interface CombinedFgItem {
   fgId?: string;
-  productId: string;
+  productId: string | null;
   productName: string;
-  customerId: string;
+  customerId: string | null;
   customerName: string;
   sysRegBal: number;
   sysNmBal: number;
