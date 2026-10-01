@@ -4,10 +4,19 @@ create table if not exists public.fg_audits (
   created_by text,
   total_qty_difference numeric default 0,
   total_value_difference numeric default 0,
-  total_qty_in numeric default 0,
-  total_qty_out numeric default 0,
   created_at timestamptz not null default now()
 );
+
+-- Safely add new columns if they don't exist
+alter table public.fg_audits add column if not exists total_qty_difference numeric default 0;
+alter table public.fg_audits add column if not exists total_value_difference numeric default 0;
+alter table public.fg_audits add column if not exists total_qty_in numeric default 0;
+alter table public.fg_audits add column if not exists total_qty_out numeric default 0;
+
+-- Safely add any new columns to items as well
+alter table public.fg_audit_items add column if not exists regular_difference numeric default 0;
+alter table public.fg_audit_items add column if not exists non_moving_difference numeric default 0;
+alter table public.fg_audit_items add column if not exists rate numeric default 0;
 
 create table if not exists public.fg_audit_items (
   id uuid primary key default gen_random_uuid(),
@@ -266,10 +275,23 @@ begin
       non_moving_difference = p_audited_non_moving - system_non_moving_balance
   where id = p_item_id;
 
-  update public.fg_audits
-  set total_qty_difference = coalesce(total_qty_difference, 0) + v_qty_delta,
-      total_value_difference = coalesce(total_value_difference, 0) + v_value_delta
-  where id = v_item.audit_id;
+  -- Re-calculate IN/OUT totals
+  declare
+    v_total_qty_in numeric;
+    v_total_qty_out numeric;
+  begin
+    select coalesce(sum(case when (regular_difference + non_moving_difference) > 0 then (regular_difference + non_moving_difference) else 0 end), 0),
+           coalesce(sum(case when (regular_difference + non_moving_difference) < 0 then abs(regular_difference + non_moving_difference) else 0 end), 0)
+    into v_total_qty_in, v_total_qty_out
+    from public.fg_audit_items where audit_id = v_item.audit_id;
+
+    update public.fg_audits
+    set total_qty_difference = coalesce(total_qty_difference, 0) + v_qty_delta,
+        total_value_difference = coalesce(total_value_difference, 0) + v_value_delta,
+        total_qty_in = v_total_qty_in,
+        total_qty_out = v_total_qty_out
+    where id = v_item.audit_id;
+  end;
 
   update public.finish_goods
   set closing_balance = coalesce(closing_balance, 0) + v_reg_delta,

@@ -191,18 +191,20 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                     <tr>
                       <th className="px-4 py-3 font-medium">Item Name</th>
                       <th className="px-4 py-3 font-medium text-blue-600 bg-blue-50/50" colSpan={2}>Regular Bal</th>
-                      <th className="px-4 py-3 font-medium text-center">Reg Diff</th>
                       <th className="px-4 py-3 font-medium text-orange-600 bg-orange-50/50" colSpan={2}>Non-Moving Bal</th>
-                      <th className="px-4 py-3 font-medium text-center">NM Diff</th>
+                      <th className="px-4 py-3 font-medium text-green-600 bg-green-50/50 text-center">Qty IN</th>
+                      <th className="px-4 py-3 font-medium text-red-600 bg-red-50/50 text-center">Qty OUT</th>
+                      <th className="px-4 py-3 font-medium text-center">Net Diff</th>
                       <th className="px-4 py-3 font-medium text-center">Action</th>
                     </tr>
                     <tr className="border-t border-border/50 text-[10px]">
                       <th className="px-4 py-1"></th>
                       <th className="px-4 py-1 bg-blue-50/50">System</th>
                       <th className="px-4 py-1 bg-blue-50/50">Audited</th>
-                      <th className="px-4 py-1"></th>
                       <th className="px-4 py-1 bg-orange-50/50">System</th>
                       <th className="px-4 py-1 bg-orange-50/50">Audited</th>
+                      <th className="px-4 py-1"></th>
+                      <th className="px-4 py-1"></th>
                       <th className="px-4 py-1"></th>
                       <th className="px-4 py-1"></th>
                     </tr>
@@ -210,6 +212,13 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                   <tbody className="divide-y divide-border">
                     {auditItems.map((item: FgAuditItem) => {
                       const isEditing = editingItemId === item.id;
+                      
+                      const regDiff = item.regular_difference || 0;
+                      const nmDiff = item.non_moving_difference || 0;
+                      const totalDiff = regDiff + nmDiff;
+                      const qtyIn = totalDiff > 0 ? totalDiff : 0;
+                      const qtyOut = totalDiff < 0 ? Math.abs(totalDiff) : 0;
+                      
                       
                       return (
                         <tr key={item.id} className={`transition-colors ${isEditing ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
@@ -229,16 +238,6 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                             )}
                           </td>
                           
-                          <td className="px-4 py-3 text-center font-bold">
-                            {item.regular_difference !== 0 ? (
-                              <span className={item.regular_difference > 0 ? 'text-green-600' : 'text-red-600'}>
-                                {item.regular_difference > 0 ? '+' : ''}{item.regular_difference}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                          
                           <td className="px-4 py-3 text-muted-foreground">{item.system_non_moving_balance}</td>
                           <td className={`px-4 py-3 font-bold ${item.audited_non_moving_balance !== item.system_non_moving_balance && !isEditing ? 'text-orange-600 bg-orange-50/30' : ''}`}>
                             {isEditing ? (
@@ -253,10 +252,18 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                             )}
                           </td>
                           
+                          <td className="px-4 py-3 text-center font-bold text-green-600">
+                            {qtyIn > 0 ? `+${qtyIn}` : '-'}
+                          </td>
+                          
+                          <td className="px-4 py-3 text-center font-bold text-red-600">
+                            {qtyOut > 0 ? `-${qtyOut}` : '-'}
+                          </td>
+
                           <td className="px-4 py-3 text-center font-bold">
-                            {item.non_moving_difference !== 0 ? (
-                              <span className={item.non_moving_difference > 0 ? 'text-green-600' : 'text-red-600'}>
-                                {item.non_moving_difference > 0 ? '+' : ''}{item.non_moving_difference}
+                            {totalDiff !== 0 ? (
+                              <span className={totalDiff > 0 ? 'text-green-600' : 'text-red-600'}>
+                                {totalDiff > 0 ? '+' : ''}{totalDiff}
                               </span>
                             ) : (
                               <span className="text-muted-foreground">-</span>
@@ -298,7 +305,7 @@ export default function FgAuditHistoryModal({ isOpen, onClose }: FgAuditHistoryM
                     })}
                     {auditItems.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-6 py-8 text-center text-muted-foreground">
+                        <td colSpan={9} className="px-6 py-8 text-center text-muted-foreground">
                           No items found in this audit.
                         </td>
                       </tr>

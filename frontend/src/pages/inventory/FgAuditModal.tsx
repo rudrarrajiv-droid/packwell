@@ -118,6 +118,12 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
   }).slice(0, 8); // limit suggestions
 
   const addRow = (item: CombinedFgItem) => {
+    // Check if item already exists in the list
+    if (auditRows.some(row => row.productId === item.productId)) {
+      setSearchTerm('');
+      setShowSuggestions(false);
+      return;
+    }
     setAuditRows(prev => [{
       ...item,
       audRegBal: item.sysRegBal,
@@ -127,6 +133,59 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
     setSearchTerm('');
     setShowSuggestions(false);
   };
+
+  const [isInitialized, setIsInitialized] = useState(false);
+  useEffect(() => {
+    if (isOpen && fgs.length > 0 && !isInitialized) {
+      const sortedFgs = [...fgs].sort((a: any, b: any) => {
+        const aReg = Number(a.closingBalance) || 0;
+        const bReg = Number(b.closingBalance) || 0;
+        const aNon = Number(a.nonMovingBalance) || 0;
+        const bNon = Number(b.nonMovingBalance) || 0;
+
+        const aHasReg = aReg > 0;
+        const bHasReg = bReg > 0;
+
+        if (aHasReg && !bHasReg) return -1;
+        if (!aHasReg && bHasReg) return 1;
+
+        if (!aHasReg && !bHasReg) {
+          const aHasNon = aNon > 0;
+          const bHasNon = bNon > 0;
+          if (aHasNon && !bHasNon) return -1;
+          if (!aHasNon && bHasNon) return 1;
+        }
+
+        const prodCompare = (a.productName || '').localeCompare(b.productName || '');
+        if (prodCompare !== 0) return prodCompare;
+        return (a.customerName || '').localeCompare(b.customerName || '');
+      });
+
+      const initialRows: AuditRow[] = sortedFgs.map(fg => ({
+        fgId: fg.id,
+        productId: fg.productId || null,
+        productName: fg.productName,
+        customerId: fg.customerId || null,
+        customerName: fg.customerName,
+        sysRegBal: Number(fg.closingBalance) || 0,
+        sysNmBal: Number(fg.nonMovingBalance) || 0,
+        audRegBal: Number(fg.closingBalance) || 0,
+        audNmBal: Number(fg.nonMovingBalance) || 0,
+        rate: Number(fg.rate) || 0,
+        isRateManuallyEdited: false
+      }));
+      setAuditRows(initialRows);
+      setIsInitialized(true);
+    }
+  }, [isOpen, fgs, isInitialized]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsInitialized(false);
+      setAuditRows([]);
+      setSearchTerm('');
+    }
+  }, [isOpen]);
 
   const removeRow = (index: number) => {
     setAuditRows(prev => prev.filter((_, i) => i !== index));
@@ -179,11 +238,21 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
 
   if (!isOpen) return null;
 
-  const totalQtyDiff = auditRows.reduce((sum, row) => {
+  const totalQtyIn = auditRows.reduce((sum, row) => {
     const regDiff = (Number(row.audRegBal) || 0) - (Number(row.sysRegBal) || 0);
     const nmDiff = (Number(row.audNmBal) || 0) - (Number(row.sysNmBal) || 0);
-    return sum + regDiff + nmDiff;
+    const totalDiff = regDiff + nmDiff;
+    return sum + (totalDiff > 0 ? totalDiff : 0);
   }, 0);
+
+  const totalQtyOut = auditRows.reduce((sum, row) => {
+    const regDiff = (Number(row.audRegBal) || 0) - (Number(row.sysRegBal) || 0);
+    const nmDiff = (Number(row.audNmBal) || 0) - (Number(row.sysNmBal) || 0);
+    const totalDiff = regDiff + nmDiff;
+    return sum + (totalDiff < 0 ? Math.abs(totalDiff) : 0);
+  }, 0);
+
+  const totalQtyDiff = totalQtyIn - totalQtyOut;
 
   const totalValueDiff = auditRows.reduce((sum, row) => {
     const regDiff = (Number(row.audRegBal) || 0) - (Number(row.sysRegBal) || 0);
@@ -302,6 +371,8 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
                       <th className="px-4 py-3 font-medium">Customer</th>
                       <th className="px-4 py-3 font-medium text-blue-600 bg-blue-50/50">Reg Balance</th>
                       <th className="px-4 py-3 font-medium text-orange-600 bg-orange-50/50">NM Balance</th>
+                      <th className="px-4 py-3 font-medium text-green-600 bg-green-50/50 text-center">Qty IN</th>
+                      <th className="px-4 py-3 font-medium text-red-600 bg-red-50/50 text-center">Qty OUT</th>
                       <th className="px-4 py-3 font-medium bg-muted/30">Rate</th>
                       <th className="px-4 py-3 font-medium text-center">Action</th>
                     </tr>
@@ -310,6 +381,12 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
                     {auditRows.map((row, index) => {
                       const isRegChanged = Number(row.audRegBal) !== row.sysRegBal;
                       const isNmChanged = Number(row.audNmBal) !== row.sysNmBal;
+                      
+                      const regDiff = (Number(row.audRegBal) || 0) - (Number(row.sysRegBal) || 0);
+                      const nmDiff = (Number(row.audNmBal) || 0) - (Number(row.sysNmBal) || 0);
+                      const totalDiff = regDiff + nmDiff;
+                      const qtyIn = totalDiff > 0 ? totalDiff : 0;
+                      const qtyOut = totalDiff < 0 ? Math.abs(totalDiff) : 0;
                       
                       return (
                         <tr key={row.productId} className="hover:bg-muted/30 transition-colors">
@@ -338,6 +415,14 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
                               />
                               {isNmChanged && <span className="text-[10px] text-muted-foreground">Sys: {row.sysNmBal}</span>}
                             </div>
+                          </td>
+                          
+                          <td className="px-4 py-2 text-center font-bold text-green-600">
+                            {qtyIn > 0 ? `+${qtyIn}` : '-'}
+                          </td>
+                          
+                          <td className="px-4 py-2 text-center font-bold text-red-600">
+                            {qtyOut > 0 ? `-${qtyOut}` : '-'}
                           </td>
                           
                           <td className="px-4 py-2 bg-muted/10">
@@ -373,13 +458,25 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
         <div className="px-6 py-4 border-t border-border bg-secondary/30 flex justify-between items-center">
           <div className="flex gap-6 text-sm">
             <div className="flex flex-col">
-              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total Qty Diff</span>
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total IN</span>
+              <span className="font-bold text-green-600">
+                {totalQtyIn}
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total OUT</span>
+              <span className="font-bold text-red-600">
+                {totalQtyOut}
+              </span>
+            </div>
+            <div className="flex flex-col border-l border-border pl-6">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Net Qty Diff</span>
               <span className={`font-bold ${totalQtyDiff > 0 ? 'text-green-600' : totalQtyDiff < 0 ? 'text-red-600' : 'text-foreground'}`}>
                 {totalQtyDiff > 0 ? '+' : ''}{totalQtyDiff}
               </span>
             </div>
-            <div className="flex flex-col">
-              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Total Value Diff</span>
+            <div className="flex flex-col border-l border-border pl-6">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Value Diff</span>
               <span className={`font-bold ${totalValueDiff > 0 ? 'text-green-600' : totalValueDiff < 0 ? 'text-red-600' : 'text-foreground'}`}>
                 {totalValueDiff > 0 ? '+₹' : totalValueDiff < 0 ? '-₹' : '₹'}{Math.abs(totalValueDiff).toFixed(2)}
               </span>
