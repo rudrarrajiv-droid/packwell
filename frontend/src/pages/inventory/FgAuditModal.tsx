@@ -21,6 +21,8 @@ interface CombinedFgItem {
   sysRegBal: number;
   sysNmBal: number;
   rate: number;
+  artworkNo?: string | null;
+  searchString?: string;
 }
 
 interface AuditRow extends CombinedFgItem {
@@ -62,7 +64,12 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
         customerName: p.customerName,
         sysRegBal: 0,
         sysNmBal: 0,
-        rate: 0 // Will be overridden if FG exists or manually set
+        rate: 0, // Will be overridden if FG exists or manually set
+        artworkNo: p.artworkNo,
+        searchString: Object.values(p)
+          .filter(v => typeof v === 'string' || typeof v === 'number')
+          .join(' ')
+          .toLowerCase()
       });
     });
 
@@ -84,7 +91,8 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
           customerName: fg.customerName,
           sysRegBal: Number(fg.closingBalance) || 0,
           sysNmBal: Number(fg.nonMovingBalance) || 0,
-          rate: Number(fg.rate) || 0
+          rate: Number(fg.rate) || 0,
+          searchString: `${fg.productName || ''} ${fg.customerName || ''}`.toLowerCase()
         });
       }
     });
@@ -112,9 +120,12 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
     // Smart match
     const pName = (item.productName || '').toLowerCase();
     const cName = (item.customerName || '').toLowerCase();
+    const aNo = (item.artworkNo || '').toLowerCase();
+    const pId = (item.productId || '').toLowerCase();
+    const sString = item.searchString || '';
     const term = searchTerm.toLowerCase();
 
-    return pName.includes(term) || cName.includes(term);
+    return pName.includes(term) || cName.includes(term) || aNo.includes(term) || pId.includes(term) || sString.includes(term);
   }).slice(0, 8); // limit suggestions
 
   const addRow = (item: CombinedFgItem) => {
@@ -161,19 +172,24 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
         return (a.customerName || '').localeCompare(b.customerName || '');
       });
 
-      const initialRows: AuditRow[] = sortedFgs.map(fg => ({
-        fgId: fg.id,
-        productId: fg.productId || null,
-        productName: fg.productName,
-        customerId: fg.customerId || null,
-        customerName: fg.customerName,
-        sysRegBal: Number(fg.closingBalance) || 0,
-        sysNmBal: Number(fg.nonMovingBalance) || 0,
-        audRegBal: Number(fg.closingBalance) || 0,
-        audNmBal: Number(fg.nonMovingBalance) || 0,
-        rate: Number(fg.rate) || 0,
-        isRateManuallyEdited: false
-      }));
+      const initialRows: AuditRow[] = sortedFgs.map(fg => {
+        const existing = combinedItems.find(c => c.productId === fg.productId);
+        return {
+          fgId: fg.id,
+          productId: fg.productId || null,
+          productName: fg.productName,
+          customerId: fg.customerId || null,
+          customerName: fg.customerName,
+          sysRegBal: Number(fg.closingBalance) || 0,
+          sysNmBal: Number(fg.nonMovingBalance) || 0,
+          audRegBal: Number(fg.closingBalance) || 0,
+          audNmBal: Number(fg.nonMovingBalance) || 0,
+          rate: Number(fg.rate) || 0,
+          isRateManuallyEdited: false,
+          artworkNo: existing?.artworkNo,
+          searchString: existing?.searchString || `${fg.productName || ''} ${fg.customerName || ''}`.toLowerCase()
+        };
+      });
       setAuditRows(initialRows);
       setIsInitialized(true);
     }
@@ -235,6 +251,19 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
       setIsSubmitting(false);
     }
   };
+
+  const filteredAuditRows = auditRows.filter(row => {
+    if (!searchTerm) return true;
+    
+    const pName = (row.productName || '').toLowerCase();
+    const cName = (row.customerName || '').toLowerCase();
+    const aNo = (row.artworkNo || '').toLowerCase();
+    const pId = (row.productId || '').toLowerCase();
+    const sString = row.searchString || '';
+    const term = searchTerm.toLowerCase();
+
+    return pName.includes(term) || cName.includes(term) || aNo.includes(term) || pId.includes(term) || sString.includes(term);
+  });
 
   if (!isOpen) return null;
 
@@ -301,12 +330,12 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
             </div>
 
             <div className="flex-1 relative" ref={searchRef}>
-              <label className="text-xs font-semibold text-muted-foreground block mb-1">Smart Search (Item Name, Customer)</label>
+              <label className="text-xs font-semibold text-muted-foreground block mb-1">Smart Search (Any Product Detail)</label>
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="e.g. Box A, Apple..."
+                  placeholder="e.g. 01U512364, Box A, Apple..."
                   value={searchTerm}
                   onChange={(e) => {
                     setSearchTerm(e.target.value);
@@ -319,7 +348,7 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
 
               {/* Suggestions Dropdown */}
               {showSuggestions && searchTerm && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-border rounded-md shadow-lg overflow-hidden z-10 max-h-60 overflow-y-auto">
+                <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-border rounded-md shadow-lg overflow-hidden z-[100] max-h-60 overflow-y-auto">
                   {filteredItems.length > 0 ? (
                     <ul className="divide-y divide-border">
                       {filteredItems.map(item => (
@@ -378,7 +407,8 @@ export default function FgAuditModal({ isOpen, onClose, onSuccess }: FgAuditModa
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {auditRows.map((row, index) => {
+                    {filteredAuditRows.map((row) => {
+                      const index = auditRows.findIndex(r => r.productId === row.productId);
                       const isRegChanged = Number(row.audRegBal) !== row.sysRegBal;
                       const isNmChanged = Number(row.audNmBal) !== row.sysNmBal;
                       
