@@ -58,7 +58,7 @@ const fmtDiff = (val: number) => {
 };
 
 /**
- * Generate a beautifully structured Multi-table PDF for MR Sheet
+ * Generate a beautifully structured Multi-table PDF for Profit & Loss
  */
 export const exportMRToPDF = (params: MRExportParams) => {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -172,7 +172,7 @@ export const exportMRToPDF = (params: MRExportParams) => {
 
   let leftFinalY = (doc as any).lastAutoTable.finalY;
 
-  // 3B. Current Month Purchase (Matching MR Sheet UI)
+  // 3B. Current Month Purchase (Matching Profit & Loss UI)
   if ((params.currentMonthPurchaseWOGST !== undefined && params.currentMonthPurchaseWOGST !== 0) ||
       (params.currentMonthPurchaseWGST !== undefined && params.currentMonthPurchaseWGST !== 0)) {
     autoTable(doc, {
@@ -282,7 +282,7 @@ export const exportMRToPDF = (params: MRExportParams) => {
 
   let rightFinalY = (doc as any).lastAutoTable.finalY;
 
-  // 4B. Right Table 2: Operational Expenses Breakup Table (Matching MR Sheet UI)
+  // 4B. Right Table 2: Operational Expenses Breakup Table (Matching Profit & Loss UI)
   const expensesList: MRExpenseItem[] = (params.expenseBreakup && params.expenseBreakup.length > 0)
     ? params.expenseBreakup
     : params.visibleExpenses.map(exp => ({
@@ -374,7 +374,7 @@ export const exportMRToPDF = (params: MRExportParams) => {
   });
 
   const dateStr = new Date().toISOString().split('T')[0];
-  doc.save(`MR_Report_${params.monthFormattedTitle.replace(/\s+/g, '_')}_${dateStr}.pdf`);
+  doc.save(`Profit_Loss_Report_${params.monthFormattedTitle.replace(/\s+/g, '_')}_${dateStr}.pdf`);
 };
 
 /**
@@ -465,8 +465,8 @@ export const exportMRToExcel = (params: MRExportParams) => {
   data.push(['GRAND TOTAL STOCK', params.grandTotalStock]);
 
   const ws = xlsx.utils.aoa_to_sheet(data);
-  xlsx.utils.book_append_sheet(wb, ws, 'MR_Report');
+  xlsx.utils.book_append_sheet(wb, ws, 'Profit_Loss');
 
   const dateStr = new Date().toISOString().split('T')[0];
-  xlsx.writeFile(wb, `MR_Report_${params.monthFormattedTitle.replace(/\s+/g, '_')}_${dateStr}.xlsx`);
+  xlsx.writeFile(wb, `Profit_Loss_Report_${params.monthFormattedTitle.replace(/\s+/g, '_')}_${dateStr}.xlsx`);
 };

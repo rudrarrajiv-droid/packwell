@@ -26,8 +26,8 @@ export default function AppLayout() {
     { name: 'Production', path: '/production', icon: Activity },
     { name: 'Salary & Wages', path: '/salary', icon: Users },
     { name: 'Conversion Report', path: '/dc', icon: FileSpreadsheet },
-    { name: 'MR', path: '/mr', icon: Box },
-    { name: 'RM', path: '/rm', icon: Archive },
+    { name: 'Profit & Loss', path: '/profit-and-loss', icon: Box },
+    { name: 'Raw Material', path: '/raw-material', icon: Archive },
     { name: 'Scrap', path: '/scrap', icon: Archive },
     { name: 'Settings', path: '/settings', icon: Settings },
   ];

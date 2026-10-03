@@ -14,6 +14,8 @@ import RMOutModal from './rm/RMOutModal';
 import RMHistoryModal from './rm/RMHistoryModal';
 import RMBulkImportModal from './rm/RMBulkImportModal';
 import RMAdjustModal from './rm/RMAdjustModal';
+import RMBulkPurchaseInModal from './rm/RMBulkPurchaseInModal';
+import RMPurchaseRegisterModal from './rm/RMPurchaseRegisterModal';
 
 export default function RM() {
   const { user } = useAuth();
@@ -26,6 +28,8 @@ export default function RM() {
   const [isOutOpen, setIsOutOpen] = useState(false);
   const [isAdjustOpen, setIsAdjustOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isBulkPurchaseInOpen, setIsBulkPurchaseInOpen] = useState(false);
+  const [isPurchaseRegisterOpen, setIsPurchaseRegisterOpen] = useState(false);
   
   const [selectedRM, setSelectedRM] = useState<RawMaterial | null>(null);
 
@@ -120,7 +124,7 @@ export default function RM() {
           </div>
           <div>
             <h1 className="text-2xl font-black text-foreground tracking-tight flex items-center gap-2">
-              Raw Materials
+              Raw Material
               <span className="text-xs px-2.5 py-0.5 bg-secondary text-muted-foreground font-semibold rounded-full border border-border">
                 {rmList.length} Items
               </span>
@@ -156,13 +160,21 @@ export default function RM() {
             Print
           </button>
 
-          {/* Bulk Import Button */}
           <button 
             onClick={() => setIsBulkImportOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-secondary text-foreground hover:bg-secondary/80 rounded-xl transition-all text-xs font-semibold shadow-2xs border border-border"
           >
             <FileSpreadsheet className="w-4 h-4 text-primary" />
-            Bulk Import
+            Bulk Setup
+          </button>
+
+          {/* Purchase Register Button */}
+          <button 
+            onClick={() => setIsPurchaseRegisterOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-500/30 rounded-xl transition-all text-xs font-semibold shadow-2xs"
+          >
+            <History className="w-4 h-4" />
+            Purchase Register
           </button>
 
           {/* Stock Audit Button */}
@@ -175,13 +187,23 @@ export default function RM() {
           </button>
 
           {/* Purchase IN Button */}
-          <button 
-            onClick={handleOpenGeneralIn}
-            className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl transition-all text-xs font-semibold shadow-sm"
-          >
-            <ArrowDownToLine className="w-4 h-4" />
-            + Purchase / IN
-          </button>
+          <div className="flex rounded-xl shadow-sm border border-border overflow-hidden">
+            <button 
+              onClick={handleOpenGeneralIn}
+              className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white transition-all text-xs font-semibold border-r border-green-700"
+            >
+              <ArrowDownToLine className="w-4 h-4" />
+              Purchase IN
+            </button>
+            <button 
+              onClick={() => setIsBulkPurchaseInOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white transition-all text-xs font-semibold"
+              title="Bulk Purchase IN (Multiple Items)"
+            >
+              <Layers className="w-4 h-4" />
+              Bulk IN
+            </button>
+          </div>
 
           {/* Add Material Button */}
           <button 
@@ -436,6 +458,22 @@ export default function RM() {
         onOpenIn={(rm) => openAction('IN', rm)}
         onOpenOut={(rm) => openAction('OUT', rm)}
         onOpenAdjust={(rm) => openAction('ADJUST', rm)}
+      />
+
+      {/* Bulk Purchase IN Modal */}
+      <RMBulkPurchaseInModal
+        isOpen={isBulkPurchaseInOpen}
+        onClose={() => setIsBulkPurchaseInOpen(false)}
+        onSuccess={refetch}
+        allRMs={rmList}
+      />
+
+      {/* Purchase Register Modal */}
+      <RMPurchaseRegisterModal
+        isOpen={isPurchaseRegisterOpen}
+        onClose={() => setIsPurchaseRegisterOpen(false)}
+        allRMs={rmList}
+        onUpdate={refetch}
       />
     </div>
   );

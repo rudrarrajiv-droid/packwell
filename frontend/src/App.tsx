@@ -50,10 +50,15 @@ function App() {
                 <Route path="freight" element={<FreightCharge />} />
                 <Route path="salary" element={<Salary />} />
                 <Route path="dc" element={<DC />} />
-                <Route path="mr" element={<MR />} />
-                <Route path="rm" element={<RM />} />
+                <Route path="profit-and-loss" element={<MR />} />
+                <Route path="raw-material" element={<RM />} />
                 <Route path="scrap" element={<Scrap />} />
                 <Route path="settings" element={<Settings />} />
+                
+                {/* Fallbacks for old routes */}
+                <Route path="mr" element={<Navigate to="/profit-and-loss" replace />} />
+                <Route path="rm" element={<Navigate to="/raw-material" replace />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Route>
           </Routes>

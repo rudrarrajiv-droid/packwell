@@ -309,6 +309,153 @@ export const bulkImportRawMaterials = async (
   return { createdCount, updatedCount };
 };
 
+export const updateRawMaterialTransaction = async (
+  transactionId: string,
+  updatedData: Partial<RawMaterialTransaction>,
+  user: string
+): Promise<void> => {
+  // Fetch existing transaction
+  const { data: existingTx, error: fetchErr } = await supabase
+    .from('raw_material_transactions')
+    .select('*')
+    .eq('id', transactionId)
+    .single();
+
+  if (fetchErr) throw fetchErr;
+
+  let refText = updatedData.referenceNo || '';
+  if (updatedData.supplierName) {
+    refText = refText ? `${refText} | Supplier: ${updatedData.supplierName}` : `Supplier: ${updatedData.supplierName}`;
+  }
+  if (updatedData.rate && updatedData.rate > 0) {
+    refText = refText ? `${refText} (Rate: ₹${updatedData.rate})` : `Rate: ₹${updatedData.rate}`;
+  }
+  if (updatedData.remarks) {
+    refText = refText ? `${refText} - ${updatedData.remarks}` : updatedData.remarks;
+  }
+
+  // Handle quantity change
+  const oldQty = Number(existingTx.quantity) || 0;
+  const newQty = updatedData.quantity !== undefined ? updatedData.quantity : oldQty;
+  const qtyDiff = newQty - oldQty;
+
+  const updatePayload: any = {
+    date: updatedData.date || existingTx.date,
+    quantity: newQty,
+    reference_no: refText || existingTx.reference_no,
+    updated_by: user,
+  };
+
+  const { error: updateErr } = await supabase
+    .from('raw_material_transactions')
+    .update(updatePayload)
+    .eq('id', transactionId);
+
+  if (updateErr) throw updateErr;
+
+  // If quantity changed, update the raw material balances
+  if (qtyDiff !== 0) {
+    const { data: rmData, error: rmError } = await supabase
+      .from('raw_materials')
+      .select('closing_balance, in_qty, out_qty')
+      .eq('id', existingTx.raw_material_id)
+      .single();
+
+    if (!rmError && rmData) {
+      let newIn = Number(rmData.in_qty) || 0;
+      let newOut = Number(rmData.out_qty) || 0;
+      let newClosing = Number(rmData.closing_balance) || 0;
+
+      if (existingTx.type === 'IN') {
+        newIn += qtyDiff;
+        newClosing += qtyDiff;
+      } else if (existingTx.type === 'OUT') {
+        newOut += qtyDiff;
+        newClosing -= qtyDiff;
+      }
+
+      await supabase
+        .from('raw_materials')
+        .update({
+          in_qty: newIn,
+          out_qty: newOut,
+          closing_balance: newClosing,
+          updated_by: user,
+        })
+        .eq('id', existingTx.raw_material_id);
+    }
+  }
+
+  await logActivity({
+    user,
+    action: `Updated RM transaction ${transactionId} (Old Qty: ${oldQty}, New Qty: ${newQty})`,
+    entity: 'raw_material_transactions',
+    referenceId: transactionId,
+  });
+};
+
+export const deleteRawMaterialTransaction = async (
+  transactionId: string,
+  user: string
+): Promise<void> => {
+  // Fetch existing transaction
+  const { data: existingTx, error: fetchErr } = await supabase
+    .from('raw_material_transactions')
+    .select('*')
+    .eq('id', transactionId)
+    .single();
+
+  if (fetchErr) throw fetchErr;
+
+  // Delete transaction
+  const { error: deleteErr } = await supabase
+    .from('raw_material_transactions')
+    .delete()
+    .eq('id', transactionId);
+
+  if (deleteErr) throw deleteErr;
+
+  // Revert quantity from raw materials
+  const qty = Number(existingTx.quantity) || 0;
+  
+  const { data: rmData, error: rmError } = await supabase
+    .from('raw_materials')
+    .select('closing_balance, in_qty, out_qty')
+    .eq('id', existingTx.raw_material_id)
+    .single();
+
+  if (!rmError && rmData) {
+    let newIn = Number(rmData.in_qty) || 0;
+    let newOut = Number(rmData.out_qty) || 0;
+    let newClosing = Number(rmData.closing_balance) || 0;
+
+    if (existingTx.type === 'IN') {
+      newIn -= qty;
+      newClosing -= qty;
+    } else if (existingTx.type === 'OUT') {
+      newOut -= qty;
+      newClosing += qty;
+    }
+
+    await supabase
+      .from('raw_materials')
+      .update({
+        in_qty: newIn,
+        out_qty: newOut,
+        closing_balance: newClosing,
+        updated_by: user,
+      })
+      .eq('id', existingTx.raw_material_id);
+  }
+
+  await logActivity({
+    user,
+    action: `Deleted RM transaction ${transactionId} (Qty: ${qty})`,
+    entity: 'raw_material_transactions',
+    referenceId: transactionId,
+  });
+};
+
 const mapRawMaterialRow = (row: any): RawMaterial => ({
   id: row.id,
   name: row.name,

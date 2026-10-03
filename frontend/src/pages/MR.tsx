@@ -537,7 +537,7 @@ export default function MR() {
   const grandDiffWOGST = netSaleWithoutGST - gTotalPurchaseWOGST;
   const grandDiffWGST = netSaleWithGST - gTotalPurchaseWGST;
 
-  // Helper to resolve effective expense amount (mapped to Freight Sheet, Salary Sheet, and RM Sheet if not overridden)
+  // Helper to resolve effective expense amount (mapped to Freight Sheet, Salary Sheet, and Raw Material if not overridden)
   const getEffectiveExpenseValue = (cat: string): number => {
     const manualVal = manualData[`EXP:${cat}`];
     if (manualVal !== undefined && manualVal !== 0) {
@@ -699,7 +699,7 @@ export default function MR() {
                 Profit &amp; Loss Report
               </h1>
               <span className="bg-indigo-50 text-indigo-700 text-xs font-semibold px-2.5 py-0.5 rounded-full border border-indigo-100">
-                MR Sheet
+                Profit & Loss
               </span>
             </div>
             <p className="text-xs text-slate-500">Period: <span className="font-semibold text-slate-700">{monthFormattedTitle}</span></p>
@@ -1209,6 +1209,7 @@ export default function MR() {
                     placeholder="0"
                     value={manualData['STOCK:WIP'] !== undefined ? (manualData['STOCK:WIP'] || '') : ''}
                     onChange={(e) => handleManualChange('STOCK:WIP', e.target.value)}
+                    onBlur={handleSave}
                     className="w-28 text-right bg-slate-50 border border-slate-200 rounded px-2 py-0.5 font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 print:hidden"
                   />
                 </div>
@@ -1562,15 +1563,15 @@ export default function MR() {
                               <div className="flex items-center gap-2 mt-0.5 print:hidden">
                                 {isUsingAutoConsumable ? (
                                   <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
-                                    <Box className="w-2.5 h-2.5" /> Mapped from RM Sheet (₹ {formatINR(autoConsumableGoods)})
+                                    <Box className="w-2.5 h-2.5" /> Mapped from Raw Material (₹ {formatINR(autoConsumableGoods)})
                                   </span>
                                 ) : (
                                   <button
                                     onClick={() => handleManualChange(`EXP:${exp}`, String(autoConsumableGoods))}
                                     className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline"
-                                    title="Reset to live RM Sheet Outward value"
+                                    title="Reset to live Raw Material Outward value"
                                   >
-                                    <RotateCcw className="w-2.5 h-2.5" /> Reset to RM Outward (₹ {formatINR(autoConsumableGoods)})
+                                    <RotateCcw className="w-2.5 h-2.5" /> Reset to Raw Material Outward (₹ {formatINR(autoConsumableGoods)})
                                   </button>
                                 )}
                               </div>
