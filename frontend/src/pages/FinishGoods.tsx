@@ -154,9 +154,9 @@ export default function FinishGoods() {
 
   return (
     <>
-    <div className="h-[calc(100vh-4rem)] flex flex-col gap-4 p-4 md:p-6 max-w-7xl mx-auto w-full print:hidden">
+    <div className="h-[calc(100vh-4rem)] flex flex-col gap-4 p-4 md:p-6 mx-auto w-full print:hidden">
       {/* Header with Title and Overall Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 shrink-0">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center">
             <PackageCheck className="w-8 h-8 mr-3 text-primary" />
@@ -164,21 +164,100 @@ export default function FinishGoods() {
           </h1>
           <p className="text-muted-foreground mt-1">Track and manage manufactured products inventory</p>
         </div>
-        <div className="flex justify-end items-center gap-4">
-          <div className="bg-primary/10 border border-primary/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
-            <div className="text-right">
-              <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Regular Stock Valuation</div>
-              <div className="text-xl font-black text-primary">₹{Math.round(totalRegValue).toLocaleString('en-IN')}</div>
-            </div>
-          </div>
-          {totalNonValue > 0 && (
-            <div className="bg-orange-500/10 border border-orange-500/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
+        <div className="flex flex-col items-start xl:items-end gap-3 w-full xl:w-auto mt-2 xl:mt-0">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="bg-primary/10 border border-primary/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
               <div className="text-right">
-                <div className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Non-Moving Valuation</div>
-                <div className="text-xl font-black text-orange-600 dark:text-orange-400">₹{Math.round(totalNonValue).toLocaleString('en-IN')}</div>
+                <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">Regular Stock Valuation</div>
+                <div className="text-xl font-black text-primary">₹{Math.round(totalRegValue).toLocaleString('en-IN')}</div>
               </div>
             </div>
-          )}
+            {totalNonValue > 0 && (
+              <div className="bg-orange-500/10 border border-orange-500/20 px-4 py-3 rounded-xl flex items-center shadow-sm">
+                <div className="text-right">
+                  <div className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Non-Moving Valuation</div>
+                  <div className="text-xl font-black text-orange-600 dark:text-orange-400">₹{Math.round(totalNonValue).toLocaleString('en-IN')}</div>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <button 
+              onClick={() => window.print()}
+              className="bg-secondary text-secondary-foreground border border-border px-3 py-1.5 flex items-center text-xs font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
+            >
+              <Printer className="w-3.5 h-3.5 mr-1.5 text-primary" />
+              Print
+            </button>
+            
+            <button 
+              onClick={() => setIsAuditOpen(true)}
+              className="bg-purple-600 text-white px-3 py-1.5 flex items-center text-xs font-medium rounded-md shadow hover:bg-purple-700 transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5 mr-1.5" />
+              FG Audit
+            </button>
+            
+            <button 
+              onClick={() => setIsAuditHistoryOpen(true)}
+              className="bg-purple-100 text-purple-700 border border-purple-200 px-3 py-1.5 flex items-center text-xs font-medium rounded-md shadow-sm hover:bg-purple-200 transition-colors"
+            >
+              <History className="w-3.5 h-3.5 mr-1.5" />
+              Audit History
+            </button>
+
+            {activeTab !== 'REPORT' && (
+              <ExportButtons 
+                data={exportData} 
+                filenamePrefix="FinishGoodsInventory"
+                title="Finish Goods"
+                columnMap={{
+                  'customerName': 'Customer',
+                  'productName': 'Product',
+                  'openingQty': 'Opening Qty',
+                  'inQty': 'IN',
+                  'outQty': 'OUT',
+                  'closingBalance': 'Closing Balance',
+                  'nonMovingBalance': 'Non-Moving Balance',
+                  'rate': 'Rate',
+                  'totalValue': 'Total Value',
+                }}
+              />
+            )}
+            
+            <button 
+              onClick={() => setIsHistoryOpen(true)}
+              className="bg-secondary text-secondary-foreground border border-border px-3 py-1.5 flex items-center text-xs font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
+            >
+              <History className="w-3.5 h-3.5 mr-1.5" />
+              Product History
+            </button>
+            
+            <button 
+              onClick={() => setIsExcelImportOpen(true)}
+              className="bg-violet-600 text-white px-3 py-1.5 flex items-center text-xs font-medium rounded-md shadow hover:bg-violet-700 transition-colors"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" />
+              Import
+            </button>
+
+            <button 
+              onClick={() => setIsBulkOutOpen(true)}
+              className="bg-red-600 text-white px-3 py-1.5 flex items-center text-xs font-medium rounded-md shadow hover:bg-red-700 transition-colors"
+            >
+              <ArrowUpFromLine className="w-3.5 h-3.5 mr-1.5" />
+              Bulk OUT
+            </button>
+            
+            <button 
+              onClick={() => setIsBulkInOpen(true)}
+              className="bg-green-600 text-white px-3 py-1.5 flex items-center text-xs font-medium rounded-md shadow hover:bg-green-700 transition-colors"
+            >
+              <ArrowDownToLine className="w-3.5 h-3.5 mr-1.5" />
+              Bulk IN
+            </button>
+          </div>
         </div>
       </div>
 
@@ -224,22 +303,22 @@ export default function FinishGoods() {
       {/* Actions Bar */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-sm shrink-0">
         {activeTab !== 'REPORT' ? (
-          <div className="flex items-center gap-4 w-full sm:w-auto">
-            <div className="relative w-full sm:w-80">
+          <div className="flex items-center gap-4 w-full">
+            <div className="relative w-full max-w-lg">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="text"
                 placeholder="Search by customer or product..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                className="w-full pl-9 pr-4 py-2.5 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm shadow-sm"
               />
             </div>
             
             <select 
               value={stockFilter}
               onChange={(e) => setStockFilter(e.target.value as any)}
-              className="border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background"
+              className="border border-input rounded-md px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background shadow-sm min-w-[200px]"
             >
               <option value="ALL">All Items</option>
               <option value="REGULAR">Regular Stock Only</option>
@@ -247,7 +326,7 @@ export default function FinishGoods() {
             </select>
           </div>
         ) : (
-          <div className="flex items-center gap-4 w-full sm:w-auto">
+          <div className="flex items-center gap-4 w-full">
             <label className="font-medium text-sm flex items-center">
               <Calendar className="w-4 h-4 mr-2 text-muted-foreground" />
               Select Date:
@@ -256,86 +335,10 @@ export default function FinishGoods() {
               type="date"
               value={reportDate}
               onChange={e => setReportDate(e.target.value)}
-              className="px-3 py-2 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary font-medium"
+              className="px-3 py-2.5 text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary font-medium shadow-sm"
             />
           </div>
         )}
-
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto pb-2 sm:pb-0">
-          <button 
-            onClick={() => window.print()}
-            className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
-          >
-            <Printer className="w-4 h-4 mr-2 text-primary" />
-            Print Audit
-          </button>
-          
-          <button 
-            onClick={() => setIsAuditOpen(true)}
-            className="bg-purple-600 text-white px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-purple-700 transition-colors"
-          >
-            <FileText className="w-4 h-4 mr-2" />
-            FG Audit
-          </button>
-          
-          <button 
-            onClick={() => setIsAuditHistoryOpen(true)}
-            className="bg-purple-100 text-purple-700 border border-purple-200 px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-purple-200 transition-colors"
-          >
-            <History className="w-4 h-4 mr-2" />
-            Audit History
-          </button>
-
-          {activeTab !== 'REPORT' && (
-            <ExportButtons 
-              data={exportData} 
-              filenamePrefix="FinishGoodsInventory"
-              title="Finish Goods Inventory Status"
-              columnMap={{
-                'customerName': 'Customer',
-                'productName': 'Product',
-                'openingQty': 'Opening Qty',
-                'inQty': 'IN',
-                'outQty': 'OUT',
-                'closingBalance': 'Closing Balance',
-                'nonMovingBalance': 'Non-Moving Balance',
-                'rate': 'Rate',
-                'totalValue': 'Total Value',
-              }}
-            />
-          )}
-          <button 
-            onClick={() => setIsHistoryOpen(true)}
-            className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
-          >
-            <History className="w-4 h-4 mr-2" />
-            Product History
-          </button>
-          
-          <button 
-            onClick={() => setIsExcelImportOpen(true)}
-            className="bg-violet-600 text-white px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-violet-700 transition-colors"
-          >
-            <FileSpreadsheet className="w-4 h-4 mr-2" />
-            Excel Import
-          </button>
-
-          <button 
-            onClick={() => setIsBulkOutOpen(true)}
-            className="bg-red-600 text-white px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-red-700 transition-colors"
-          >
-            <ArrowUpFromLine className="w-4 h-4 mr-2" />
-            Bulk OUT
-          </button>
-          
-          <button 
-            onClick={() => setIsBulkInOpen(true)}
-            className="bg-green-600 text-white px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-green-700 transition-colors"
-          >
-            <ArrowDownToLine className="w-4 h-4 mr-2" />
-            Bulk IN
-          </button>
-        </div>
       </div>
 
       <div className="flex-1 bg-card border border-border shadow-sm rounded-lg overflow-hidden flex flex-col">
