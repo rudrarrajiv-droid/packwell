@@ -48,8 +48,22 @@ export default function RMPurchaseRegisterModal({
       const rmName = rm ? rm.name.toLowerCase() : '';
       const supplier = tx.supplierName ? tx.supplierName.toLowerCase() : '';
       
-      const matchDate = dateFilter ? tx.date === dateFilter : true;
-      const matchMonth = monthFilter ? tx.date.startsWith(monthFilter) : true;
+      const dateStr = tx.date ? String(tx.date) : '';
+      const matchDate = dateFilter ? dateStr === dateFilter : true;
+      let matchMonth = true;
+      if (monthFilter) {
+        matchMonth = dateStr.startsWith(monthFilter);
+        if (!matchMonth) {
+          // Fallback if browser doesn't support type="month" and user types MM-YYYY
+          const parts = monthFilter.split(/[-/]/);
+          if (parts.length === 2 && parts[0].length === 2 && parts[1].length === 4) {
+            matchMonth = dateStr.startsWith(`${parts[1]}-${parts[0]}`);
+          } else {
+            matchMonth = dateStr.includes(monthFilter);
+          }
+        }
+      }
+      
       const matchParty = partyFilter ? supplier.includes(partyFilter.toLowerCase()) : true;
       const matchItem = itemFilter ? rmName.includes(itemFilter.toLowerCase()) : true;
       

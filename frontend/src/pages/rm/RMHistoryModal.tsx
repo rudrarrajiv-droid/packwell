@@ -99,7 +99,16 @@ export default function RMHistoryModal({
     let list = enrichedTransactions;
 
     if (!showAllTime && selectedMonth) {
-      list = list.filter(tx => tx.date.startsWith(selectedMonth));
+      list = list.filter(tx => {
+        const dateStr = tx.date ? String(tx.date) : '';
+        if (dateStr.startsWith(selectedMonth)) return true;
+        
+        const parts = selectedMonth.split(/[-/]/);
+        if (parts.length === 2 && parts[0].length === 2 && parts[1].length === 4) {
+          return dateStr.startsWith(`${parts[1]}-${parts[0]}`);
+        }
+        return dateStr.includes(selectedMonth);
+      });
     }
 
     if (filterType !== 'ALL') {
