@@ -2,6 +2,30 @@ import * as XLSX from 'xlsx';
 import { type PurchaseOrder, getPurchaseOrderBalance } from '../lib/supabase/purchaseOrderService';
 
 /**
+ * Robustly download an XLSX workbook to avoid UUID blob filenames in certain browsers/Vercel environments.
+ */
+export const downloadExcel = (workbook: XLSX.WorkBook, filename: string) => {
+  try {
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+  } catch (error) {
+    console.error("Error downloading excel file:", error);
+    // Fallback to library's default if something goes wrong
+    XLSX.writeFile(workbook, filename);
+  }
+};
+
+/**
  * Export Purchase Orders to an Excel file
  * @param poList The filtered list of POs to export
  */
@@ -58,7 +82,7 @@ export const exportPurchaseOrdersToExcel = (poList: PurchaseOrder[]) => {
   const filename = `Purchase_Orders_Export_${dateStr}.xlsx`;
 
   // Trigger download
-  XLSX.writeFile(workbook, filename);
+  downloadExcel(workbook, filename);
 };
 
 /**
@@ -103,7 +127,7 @@ export const downloadPOTemplate = () => {
   worksheet['!cols'] = colWidths;
 
   XLSX.utils.book_append_sheet(workbook, worksheet, 'PO_Template');
-  XLSX.writeFile(workbook, 'Bulk_PO_Import_Template.xlsx');
+  downloadExcel(workbook, 'Bulk_PO_Import_Template.xlsx');
 };
 
 export interface ItemLedgerExcelRow {
@@ -164,6 +188,6 @@ export const exportItemLedgerToExcel = (
   const dateStr = new Date().toISOString().split('T')[0];
   const filename = `${safeName}_Ledger_${dateStr}.xlsx`;
 
-  XLSX.writeFile(workbook, filename);
+  downloadExcel(workbook, filename);
 };
 

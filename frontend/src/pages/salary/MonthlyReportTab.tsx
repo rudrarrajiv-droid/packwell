@@ -389,7 +389,10 @@ export default function MonthlyReportTab() {
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Activity Matrix');
-    XLSX.writeFile(workbook, `Monthly_Activity_Matrix_${fromDate}_to_${toDate}_${filter}.xlsx`);
+    
+    import('../../utils/exportUtils').then(({ downloadExcel }) => {
+      downloadExcel(workbook, `Monthly_Activity_Matrix_${fromDate}_to_${toDate}_${filter}.xlsx`);
+    });
   };
 
   const handleExportExcel = () => {
@@ -415,7 +418,9 @@ export default function MonthlyReportTab() {
       const worksheet = XLSX.utils.json_to_sheet(exportData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Salary Report");
-      XLSX.writeFile(workbook, `Salary_Report_${fromDate}_to_${toDate}_${filter}.xlsx`);
+      import('../../utils/exportUtils').then(({ downloadExcel }) => {
+        downloadExcel(workbook, `Salary_Report_${fromDate}_to_${toDate}_${filter}.xlsx`);
+      });
     } else {
       if (dateWiseData.length === 0) {
         alert("No data available to export for this period.");
@@ -434,7 +439,9 @@ export default function MonthlyReportTab() {
       const worksheet = XLSX.utils.json_to_sheet(exportData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Date_Wise_Salary");
-      XLSX.writeFile(workbook, `Date_Wise_Salary_${fromDate}_to_${toDate}_${filter}.xlsx`);
+      import('../../utils/exportUtils').then(({ downloadExcel }) => {
+        downloadExcel(workbook, `Date_Wise_Salary_${fromDate}_to_${toDate}_${filter}.xlsx`);
+      });
     }
   };
 

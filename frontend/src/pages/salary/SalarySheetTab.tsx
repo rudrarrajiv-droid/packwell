@@ -225,7 +225,10 @@ export default function SalarySheetTab() {
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Salary Sheet");
-    XLSX.writeFile(workbook, `Salary_Sheet_${filter}_${fromDate}_to_${toDate}.xlsx`);
+    
+    import('../../utils/exportUtils').then(({ downloadExcel }) => {
+      downloadExcel(workbook, `Salary_Sheet_${filter}_${fromDate}_to_${toDate}.xlsx`);
+    });
   };
 
   const thClass = "px-2 py-2 border border-border text-center font-semibold text-muted-foreground whitespace-nowrap text-xs bg-muted/50";
