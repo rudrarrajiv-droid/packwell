@@ -16,6 +16,7 @@ import RMBulkImportModal from './rm/RMBulkImportModal';
 import RMAdjustModal from './rm/RMAdjustModal';
 import RMBulkPurchaseInModal from './rm/RMBulkPurchaseInModal';
 import RMPurchaseRegisterModal from './rm/RMPurchaseRegisterModal';
+import RMAuditModal from './rm/RMAuditModal';
 
 export default function RM() {
   const { user } = useAuth();
@@ -30,6 +31,7 @@ export default function RM() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isBulkPurchaseInOpen, setIsBulkPurchaseInOpen] = useState(false);
   const [isPurchaseRegisterOpen, setIsPurchaseRegisterOpen] = useState(false);
+  const [isAuditOpen, setIsAuditOpen] = useState(false);
   
   const [selectedRM, setSelectedRM] = useState<RawMaterial | null>(null);
 
@@ -179,11 +181,11 @@ export default function RM() {
 
           {/* Stock Audit Button */}
           <button 
-            onClick={handleOpenGeneralAdjust}
+            onClick={() => setIsAuditOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded-xl transition-all text-xs font-semibold shadow-2xs"
           >
             <Scale className="w-4 h-4" />
-            Stock Audit
+            RM Audit
           </button>
 
           {/* Purchase IN Button */}
@@ -474,6 +476,13 @@ export default function RM() {
         onClose={() => setIsPurchaseRegisterOpen(false)}
         allRMs={rmList}
         onUpdate={refetch}
+      />
+
+      {/* RM Audit Modal */}
+      <RMAuditModal
+        isOpen={isAuditOpen}
+        onClose={() => setIsAuditOpen(false)}
+        onSuccess={refetch}
       />
     </div>
   );

@@ -87,7 +87,11 @@ export default function RMBulkPurchaseInModal({
   };
 
   const updateItem = (id: string, field: keyof BulkItem, value: any) => {
-    setItems(items.map(item => item.id === id ? { ...item, [field]: value } : item));
+    setItems(prevItems => prevItems.map(item => item.id === id ? { ...item, [field]: value } : item));
+  };
+
+  const updateItemFields = (id: string, updates: Partial<BulkItem>) => {
+    setItems(prevItems => prevItems.map(item => item.id === id ? { ...item, ...updates } : item));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -215,13 +219,6 @@ export default function RMBulkPurchaseInModal({
                 </thead>
                 <tbody className="divide-y divide-border">
                   {items.map((item, index) => {
-                    const matchedRMs = item.materialQuery.trim() 
-                      ? allRMs.filter(rm => rm.name.toLowerCase().includes(item.materialQuery.toLowerCase().trim()))
-                      : allRMs;
-                    
-                    const exactMatch = allRMs.find(rm => rm.name.toLowerCase().trim() === item.materialQuery.toLowerCase().trim());
-                    const isNewMaterial = item.materialQuery.trim().length > 0 && !exactMatch && !item.selectedMaterialId;
-                    
                     const rowAmount = (Number(item.quantity) || 0) * (Number(item.rate) || 0);
 
                     return (
@@ -259,55 +256,11 @@ export default function RMBulkPurchaseInModal({
                         </td>
 
                         <td className="px-3 py-2 relative">
-                          <div className="relative">
-                            <input
-                              type="text"
-                              required
-                              value={item.materialQuery}
-                              onFocus={() => updateItem(item.id, 'isDropdownOpen', true)}
-                              onBlur={() => setTimeout(() => updateItem(item.id, 'isDropdownOpen', false), 200)}
-                              onChange={(e) => {
-                                updateItem(item.id, 'materialQuery', e.target.value);
-                                updateItem(item.id, 'selectedMaterialId', null);
-                                updateItem(item.id, 'isDropdownOpen', true);
-                              }}
-                              placeholder="Search item..."
-                              className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs font-semibold focus:ring-2 focus:ring-primary/20 focus:border-primary pr-6"
-                            />
-                            <Search className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                          </div>
-                          
-                          {item.isDropdownOpen && item.materialQuery.trim() && (
-                            <div className="absolute z-50 left-0 right-0 mt-1 bg-popover border border-border rounded-xl shadow-xl max-h-48 overflow-auto py-1">
-                              {matchedRMs.map((rm) => (
-                                <button
-                                  key={rm.id}
-                                  type="button"
-                                  onMouseDown={() => {
-                                    updateItem(item.id, 'selectedMaterialId', rm.id);
-                                    updateItem(item.id, 'materialQuery', rm.name);
-                                    if (rm.rate && !item.rate) {
-                                      updateItem(item.id, 'rate', rm.rate);
-                                    }
-                                    updateItem(item.id, 'isDropdownOpen', false);
-                                  }}
-                                  className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex items-center justify-between transition-colors"
-                                >
-                                  <div>
-                                    <span className="font-semibold text-foreground">{rm.name}</span>
-                                    <span className="text-xs text-muted-foreground ml-2">(Rate: ₹{rm.rate})</span>
-                                  </div>
-                                  {item.selectedMaterialId === rm.id && <Check className="w-4 h-4 text-primary" />}
-                                </button>
-                              ))}
-                              {isNewMaterial && (
-                                <div className="px-3 py-2 bg-amber-500/10 text-xs text-amber-700 dark:text-amber-300 flex items-center gap-2 border-t border-border">
-                                  <Sparkles className="w-3 h-3 shrink-0" />
-                                  <span>Auto-create: <b>"{item.materialQuery.trim()}"</b></span>
-                                </div>
-                              )}
-                            </div>
-                          )}
+                          <MaterialSearchSelect
+                            item={item}
+                            allRMs={allRMs}
+                            updateItemFields={updateItemFields}
+                          />
                         </td>
 
                         <td className="px-3 py-2">
@@ -403,6 +356,81 @@ export default function RMBulkPurchaseInModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function MaterialSearchSelect({ item, allRMs, updateItemFields }: { item: BulkItem, allRMs: RawMaterial[], updateItemFields: (id: string, updates: Partial<BulkItem>) => void }) {
+  const [searchText, setSearchText] = useState(item.materialQuery || '');
+  const [isOpen, setIsOpen] = useState(false);
+
+  // Sync initial state if it changes from outside
+  useEffect(() => {
+    setSearchText(item.materialQuery || '');
+  }, [item.materialQuery]);
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchText(e.target.value);
+    setIsOpen(true);
+    updateItemFields(item.id, {
+      materialQuery: e.target.value,
+      selectedMaterialId: null
+    });
+  };
+
+  const matchedRMs = searchText.trim() 
+    ? allRMs.filter(rm => rm.name.toLowerCase().includes(searchText.toLowerCase().trim()))
+    : allRMs;
+  
+  const exactMatch = allRMs.find(rm => rm.name.toLowerCase().trim() === searchText.toLowerCase().trim());
+  const isNewMaterial = searchText.trim().length > 0 && !exactMatch && !item.selectedMaterialId;
+
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        required
+        value={searchText}
+        onFocus={() => setIsOpen(true)}
+        onBlur={() => setTimeout(() => setIsOpen(false), 200)}
+        onChange={handleTextChange}
+        placeholder="Search item..."
+        className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs font-semibold focus:ring-2 focus:ring-primary/20 focus:border-primary pr-6"
+      />
+      <Search className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+      
+      {isOpen && searchText.trim() && (
+        <div className="absolute z-50 left-0 right-0 mt-1 bg-popover border border-border rounded-xl shadow-xl max-h-48 overflow-auto py-1">
+          {matchedRMs.map((rm) => (
+            <button
+              key={rm.id}
+              type="button"
+              onMouseDown={() => {
+                setSearchText(rm.name);
+                updateItemFields(item.id, {
+                  selectedMaterialId: rm.id,
+                  materialQuery: rm.name,
+                  ...(rm.rate && !item.rate ? { rate: rm.rate } : {})
+                });
+                setIsOpen(false);
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex items-center justify-between transition-colors"
+            >
+              <div>
+                <span className="font-semibold text-foreground">{rm.name}</span>
+                <span className="text-xs text-muted-foreground ml-2">(Rate: ₹{rm.rate})</span>
+              </div>
+              {item.selectedMaterialId === rm.id && <Check className="w-4 h-4 text-primary" />}
+            </button>
+          ))}
+          {isNewMaterial && (
+            <div className="px-3 py-2 bg-amber-500/10 text-xs text-amber-700 dark:text-amber-300 flex items-center gap-2 border-t border-border">
+              <Sparkles className="w-3 h-3 shrink-0" />
+              <span>Auto-create: <b>"{searchText.trim()}"</b></span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
