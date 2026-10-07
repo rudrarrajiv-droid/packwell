@@ -1236,9 +1236,17 @@ export default function MR() {
                     className="w-28 text-right bg-slate-50 border border-slate-200 rounded px-2 py-0.5 font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 print:hidden"
                   />
                 </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-100 bg-indigo-50/40 px-2 rounded print:py-0.5">
-                  <span className="text-indigo-900 font-semibold">Paper Stock (Closing)</span>
-                  <span className="font-black text-indigo-900">₹ {formatINR(paperStockValue)}</span>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100 bg-indigo-50/40 px-2 mt-1 print:py-0.5">
+                  <span className="text-indigo-900 font-semibold">Semi Kraft Paper Stock (Closing)</span>
+                  <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Semi Kraft']?.cloAmt || 0)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100 bg-indigo-50/40 px-2 print:py-0.5">
+                  <span className="text-indigo-900 font-semibold">Virgin Kraft Paper Stock (Closing)</span>
+                  <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Virgin Kraft']?.cloAmt || 0)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-slate-100 bg-indigo-50/40 px-2 mb-1 print:py-0.5">
+                  <span className="text-indigo-900 font-semibold">Duplex Paper Stock (Closing)</span>
+                  <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Chennai']?.cloAmt || 0)}</span>
                 </div>
                 <div className="flex justify-between items-center py-1 print:py-0.5">
                   <span className="text-slate-600 font-medium">Raw Material Stock</span>
