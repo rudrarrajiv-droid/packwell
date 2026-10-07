@@ -1217,15 +1217,15 @@ export default function MR() {
               </div>
               <div className="p-4 space-y-1.5 text-xs print:p-2 print:text-[9px]">
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
-                  <span className="text-slate-600 font-medium">Finish Goods Stock</span>
+                  <span className="text-slate-600 font-medium">Finished Goods Inventory (Closing)</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(fgStockValue)}</span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
-                  <span className="text-slate-600 font-medium">Non-Moving Stock</span>
+                  <span className="text-slate-600 font-medium">Slow-Moving / Obsolete Inventory</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(nonMovingStockValue)}</span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
-                  <span className="text-slate-600 font-medium">Work in Process (WIP)</span>
+                  <span className="text-slate-600 font-medium">Work in Progress Inventory (Closing)</span>
                   <span className="hidden print:inline font-bold text-slate-900">₹ {formatINR(wipStockValue)}</span>
                   <div className="flex items-center gap-1.5 print:hidden">
                     <span className="font-bold text-slate-900">₹</span>
@@ -1240,19 +1240,19 @@ export default function MR() {
                   </div>
                 </div>
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mt-1 rounded-t print:py-0.5 print:px-0 print:bg-transparent">
-                  <span className="text-indigo-900 font-semibold">Semi Kraft Paper Stock (Closing)</span>
+                  <span className="text-indigo-900 font-semibold">Raw Material Inventory: Semi Kraft Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Semi Kraft']?.cloAmt || 0)}</span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 print:py-0.5 print:px-0 print:bg-transparent">
-                  <span className="text-indigo-900 font-semibold">Virgin Kraft Paper Stock (Closing)</span>
+                  <span className="text-indigo-900 font-semibold">Raw Material Inventory: Virgin Kraft Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Virgin Kraft']?.cloAmt || 0)}</span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mb-1 rounded-b print:py-0.5 print:px-0 print:bg-transparent">
-                  <span className="text-indigo-900 font-semibold">Duplex Paper Stock (Closing)</span>
+                  <span className="text-indigo-900 font-semibold">Raw Material Inventory: Duplex Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Chennai']?.cloAmt || 0)}</span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 px-3 print:py-0.5 print:px-0">
-                  <span className="text-slate-600 font-medium">Raw Material Stock</span>
+                  <span className="text-slate-600 font-medium">Other Raw Materials & Consumables</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(rmStockValue)}</span>
                 </div>
               </div>
