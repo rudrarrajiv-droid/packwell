@@ -117,6 +117,18 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
       const reqGSM = Number(layer.gsm);
       const reqType = (layer.paperType || '').toLowerCase();
 
+      // Machine Concurrency Rule (Layer 1 (P2) cannot share physical reel with Layer 0 (Top))
+      const restrictedReelIds = new Set<string>();
+      const lName = (layer.layerName || '').toLowerCase().trim();
+      if (layer.originalIndex === 1 || lName.includes('p2')) {
+         const prevAlloc = initialAllocations.find(a => a.layerIndex === 0);
+         if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
+      }
+      if (layer.originalIndex === 3 || lName.includes('p4')) {
+         const prevAlloc = initialAllocations.find(a => a.layerIndex === 2);
+         if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
+      }
+
       // Define match passes: First Exact, then Replacements
       let matchPasses = [{ bf: reqBF, gsm: reqGSM }];
       if (reqBF === 16 && reqGSM === 100) matchPasses.push({ bf: 18, gsm: 120 });
@@ -145,6 +157,7 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
                }
             }
             if (Number(r.reelSize) !== targetSize) return false;
+            if (restrictedReelIds.has(r.id)) return false; // Block concurrent machine feeding overlap
             return true;
           });
 
@@ -405,6 +418,18 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
       });
     });
 
+    // Machine Concurrency Restriction for Manual Allocation
+    const restrictedReelIds = new Set<string>();
+    const lName = (reqLayer.layerName || '').toLowerCase().trim();
+    if (manualLayerIndex === 1 || lName.includes('p2')) {
+       const prevAlloc = allocations.find(a => a.layerIndex === 0);
+       if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
+    }
+    if (manualLayerIndex === 3 || lName.includes('p4')) {
+       const prevAlloc = allocations.find(a => a.layerIndex === 2);
+       if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
+    }
+
     let results = rawReels
       .map(r => {
         const avail = Math.max(0, (r.currentBalance || 0) - (r.activeReservedWeight || 0) + (selfReservedWeights[r.id] || 0) - (uiReserved[r.id] || 0));
@@ -413,6 +438,7 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
       .filter(r => {
          // Hide zero balance reels from manual search unless explicitly searching by reel number
          if (manualSearch.reelNumber && String(r.reelNumber).toLowerCase().includes(manualSearch.reelNumber.toLowerCase())) return true;
+         if (restrictedReelIds.has(r.id)) return false; // Prevent concurrent machine selection
          return r.availableAllocationWeight > 0;
       })
       .map(r => {
