@@ -112,7 +112,8 @@ export default function MR() {
   const [userAddedExpenses, setUserAddedExpenses] = useState<string[]>([
     "Freight Outward Charges",
     "Salary with Director Remuneration",
-    "Consumable Goods (Excl. Gas)"
+    "Consumable Goods (Excl. Gas)",
+    "LPG Cylinder"
   ]);
   const [expenseSearchQuery, setExpenseSearchQuery] = useState('');
   const [showExpenseDropdown, setShowExpenseDropdown] = useState(false);
@@ -193,12 +194,12 @@ export default function MR() {
     );
   }, [monthAttendance]);
 
-  // 3. AUTO-CALCULATE CONSUMABLE GOODS DIRECTLY FROM RAW MATERIAL OUTWARD VALUES (STRICT MONTH FILTER)
-  const autoConsumableGoods = useMemo(() => {
-    const rmMap = new Map<string, number>();
+  // 3. AUTO-CALCULATE CONSUMABLE GOODS & LPG DIRECTLY FROM RAW MATERIAL OUTWARD VALUES
+  const { autoConsumableGoods, autoLpgCylinder } = useMemo(() => {
+    const rmMap = new Map<string, { rate: number; name: string }>();
     rmList.forEach(rm => {
       if (rm.id) {
-        rmMap.set(rm.id, Number(rm.rate) || 0);
+        rmMap.set(rm.id, { rate: Number(rm.rate) || 0, name: rm.name || '' });
       }
     });
 
@@ -218,13 +219,27 @@ export default function MR() {
       return false;
     });
 
-    return Math.round(
-      monthlyOutTxns.reduce((sum, t) => {
-        const itemRate = t.rate || (t.rawMaterialId ? rmMap.get(t.rawMaterialId) : 0) || 0;
-        const amt = (t.amount !== undefined && t.amount > 0) ? t.amount : (t.quantity * itemRate);
-        return sum + amt;
-      }, 0)
-    );
+    let consumableSum = 0;
+    let lpgSum = 0;
+
+    monthlyOutTxns.forEach(t => {
+      const rmInfo = t.rawMaterialId ? rmMap.get(t.rawMaterialId) : null;
+      const itemRate = t.rate || (rmInfo ? rmInfo.rate : 0) || 0;
+      const amt = (t.amount !== undefined && t.amount > 0) ? t.amount : (t.quantity * itemRate);
+      
+      const itemName = (rmInfo ? rmInfo.name : '').toLowerCase();
+      
+      if (itemName.includes('lpg gas 33kg') || itemName.includes('lpg cylinder')) {
+        lpgSum += amt;
+      } else {
+        consumableSum += amt;
+      }
+    });
+
+    return {
+      autoConsumableGoods: Math.round(consumableSum),
+      autoLpgCylinder: Math.round(lpgSum)
+    };
   }, [rmList, rmTransactions, currentMonth]);
 
   // Load saved values from database
@@ -236,7 +251,8 @@ export default function MR() {
       const activeExpNames: string[] = [
         "Freight Outward Charges",
         "Salary with Director Remuneration",
-        "Consumable Goods (Excl. Gas)"
+        "Consumable Goods (Excl. Gas)",
+        "LPG Cylinder"
       ];
 
       report.expenses.forEach(e => {
@@ -356,6 +372,9 @@ export default function MR() {
       }
       if ((dataToSave['EXP:Consumable Goods (Excl. Gas)'] === undefined || dataToSave['EXP:Consumable Goods (Excl. Gas)'] === 0) && autoConsumableGoods > 0) {
         dataToSave['EXP:Consumable Goods (Excl. Gas)'] = autoConsumableGoods;
+      }
+      if ((dataToSave['EXP:LPG Cylinder'] === undefined || dataToSave['EXP:LPG Cylinder'] === 0) && autoLpgCylinder > 0) {
+        dataToSave['EXP:LPG Cylinder'] = autoLpgCylinder;
       }
 
       await saveBatchMonthlyExpenses(report.id, dataToSave, user?.name || 'System');
@@ -552,6 +571,9 @@ export default function MR() {
     if (cat === "Consumable Goods (Excl. Gas)" || cat === "Consumable Goods") {
       return autoConsumableGoods;
     }
+    if (cat === "LPG Cylinder") {
+      return autoLpgCylinder;
+    }
     return manualVal || 0;
   };
 
@@ -562,13 +584,14 @@ export default function MR() {
       if (
         exp === "Freight Outward Charges" || 
         exp === "Salary with Director Remuneration" ||
-        exp === "Consumable Goods (Excl. Gas)"
+        exp === "Consumable Goods (Excl. Gas)" ||
+        exp === "LPG Cylinder"
       ) return true; // Always visible as core auto-mapped items
       if (userAddedExpenses.includes(exp)) return true;
       const amt = getEffectiveExpenseValue(exp);
       return amt !== undefined && amt !== 0;
     });
-  }, [activeOnlyMode, allExpensesList, userAddedExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods]);
+  }, [activeOnlyMode, allExpensesList, userAddedExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder]);
 
   const unselectedExpenses = useMemo(() => {
     return allExpensesList.filter(e => !visibleExpenses.includes(e));
@@ -584,7 +607,7 @@ export default function MR() {
   // Operational Expenses calculation
   const totalExpenses = useMemo(() => {
     return allExpensesList.reduce((acc, cat) => acc + getEffectiveExpenseValue(cat), 0);
-  }, [allExpensesList, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods]);
+  }, [allExpensesList, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder]);
 
   // NET PROFIT
   const netProfit = grandDiffWOGST - totalExpenses;
@@ -615,7 +638,7 @@ export default function MR() {
       name: exp,
       amount: getEffectiveExpenseValue(exp)
     }));
-  }, [visibleExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods]);
+  }, [visibleExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder]);
 
   // Parameters pack for PDF and Excel export
   const exportParams = useMemo(() => ({
