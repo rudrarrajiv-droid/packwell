@@ -1215,40 +1215,43 @@ export default function MR() {
                 </div>
                 <span className="text-xs font-black text-emerald-400 print:text-[9px]">₹ {formatINR(grandTotalStock)}</span>
               </div>
-              <div className="p-4 space-y-2 text-xs print:p-2 print:text-[9px]">
-                <div className="flex justify-between items-center py-1 border-b border-slate-100 print:py-0.5">
+              <div className="p-4 space-y-1.5 text-xs print:p-2 print:text-[9px]">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
                   <span className="text-slate-600 font-medium">Finish Goods Stock</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(fgStockValue)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-100 print:py-0.5">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
                   <span className="text-slate-600 font-medium">Non-Moving Stock</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(nonMovingStockValue)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-100 print:py-0.5">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
                   <span className="text-slate-600 font-medium">Work in Process (WIP)</span>
-                  <span className="hidden print:inline font-bold">₹ {formatINR(wipStockValue)}</span>
-                  <input
-                    type="number"
-                    placeholder="0"
-                    value={manualData['STOCK:WIP'] !== undefined ? (manualData['STOCK:WIP'] || '') : ''}
-                    onChange={(e) => handleManualChange('STOCK:WIP', e.target.value)}
-                    onBlur={handleSave}
-                    className="w-28 text-right bg-slate-50 border border-slate-200 rounded px-2 py-0.5 font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 print:hidden"
-                  />
+                  <span className="hidden print:inline font-bold text-slate-900">₹ {formatINR(wipStockValue)}</span>
+                  <div className="flex items-center gap-1.5 print:hidden">
+                    <span className="font-bold text-slate-900">₹</span>
+                    <input
+                      type="number"
+                      placeholder="0"
+                      value={manualData['STOCK:WIP'] !== undefined ? (manualData['STOCK:WIP'] || '') : ''}
+                      onChange={(e) => handleManualChange('STOCK:WIP', e.target.value)}
+                      onBlur={handleSave}
+                      className="w-28 text-right bg-slate-50 border border-slate-200 rounded px-2 py-1 font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
                 </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-100 bg-indigo-50/40 px-2 mt-1 print:py-0.5">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mt-1 rounded-t print:py-0.5 print:px-0 print:bg-transparent">
                   <span className="text-indigo-900 font-semibold">Semi Kraft Paper Stock (Closing)</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Semi Kraft']?.cloAmt || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-100 bg-indigo-50/40 px-2 print:py-0.5">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 print:py-0.5 print:px-0 print:bg-transparent">
                   <span className="text-indigo-900 font-semibold">Virgin Kraft Paper Stock (Closing)</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Virgin Kraft']?.cloAmt || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-100 bg-indigo-50/40 px-2 mb-1 print:py-0.5">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mb-1 rounded-b print:py-0.5 print:px-0 print:bg-transparent">
                   <span className="text-indigo-900 font-semibold">Duplex Paper Stock (Closing)</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Chennai']?.cloAmt || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1 print:py-0.5">
+                <div className="flex justify-between items-center py-1.5 px-3 print:py-0.5 print:px-0">
                   <span className="text-slate-600 font-medium">Raw Material Stock</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(rmStockValue)}</span>
                 </div>
