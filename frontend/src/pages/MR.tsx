@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { exportMRToPDF, exportMRToExcel } from '../lib/mrExportUtils';
+import PaperPurchaseDetailsModal from './PaperPurchaseDetailsModal';
+import TotalPaperPurchaseModal from './TotalPaperPurchaseModal';
 
 const DEFAULT_EXPENSE_CATEGORIES = [
   "Engineer Food and Lodge Expense",
@@ -125,6 +127,10 @@ export default function MR() {
 
   // Manual values state
   const [manualData, setManualData] = useState<Record<string, number>>({});
+  
+  // Paper Purchase Modal State
+  const [selectedPaperTypeForModal, setSelectedPaperTypeForModal] = useState<string | null>(null);
+  const [showTotalPurchaseModal, setShowTotalPurchaseModal] = useState(false);
 
   // Queries
   const { data: reels = [] } = useQuery({ queryKey: ['reels'], queryFn: getReels });
@@ -947,7 +953,13 @@ export default function MR() {
                     </td>
                     <td className="px-3 py-3 text-right text-slate-600 border-l border-slate-100 print:py-1">{formatINR(stats.opnQty)}</td>
                     <td className="px-3 py-3 text-right text-slate-700 border-r border-slate-100 font-medium print:py-1">₹ {formatINR(stats.opnAmt)}</td>
-                    <td className="px-3 py-3 text-right text-slate-600 print:py-1">{formatINR(stats.purQty)}</td>
+                    <td 
+                      className="px-3 py-3 text-right text-indigo-600 font-bold print:py-1 cursor-pointer hover:text-indigo-800 hover:underline hover:bg-indigo-50/50 transition-colors"
+                      onClick={() => setSelectedPaperTypeForModal(type)}
+                      title={`Click to view ${type} purchase details`}
+                    >
+                      {formatINR(stats.purQty)}
+                    </td>
                     <td className="px-3 py-3 text-right text-slate-700 border-r border-slate-100 font-medium print:py-1">₹ {formatINR(stats.purAmt)}</td>
                     <td className="px-3 py-3 text-right text-indigo-700 font-semibold bg-indigo-50/20 print:py-1">{formatINR(stats.conQty)}</td>
                     <td className="px-3 py-3 text-right text-indigo-900 font-bold bg-indigo-50/20 border-r border-slate-100 print:py-1">₹ {formatINR(stats.conAmt)}</td>
@@ -961,7 +973,13 @@ export default function MR() {
                   <td className="px-4 py-3 uppercase tracking-wider text-xs font-black text-indigo-300 print:text-slate-900 print:py-1">Total Paper Inventory</td>
                   <td className="px-3 py-3 text-right text-slate-300 border-l border-slate-800 print:text-slate-900 print:py-1">{formatINR(paperTotals.opnQty)}</td>
                   <td className="px-3 py-3 text-right text-white border-r border-slate-800 print:text-slate-900 print:py-1">₹ {formatINR(paperTotals.opnAmt)}</td>
-                  <td className="px-3 py-3 text-right text-slate-300 print:text-slate-900 print:py-1">{formatINR(paperTotals.purQty)}</td>
+                  <td 
+                    className="px-3 py-3 text-right text-indigo-300 font-bold print:text-slate-900 print:py-1 cursor-pointer hover:text-indigo-100 hover:underline transition-colors"
+                    onClick={() => setShowTotalPurchaseModal(true)}
+                    title="Click to view supplier-wise purchase breakdown"
+                  >
+                    {formatINR(paperTotals.purQty)}
+                  </td>
                   <td className="px-3 py-3 text-right text-white border-r border-slate-800 print:text-slate-900 print:py-1">₹ {formatINR(paperTotals.purAmt)}</td>
                   <td className="px-3 py-3 text-right text-indigo-300 print:text-slate-900 print:py-1">{formatINR(paperTotals.conQty)}</td>
                   <td className="px-3 py-3 text-right text-indigo-200 border-r border-slate-800 font-black print:text-slate-900 print:py-1">₹ {formatINR(paperTotals.conAmt)}</td>
@@ -1680,6 +1698,22 @@ export default function MR() {
 
       </div>
 
+      <PaperPurchaseDetailsModal
+        isOpen={!!selectedPaperTypeForModal}
+        onClose={() => setSelectedPaperTypeForModal(null)}
+        paperType={selectedPaperTypeForModal || ''}
+        reels={reels}
+        reelTxns={reelTxns}
+        currentMonth={currentMonth}
+      />
+
+      <TotalPaperPurchaseModal
+        isOpen={showTotalPurchaseModal}
+        onClose={() => setShowTotalPurchaseModal(false)}
+        reels={reels}
+        reelTxns={reelTxns}
+        currentMonth={currentMonth}
+      />
     </div>
   );
 }
