@@ -527,8 +527,22 @@ export default function MR() {
   const netSaleWithoutGST = (totalPartySaleWOGST + tallyDataWOGST) - creditNoteWOGST;
   const netSaleWithGST = (totalPartySaleWGST + tallyDataWGST) - creditNoteWGST;
 
-  const currentMonthPurchaseWOGST = manualData['PURCHASE:CURRENT_MONTH:WOGST'] || 0;
-  const currentMonthPurchaseWGST = manualData['PURCHASE:CURRENT_MONTH:WGST'] || 0;
+  const kraftPurchaseWOGST = manualData['PURCHASE:KRAFT_PAPER:WOGST'] || 0;
+  const kraftPurchaseWGST = manualData['PURCHASE:KRAFT_PAPER:WGST'] || 0;
+  
+  const consumablePurchaseWOGST = manualData['PURCHASE:CONSUMABLES:WOGST'] || 0;
+  const consumablePurchaseWGST = manualData['PURCHASE:CONSUMABLES:WGST'] || 0;
+
+  const legacyCurrentMonthPurchaseWOGST = manualData['PURCHASE:CURRENT_MONTH:WOGST'] || 0;
+  const legacyCurrentMonthPurchaseWGST = manualData['PURCHASE:CURRENT_MONTH:WGST'] || 0;
+
+  const currentMonthPurchaseWOGST = (kraftPurchaseWOGST + consumablePurchaseWOGST) > 0 
+    ? (kraftPurchaseWOGST + consumablePurchaseWOGST) 
+    : legacyCurrentMonthPurchaseWOGST;
+
+  const currentMonthPurchaseWGST = (kraftPurchaseWGST + consumablePurchaseWGST) > 0
+    ? (kraftPurchaseWGST + consumablePurchaseWGST)
+    : legacyCurrentMonthPurchaseWGST;
 
   // Paper Used:
   const paperUsedWOGST = manualData['PAPER_USED:WOGST'] !== undefined ? manualData['PAPER_USED:WOGST'] : paperTotals.conAmt;
@@ -1193,34 +1207,99 @@ export default function MR() {
             </div>
 
             {/* TOTAL MONTHLY PURCHASES */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 sm:p-5 space-y-3 print:border-slate-800 print:rounded-none print:p-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider print:text-[9px]">Current Month Purchase</span>
-                <Package className="w-4 h-4 text-slate-400 print:hidden" />
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden print:border-slate-800 print:rounded-none">
+              <div className="px-5 py-3 bg-slate-900 text-white flex items-center justify-between print:bg-slate-800 print:py-1">
+                <div className="flex items-center gap-2">
+                  <Package className="w-4 h-4 text-amber-400 print:hidden" />
+                  <h3 className="font-bold text-xs uppercase tracking-wider print:text-[9px]">Current Month Purchase</h3>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-3 print:gap-2">
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/70 print:p-1">
-                  <label className="block text-[11px] font-semibold text-slate-500 mb-1 print:text-[8px]">Without GST</label>
-                  <span className="hidden print:inline font-bold">₹ {formatINR(currentMonthPurchaseWOGST)}</span>
-                  <input
-                    type="number"
-                    placeholder="0"
-                    value={manualData['PURCHASE:CURRENT_MONTH:WOGST'] !== undefined ? (manualData['PURCHASE:CURRENT_MONTH:WOGST'] || '') : ''}
-                    onChange={(e) => handleManualChange('PURCHASE:CURRENT_MONTH:WOGST', e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 print:hidden"
-                  />
+              <div className="p-4 space-y-3 text-xs print:p-2 print:text-[9px] print:space-y-1">
+                
+                {/* Kraft Paper */}
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 print:p-1 print:border-none">
+                  <span className="block font-bold text-slate-700 mb-2 print:mb-1 uppercase tracking-wide text-[10px] print:text-[8px]">Kraft Paper Purchase</span>
+                  <div className="grid grid-cols-2 gap-3 print:gap-2">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">W/O GST</label>
+                      <span className="hidden print:inline font-bold">₹ {formatINR(kraftPurchaseWOGST)}</span>
+                      <div className="relative print:hidden">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={manualData['PURCHASE:KRAFT_PAPER:WOGST'] !== undefined ? (manualData['PURCHASE:KRAFT_PAPER:WOGST'] || '') : ''}
+                          onChange={(e) => handleManualChange('PURCHASE:KRAFT_PAPER:WOGST', e.target.value)}
+                          className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">With GST</label>
+                      <span className="hidden print:inline font-bold">₹ {formatINR(kraftPurchaseWGST)}</span>
+                      <div className="relative print:hidden">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={manualData['PURCHASE:KRAFT_PAPER:WGST'] !== undefined ? (manualData['PURCHASE:KRAFT_PAPER:WGST'] || '') : ''}
+                          onChange={(e) => handleManualChange('PURCHASE:KRAFT_PAPER:WGST', e.target.value)}
+                          className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/70 print:p-1">
-                  <label className="block text-[11px] font-semibold text-slate-500 mb-1 print:text-[8px]">With GST</label>
-                  <span className="hidden print:inline font-bold">₹ {formatINR(currentMonthPurchaseWGST)}</span>
-                  <input
-                    type="number"
-                    placeholder="0"
-                    value={manualData['PURCHASE:CURRENT_MONTH:WGST'] !== undefined ? (manualData['PURCHASE:CURRENT_MONTH:WGST'] || '') : ''}
-                    onChange={(e) => handleManualChange('PURCHASE:CURRENT_MONTH:WGST', e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 print:hidden"
-                  />
+
+                {/* Consumables */}
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 print:p-1 print:border-none mt-2">
+                  <span className="block font-bold text-slate-700 mb-2 print:mb-1 uppercase tracking-wide text-[10px] print:text-[8px]">Other Consumable Goods Purchase</span>
+                  <div className="grid grid-cols-2 gap-3 print:gap-2">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">W/O GST</label>
+                      <span className="hidden print:inline font-bold">₹ {formatINR(consumablePurchaseWOGST)}</span>
+                      <div className="relative print:hidden">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={manualData['PURCHASE:CONSUMABLES:WOGST'] !== undefined ? (manualData['PURCHASE:CONSUMABLES:WOGST'] || '') : ''}
+                          onChange={(e) => handleManualChange('PURCHASE:CONSUMABLES:WOGST', e.target.value)}
+                          className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">With GST</label>
+                      <span className="hidden print:inline font-bold">₹ {formatINR(consumablePurchaseWGST)}</span>
+                      <div className="relative print:hidden">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={manualData['PURCHASE:CONSUMABLES:WGST'] !== undefined ? (manualData['PURCHASE:CONSUMABLES:WGST'] || '') : ''}
+                          onChange={(e) => handleManualChange('PURCHASE:CONSUMABLES:WGST', e.target.value)}
+                          className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
+
+                {/* Totals */}
+                <div className="pt-3 border-t border-slate-200/80 print:border-slate-300 print:pt-1">
+                  <div className="grid grid-cols-2 gap-3 print:gap-2">
+                    <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 flex flex-col justify-center print:p-1 print:bg-transparent print:border-none">
+                      <span className="text-[10px] font-bold text-amber-900/60 uppercase tracking-wider print:text-[7px]">Total W/O GST</span>
+                      <span className="font-black text-amber-700 text-sm print:text-[9px] print:text-slate-900 mt-0.5">₹ {formatINR(currentMonthPurchaseWOGST)}</span>
+                    </div>
+                    <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 flex flex-col justify-center print:p-1 print:bg-transparent print:border-none">
+                      <span className="text-[10px] font-bold text-amber-900/60 uppercase tracking-wider print:text-[7px]">Total With GST</span>
+                      <span className="font-black text-amber-700 text-sm print:text-[9px] print:text-slate-900 mt-0.5">₹ {formatINR(currentMonthPurchaseWGST)}</span>
+                    </div>
+                  </div>
+                </div>
+
               </div>
             </div>
 
