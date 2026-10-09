@@ -95,7 +95,7 @@ const isDateInTargetMonth = (dateStr?: string | null, targetMonth: string = '202
 
 export default function MR() {
   const { user } = useAuth();
-  const [currentMonth, setCurrentMonth] = useState(format(new Date(), '2026-07'));
+  const [currentMonth, setCurrentMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   
