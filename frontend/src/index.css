@@ -100,6 +100,10 @@
     background: white;
     box-shadow: none !important;
   }
+
+  .print-fit-a4 {
+    zoom: 0.70;
+  }
 }
 
 .custom-scrollbar::-webkit-scrollbar {

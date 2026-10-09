@@ -121,13 +121,13 @@ export const exportMRToPDF = (params: MRExportParams) => {
     body: paperRows,
     foot: [paperTotalsRow],
     theme: 'grid',
-    styles: { fontSize: 7.5, cellPadding: 1.1, halign: 'right', textColor: [15, 23, 42] },
+    styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
     columnStyles: { 0: { halign: 'left', fontStyle: 'bold' } },
-    headStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' },
-    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 8 }
+    headStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6, halign: 'center' },
+    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 6.5 }
   });
 
-  const nextY = (doc as any).lastAutoTable.finalY + 3.5;
+  const nextY = (doc as any).lastAutoTable.finalY + 2;
   const leftColWidth = 105;
   const rightColX = 120;
 
@@ -160,14 +160,14 @@ export const exportMRToPDF = (params: MRExportParams) => {
     body: salesRows,
     foot: salesFoot,
     theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
     columnStyles: {
       0: { halign: 'left', fontStyle: 'bold', cellWidth: 45 },
       1: { halign: 'right', cellWidth: 30 },
       2: { halign: 'right', cellWidth: 30 }
     },
-    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' },
-    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 7.5 }
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6, halign: 'center' },
+    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 6.5 }
   });
 
   let leftFinalY = (doc as any).lastAutoTable.finalY;
@@ -176,23 +176,23 @@ export const exportMRToPDF = (params: MRExportParams) => {
   if ((params.currentMonthPurchaseWOGST !== undefined && params.currentMonthPurchaseWOGST !== 0) ||
       (params.currentMonthPurchaseWGST !== undefined && params.currentMonthPurchaseWGST !== 0)) {
     autoTable(doc, {
-      startY: leftFinalY + 2.5,
+      startY: leftFinalY + 1.5,
       margin: { left: 10, right: pageWidth - 10 - leftColWidth },
       head: [
-        [{ content: 'CURRENT MONTH PURCHASE', colSpan: 3, styles: { halign: 'center', fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7 } }],
+        [{ content: 'CURRENT MONTH PURCHASE', colSpan: 3, styles: { halign: 'center', fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6 } }],
         ['Particulars', 'Without GST', 'With GST']
       ],
       body: [
         ['Purchase', fmt(params.currentMonthPurchaseWOGST || 0), fmt(params.currentMonthPurchaseWGST || 0)]
       ],
       theme: 'grid',
-      styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+      styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
       columnStyles: {
         0: { halign: 'left', fontStyle: 'bold', cellWidth: 45 },
         1: { halign: 'right', cellWidth: 30 },
         2: { halign: 'right', cellWidth: 30 }
       },
-      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' }
+      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6, halign: 'center' }
     });
     leftFinalY = (doc as any).lastAutoTable.finalY;
   }
@@ -207,7 +207,7 @@ export const exportMRToPDF = (params: MRExportParams) => {
   ];
 
   autoTable(doc, {
-    startY: leftFinalY + 2.5,
+    startY: leftFinalY + 1.5,
     margin: { left: 10, right: pageWidth - 10 - leftColWidth },
     head: [
       [{ content: 'INVENTORY ASSET VALUATION', colSpan: 2, styles: { halign: 'center', fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' } }],
@@ -216,13 +216,13 @@ export const exportMRToPDF = (params: MRExportParams) => {
     body: stockRows,
     foot: [['Grand Total Stock', fmt(params.grandTotalStock)]],
     theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
     columnStyles: {
       0: { halign: 'left', fontStyle: 'bold', cellWidth: 65 },
       1: { halign: 'right', cellWidth: 40 }
     },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
-    footStyles: { fillColor: [220, 252, 231], textColor: [22, 101, 52], fontStyle: 'bold', fontSize: 7.5 }
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 6 },
+    footStyles: { fillColor: [220, 252, 231], textColor: [22, 101, 52], fontStyle: 'bold', fontSize: 6.5 }
   });
 
   // ================= RIGHT COLUMN =================
@@ -268,7 +268,7 @@ export const exportMRToPDF = (params: MRExportParams) => {
     body: reconRows,
     foot: reconFoot,
     theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
     columnStyles: {
       0: { halign: 'left', fontStyle: 'bold', cellWidth: 47 },
       1: { halign: 'right', cellWidth: 30 },
@@ -276,8 +276,8 @@ export const exportMRToPDF = (params: MRExportParams) => {
       3: { halign: 'right', cellWidth: 30 },
       4: { halign: 'right', cellWidth: 30 }
     },
-    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 7, halign: 'center' },
-    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 7.5 }
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6, halign: 'center' },
+    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 6.5 }
   });
 
   let rightFinalY = (doc as any).lastAutoTable.finalY;
@@ -308,7 +308,7 @@ export const exportMRToPDF = (params: MRExportParams) => {
   }
 
   autoTable(doc, {
-    startY: rightFinalY + 2.5,
+    startY: rightFinalY + 1.5,
     margin: { left: rightColX, right: 10 },
     head: [
       [
@@ -329,22 +329,22 @@ export const exportMRToPDF = (params: MRExportParams) => {
       ]
     ],
     theme: 'grid',
-    styles: { fontSize: 6.8, cellPadding: 1, halign: 'right', textColor: [15, 23, 42] },
+    styles: { fontSize: 5.5, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
     columnStyles: {
       0: { halign: 'left', fontStyle: 'bold', cellWidth: 51 },
       1: { halign: 'right', cellWidth: 32 },
       2: { halign: 'left', fontStyle: 'bold', cellWidth: 51 },
       3: { halign: 'right', cellWidth: 33 }
     },
-    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6.8, halign: 'center' },
-    footStyles: { fillColor: [255, 228, 230], textColor: [159, 18, 57], fontStyle: 'bold', fontSize: 7.2 }
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6, halign: 'center' },
+    footStyles: { fillColor: [255, 228, 230], textColor: [159, 18, 57], fontStyle: 'bold', fontSize: 6.5 }
   });
 
   rightFinalY = (doc as any).lastAutoTable.finalY;
 
   // 4C. Right Table 3: Profit & Loss Final Summary & Net Profit
   autoTable(doc, {
-    startY: rightFinalY + 2.5,
+    startY: rightFinalY + 1.5,
     margin: { left: rightColX, right: 10 },
     head: [
       [
@@ -357,17 +357,17 @@ export const exportMRToPDF = (params: MRExportParams) => {
     ],
     foot: [
       [
-        { content: `NET PROFIT  (${params.profitMarginPercent}% Margin)`, styles: { halign: 'left', fontStyle: 'bold', fontSize: 8 } },
-        { content: `Rs. ${fmt(params.netProfit)}`, styles: { halign: 'right', fontStyle: 'bold', fontSize: 8.5 } }
+        { content: `NET PROFIT  (${params.profitMarginPercent}% Margin)`, styles: { halign: 'left', fontStyle: 'bold', fontSize: 7 } },
+        { content: `Rs. ${fmt(params.netProfit)}`, styles: { halign: 'right', fontStyle: 'bold', fontSize: 7.5 } }
       ]
     ],
     theme: 'grid',
-    styles: { fontSize: 7, cellPadding: 1.1, textColor: [15, 23, 42] },
+    styles: { fontSize: 6, cellPadding: 0.8, textColor: [15, 23, 42] },
     columnStyles: {
       0: { halign: 'left', fontStyle: 'bold', cellWidth: 105 },
       1: { halign: 'right', fontStyle: 'bold', cellWidth: 62 }
     },
-    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold', fontSize: 6 },
     footStyles: params.netProfit >= 0
       ? { fillColor: [16, 185, 129], textColor: [255, 255, 255], fontStyle: 'bold' }
       : { fillColor: [225, 29, 72], textColor: [255, 255, 255], fontStyle: 'bold' }

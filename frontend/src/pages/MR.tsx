@@ -728,7 +728,7 @@ export default function MR() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50 font-sans text-slate-800 print:bg-white print:p-0">
+    <div className="flex flex-col min-h-screen bg-slate-50 font-sans text-slate-800 print:bg-white print:p-0 print-fit-a4">
       
       {/* 1. TOP HEADER & CONTROLS (Print Hidden) */}
       <div className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 print:hidden">
@@ -829,26 +829,26 @@ export default function MR() {
       </div>
 
       {/* PRINT HEADER BANNER (Visible on Print) */}
-      <div className="hidden print:block text-center py-4 border-b-2 border-slate-800 mb-4 bg-cyan-100">
-        <h1 className="text-xl font-black uppercase text-slate-900 tracking-wider">
+      <div className="hidden print:block text-center py-2 border-b-2 border-slate-800 mb-2 bg-cyan-100">
+        <h1 className="text-lg font-black uppercase text-slate-900 tracking-wider">
           PROFIT &amp; LOSS REPORT FOR THE M/O {monthFormattedTitle.toUpperCase()}
         </h1>
       </div>
 
-      <div className="p-4 sm:p-6 max-w-[1700px] mx-auto w-full space-y-6 print:p-2 print:space-y-4">
+      <div className="p-4 sm:p-6 max-w-[1700px] mx-auto w-full space-y-6 print:p-1 print:space-y-2 print:text-[9px]">
 
         {/* 2. EXECUTIVE KPI HERO CARDS (Print Friendly) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 print:grid-cols-5 print:gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 print:grid-cols-5 print:gap-1.5">
           
           {/* Card 1: Nett Sales */}
-          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-2 print:rounded-lg print:border-slate-300">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[10px]">Nett Revenue (Sale)</span>
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-1.5 print:rounded print:border-slate-300">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[8px]">Nett Revenue (Sale)</span>
               <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center print:hidden">
                 <Receipt className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl font-black text-slate-900 print:text-base">
+            <div className="text-2xl font-black text-slate-900 print:text-sm">
               ₹ {formatINR(netSaleWithoutGST)}
             </div>
             <div className="flex items-center gap-1.5 mt-2 text-[11px] font-medium text-slate-500 print:text-[9px]">
@@ -857,69 +857,69 @@ export default function MR() {
           </div>
 
           {/* Card 2: Total Purchases */}
-          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-2 print:rounded-lg print:border-slate-300">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[10px]">G. Total Purchase</span>
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-1.5 print:rounded print:border-slate-300">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[8px]">G. Total Purchase</span>
               <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center print:hidden">
                 <Package className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl font-black text-slate-900 print:text-base">
+            <div className="text-2xl font-black text-slate-900 print:text-sm">
               ₹ {formatINR(gTotalPurchaseWOGST)}
             </div>
-            <div className="flex items-center gap-1.5 mt-2 text-[11px] font-medium text-slate-500 print:text-[9px]">
+            <div className="flex items-center gap-1.5 mt-2 text-[11px] font-medium text-slate-500 print:text-[8px]">
               <span className="text-slate-700 font-bold">₹ {formatINR(gTotalPurchaseWGST)}</span> (With GST)
             </div>
           </div>
 
           {/* Card 3: Gross Difference */}
-          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-2 print:rounded-lg print:border-slate-300">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[10px]">Gross Difference</span>
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-1.5 print:rounded print:border-slate-300">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[8px]">Gross Difference</span>
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center print:hidden ${grandDiffWOGST >= 0 ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600'}`}>
                 {grandDiffWOGST >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
               </div>
             </div>
-            <div className={`text-2xl font-black print:text-base ${grandDiffWOGST >= 0 ? 'text-indigo-900' : 'text-rose-600'}`}>
+            <div className={`text-2xl font-black print:text-sm ${grandDiffWOGST >= 0 ? 'text-indigo-900' : 'text-rose-600'}`}>
               ₹ {formatINR(grandDiffWOGST)}
             </div>
-            <div className="flex items-center gap-1.5 mt-2 text-[11px] font-medium text-slate-500 print:text-[9px]">
+            <div className="flex items-center gap-1.5 mt-2 text-[11px] font-medium text-slate-500 print:text-[8px]">
               Sale minus Purchase
             </div>
           </div>
 
           {/* Card 4: Overheads / Expenses */}
-          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-2 print:rounded-lg print:border-slate-300">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[10px]">Total Expenses</span>
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm relative overflow-hidden group hover:shadow-md transition print:p-1.5 print:rounded print:border-slate-300">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider print:text-[8px]">Total Expenses</span>
               <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center print:hidden">
                 <Wallet className="w-4 h-4" />
               </div>
             </div>
-            <div className="text-2xl font-black text-slate-900 print:text-base">
+            <div className="text-2xl font-black text-slate-900 print:text-sm">
               ₹ {formatINR(totalExpenses)}
             </div>
-            <div className="flex items-center gap-1.5 mt-2 text-[11px] font-medium text-slate-500 print:text-[9px]">
+            <div className="flex items-center gap-1.5 mt-2 text-[11px] font-medium text-slate-500 print:text-[8px]">
               <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold">{visibleExpenses.length}</span> Active Overheads
             </div>
           </div>
 
           {/* Card 5: HERO NET PROFIT */}
-          <div className={`rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden transition print:p-2 print:rounded-lg ${
+          <div className={`rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden transition print:p-1.5 print:rounded ${
             netProfit >= 0 
               ? 'bg-gradient-to-br from-emerald-600 via-teal-700 to-slate-900 text-white shadow-emerald-200 print:bg-emerald-700' 
               : 'bg-gradient-to-br from-rose-600 via-red-700 to-slate-900 text-white shadow-rose-200 print:bg-rose-700'
           }`}>
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider opacity-90 print:text-[10px]">NET PROFIT</span>
-              <span className="bg-white/20 text-white text-[11px] font-black px-2 py-0.5 rounded-full backdrop-blur-sm print:text-[9px]">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-bold uppercase tracking-wider opacity-90 print:text-[8px]">NET PROFIT</span>
+              <span className="bg-white/20 text-white text-[11px] font-black px-2 py-0.5 rounded-full backdrop-blur-sm print:text-[7px]">
                 {profitMarginPercent}%
               </span>
             </div>
-            <div className="text-2xl sm:text-3xl font-black tracking-tight mt-1 print:text-base">
+            <div className="text-2xl sm:text-3xl font-black tracking-tight mt-1 print:text-sm">
               ₹ {formatINR(netProfit)}
             </div>
-            <div className="text-[11px] opacity-80 mt-2 font-medium print:text-[8px]">
+            <div className="text-[11px] opacity-80 mt-2 font-medium print:text-[7px]">
               Gross Diff - Expenses
             </div>
           </div>
@@ -928,12 +928,12 @@ export default function MR() {
 
         {/* 3. PAPER INVENTORY RECONCILIATION TABLE */}
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden print:border-slate-800 print:rounded-none">
-          <div className="px-5 py-3.5 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between print:bg-slate-800 print:py-2">
+          <div className="px-5 py-3.5 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between print:bg-slate-800 print:py-1 print:px-2">
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-indigo-400 print:hidden" />
-              <h3 className="font-bold text-sm print:text-xs">Paper Inventory &amp; Consumption Reconciliation</h3>
+              <h3 className="font-bold text-sm print:text-[9px]">Paper Inventory &amp; Consumption Reconciliation</h3>
             </div>
-            <span className="text-xs font-semibold text-slate-300 print:text-[10px]">Auto-calculated from Reel Master &amp; Transactions</span>
+            <span className="text-xs font-semibold text-slate-300 print:text-[7px]">Auto-calculated from Reel Master &amp; Transactions</span>
           </div>
 
           <div className="overflow-x-auto">
