@@ -33,6 +33,10 @@ export interface MRExportParams {
   grandDiffWGST: number;
   visibleExpenses: string[];
   expenseBreakup?: MRExpenseItem[];
+  kraftPurchaseWOGST?: number;
+  kraftPurchaseWGST?: number;
+  consumablePurchaseWOGST?: number;
+  consumablePurchaseWGST?: number;
   currentMonthPurchaseWOGST?: number;
   currentMonthPurchaseWGST?: number;
   totalExpenses: number;
@@ -58,22 +62,55 @@ const fmtDiff = (val: number) => {
 };
 
 /**
- * Generate a beautifully structured Multi-table PDF for Profit & Loss
+ * Triggers a file download using a Blob Object URL with a long lifetime.
+ * Libraries like jsPDF and SheetJS internally revoke URLs after 100ms,
+ * which causes Windows Chrome to lose the filename and save files as UUIDs.
+ * Data URLs are blocked by Chrome security.
+ * Keeping the Object URL alive for 2 minutes guarantees proper filename and extension preservation.
  */
-export const exportMRToPDF = (params: MRExportParams) => {
+export const downloadBlobFile = (blob: Blob, filename: string) => {
+  try {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.setAttribute('download', filename);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try {
+        if (a.parentNode) {
+          document.body.removeChild(a);
+        }
+        window.URL.revokeObjectURL(url);
+      } catch {}
+    }, 120000);
+  } catch (err) {
+    console.error('Download error:', err);
+  }
+};
+
+/**
+ * Build the jsPDF document object with complete P&L formatting
+ */
+export const buildMRPDFDoc = (params: MRExportParams): jsPDF => {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
 
   // 1. Header Banner
-  doc.setFillColor(0, 229, 255); // Cyan #00e5ff
-  doc.rect(10, 10, pageWidth - 20, 12, 'F');
-  doc.setDrawColor(30, 41, 59);
-  doc.rect(10, 10, pageWidth - 20, 12, 'S');
+  doc.setFillColor(30, 58, 138); // Deep Navy Blue #1e3a8a
+  doc.roundedRect(10, 8, pageWidth - 20, 13, 1.5, 1.5, 'F');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(15, 23, 42);
-  doc.text(`PROFIT & LOSS REPORT FOR THE M/O ${params.monthFormattedTitle.toUpperCase()}`, pageWidth / 2, 17.5, { align: 'center' });
+  doc.setFontSize(12);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`PROFIT & LOSS REPORT FOR THE M/O ${params.monthFormattedTitle.toUpperCase()}`, pageWidth / 2, 14.5, { align: 'center' });
+  
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(219, 234, 254);
+  doc.text('PACKWELL INDIA  |  EXECUTIVE STATEMENT', pageWidth / 2, 18.5, { align: 'center' });
 
   // 2. Table 1: Paper Inventory
   const paperRows = Object.entries(params.paperStats).map(([type, s]) => [
@@ -172,38 +209,57 @@ export const exportMRToPDF = (params: MRExportParams) => {
 
   let leftFinalY = (doc as any).lastAutoTable.finalY;
 
-  // 3B. Current Month Purchase (Matching Profit & Loss UI)
-  if ((params.currentMonthPurchaseWOGST !== undefined && params.currentMonthPurchaseWOGST !== 0) ||
-      (params.currentMonthPurchaseWGST !== undefined && params.currentMonthPurchaseWGST !== 0)) {
-    autoTable(doc, {
-      startY: leftFinalY + 1.5,
-      margin: { left: 10, right: pageWidth - 10 - leftColWidth },
-      head: [
-        [{ content: 'CURRENT MONTH PURCHASE', colSpan: 3, styles: { halign: 'center', fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6 } }],
-        ['Particulars', 'Without GST', 'With GST']
-      ],
-      body: [
-        ['Purchase', fmt(params.currentMonthPurchaseWOGST || 0), fmt(params.currentMonthPurchaseWGST || 0)]
-      ],
-      theme: 'grid',
-      styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
-      columnStyles: {
-        0: { halign: 'left', fontStyle: 'bold', cellWidth: 45 },
-        1: { halign: 'right', cellWidth: 30 },
-        2: { halign: 'right', cellWidth: 30 }
-      },
-      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6, halign: 'center' }
-    });
-    leftFinalY = (doc as any).lastAutoTable.finalY;
-  }
+  // 3B. Current Month Purchase (Matching Profit & Loss Detailed UI)
+  const kraftWOGST = params.kraftPurchaseWOGST || 0;
+  const kraftWGST = params.kraftPurchaseWGST || 0;
+  const consWOGST = params.consumablePurchaseWOGST || 0;
+  const consWGST = params.consumablePurchaseWGST || 0;
+  const totalPurWOGST = params.currentMonthPurchaseWOGST !== undefined && params.currentMonthPurchaseWOGST !== 0
+    ? params.currentMonthPurchaseWOGST
+    : (kraftWOGST + consWOGST);
+  const totalPurWGST = params.currentMonthPurchaseWGST !== undefined && params.currentMonthPurchaseWGST !== 0
+    ? params.currentMonthPurchaseWGST
+    : (kraftWGST + consWGST);
 
-  // 3C. Stock Valuation Table below Sales
+  autoTable(doc, {
+    startY: leftFinalY + 1.5,
+    margin: { left: 10, right: pageWidth - 10 - leftColWidth },
+    head: [
+      [{ content: 'CURRENT MONTH PURCHASE', colSpan: 3, styles: { halign: 'center', fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 6 } }],
+      ['Particulars', 'Without GST', 'With GST']
+    ],
+    body: [
+      ['Kraft Paper Purchase', fmt(kraftWOGST), fmt(kraftWGST)],
+      ['Other Consumable Goods Purchase', fmt(consWOGST), fmt(consWGST)]
+    ],
+    foot: [
+      ['TOTAL CURRENT MONTH PURCHASE', fmt(totalPurWOGST), fmt(totalPurWGST)]
+    ],
+    theme: 'grid',
+    styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
+    columnStyles: {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 45 },
+      1: { halign: 'right', cellWidth: 30 },
+      2: { halign: 'right', cellWidth: 30 }
+    },
+    headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 6, halign: 'center' },
+    footStyles: { fillColor: [254, 240, 138], textColor: [185, 28, 28], fontStyle: 'bold', fontSize: 6.5 }
+  });
+  leftFinalY = (doc as any).lastAutoTable.finalY;
+
+  // 3C. Stock Valuation Table below Sales & Purchases (Matching Profit & Loss Detailed UI)
+  const semiKraftStock = params.paperStats['Semi Kraft']?.cloAmt || 0;
+  const virginKraftStock = params.paperStats['Virgin Kraft']?.cloAmt || 0;
+  const duplexStock = params.paperStats['Chennai']?.cloAmt || 0;
+
   const stockRows = [
-    ['Finish Goods Stock', fmt(params.fgStockValue)],
-    ['Non-Moving Stock', fmt(params.nonMovingStockValue)],
-    ['Work in Process (WIP)', fmt(params.wipStockValue)],
-    ['Paper Stock (Closing)', fmt(params.paperStockValue)],
-    ['Raw Material Stock', fmt(params.rmStockValue)]
+    ['Finished Goods Inventory (Closing)', fmt(params.fgStockValue)],
+    ['Slow-Moving / Obsolete Inventory', fmt(params.nonMovingStockValue)],
+    ['Work in Process Inventory (Closing)', fmt(params.wipStockValue)],
+    ['Raw Material: Semi Kraft Paper', fmt(semiKraftStock)],
+    ['Raw Material: Virgin Kraft Paper', fmt(virginKraftStock)],
+    ['Raw Material: Duplex Paper', fmt(duplexStock)],
+    ['Other Raw Materials & Consumables', fmt(params.rmStockValue)]
   ];
 
   autoTable(doc, {
@@ -211,10 +267,10 @@ export const exportMRToPDF = (params: MRExportParams) => {
     margin: { left: 10, right: pageWidth - 10 - leftColWidth },
     head: [
       [{ content: 'INVENTORY ASSET VALUATION', colSpan: 2, styles: { halign: 'center', fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' } }],
-      ['Category', 'Amount (Rs)']
+      ['Category / Asset', 'Amount (Rs)']
     ],
     body: stockRows,
-    foot: [['Grand Total Stock', fmt(params.grandTotalStock)]],
+    foot: [['Grand Total Stock Valuation', fmt(params.grandTotalStock)]],
     theme: 'grid',
     styles: { fontSize: 6, cellPadding: 0.8, halign: 'right', textColor: [15, 23, 42] },
     columnStyles: {
@@ -373,8 +429,48 @@ export const exportMRToPDF = (params: MRExportParams) => {
       : { fillColor: [225, 29, 72], textColor: [255, 255, 255], fontStyle: 'bold' }
   });
 
+  return doc;
+};
+
+/**
+ * Download the Profit & Loss PDF report as a .pdf file using a binary Blob
+ */
+export const exportMRToPDF = (params: MRExportParams) => {
+  const doc = buildMRPDFDoc(params);
+  const cleanTitle = (params.monthFormattedTitle || 'Report')
+    .replace(/[^a-zA-Z0-9]/g, '_')
+    .replace(/_+/g, '_');
   const dateStr = new Date().toISOString().split('T')[0];
-  doc.save(`Profit_Loss_Report_${params.monthFormattedTitle.replace(/\s+/g, '_')}_${dateStr}.pdf`);
+  const filename = `Profit_Loss_Report_${cleanTitle}_${dateStr}.pdf`;
+
+  const blob = doc.output('blob');
+  downloadBlobFile(blob, filename);
+};
+
+/**
+ * Open the Profit & Loss PDF in a new tab for instant viewing/printing
+ */
+export const previewMRPDF = (params: MRExportParams) => {
+  const doc = buildMRPDFDoc(params);
+  const dataUri = doc.output('datauristring');
+  const win = window.open('');
+  if (win) {
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Profit & Loss Report - ${params.monthFormattedTitle}</title>
+          <style>body,html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #334155; }</style>
+        </head>
+        <body>
+          <iframe src="${dataUri}" frameborder="0" style="width:100%; height:100%; border:none;"></iframe>
+        </body>
+      </html>
+    `);
+    win.document.close();
+  } else {
+    exportMRToPDF(params);
+  }
 };
 
 /**
@@ -456,17 +552,50 @@ export const exportMRToExcel = (params: MRExportParams) => {
   data.push(['Total Expenses', params.totalExpenses]);
   data.push(['NET PROFIT', params.netProfit]);
   data.push([]);
-  data.push(['INVENTORY VALUATION', 'AMOUNT (Rs)']);
-  data.push(['Finish Goods Stock', params.fgStockValue]);
-  data.push(['Non-Moving Stock', params.nonMovingStockValue]);
-  data.push(['WIP Stock', params.wipStockValue]);
-  data.push(['Paper Stock', params.paperStockValue]);
-  data.push(['Raw Material Stock', params.rmStockValue]);
+  // Current Month Purchase
+  const kraftWOGST = params.kraftPurchaseWOGST || 0;
+  const kraftWGST = params.kraftPurchaseWGST || 0;
+  const consWOGST = params.consumablePurchaseWOGST || 0;
+  const consWGST = params.consumablePurchaseWGST || 0;
+  const totalPurWOGST = params.currentMonthPurchaseWOGST !== undefined && params.currentMonthPurchaseWOGST !== 0
+    ? params.currentMonthPurchaseWOGST
+    : (kraftWOGST + consWOGST);
+  const totalPurWGST = params.currentMonthPurchaseWGST !== undefined && params.currentMonthPurchaseWGST !== 0
+    ? params.currentMonthPurchaseWGST
+    : (kraftWGST + consWGST);
+
+  data.push(['CURRENT MONTH PURCHASE', 'WITHOUT GST', 'WITH GST']);
+  data.push(['Kraft Paper Purchase', kraftWOGST, kraftWGST]);
+  data.push(['Other Consumable Goods Purchase', consWOGST, consWGST]);
+  data.push(['TOTAL CURRENT MONTH PURCHASE', totalPurWOGST, totalPurWGST]);
+  data.push([]);
+
+  // Stock Valuation
+  const semiKraftStock = params.paperStats['Semi Kraft']?.cloAmt || 0;
+  const virginKraftStock = params.paperStats['Virgin Kraft']?.cloAmt || 0;
+  const duplexStock = params.paperStats['Chennai']?.cloAmt || 0;
+
+  data.push(['INVENTORY ASSET VALUATION', 'AMOUNT (Rs)']);
+  data.push(['Finished Goods Inventory (Closing)', params.fgStockValue]);
+  data.push(['Slow-Moving / Obsolete Inventory', params.nonMovingStockValue]);
+  data.push(['Work in Process Inventory (Closing)', params.wipStockValue]);
+  data.push(['Raw Material: Semi Kraft Paper', semiKraftStock]);
+  data.push(['Raw Material: Virgin Kraft Paper', virginKraftStock]);
+  data.push(['Raw Material: Duplex Paper', duplexStock]);
+  data.push(['Other Raw Materials & Consumables', params.rmStockValue]);
   data.push(['GRAND TOTAL STOCK', params.grandTotalStock]);
 
   const ws = xlsx.utils.aoa_to_sheet(data);
   xlsx.utils.book_append_sheet(wb, ws, 'Profit_Loss');
 
+  const cleanTitle = (params.monthFormattedTitle || 'Report')
+    .replace(/[^a-zA-Z0-9]/g, '_')
+    .replace(/_+/g, '_');
   const dateStr = new Date().toISOString().split('T')[0];
-  xlsx.writeFile(wb, `Profit_Loss_Report_${params.monthFormattedTitle.replace(/\s+/g, '_')}_${dateStr}.xlsx`);
+  const filename = `Profit_Loss_Report_${cleanTitle}_${dateStr}.xlsx`;
+  const wbout = xlsx.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([wbout], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  downloadBlobFile(blob, filename);
 };

@@ -28,16 +28,27 @@ export default function PaperPurchaseDetailsModal({
   currentMonth
 }: PaperPurchaseDetailsModalProps) {
   
+  const { monthStart, monthEnd, displayTitle } = useMemo(() => {
+    if (!currentMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(currentMonth)) {
+      return { monthStart: '9999-12-31', monthEnd: '9999-12-31', displayTitle: currentMonth || '' };
+    }
+    const [yStr, mStr] = currentMonth.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const start = `${yStr}-${mStr}-01`;
+    const nextMonth = m === 12 ? 1 : m + 1;
+    const nextYear = m === 12 ? y + 1 : y;
+    const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+    const d = new Date(y, m - 1, 1);
+    const title = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    return { monthStart: start, monthEnd: end, displayTitle: title };
+  }, [currentMonth]);
+
   const purchases = useMemo(() => {
     const reelMap = new Map<string, Reel>();
     reels.forEach(r => {
       reelMap.set(r.id!, r);
     });
-
-    const monthStart = `${currentMonth}-01`;
-    const nextMonthDate = new Date(`${currentMonth}-01`);
-    nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
-    const monthEnd = nextMonthDate.toISOString().split('T')[0];
 
     return reelTxns.filter(txn => {
       if (txn.type !== 'INWARD') return false;
@@ -87,7 +98,7 @@ export default function PaperPurchaseDetailsModal({
             <div>
               <h2 className="text-lg font-bold text-slate-800">{paperType} Purchases</h2>
               <p className="text-xs font-medium text-slate-500">
-                Detailed purchase breakdown for {new Date(currentMonth + '-01').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+                Detailed purchase breakdown for {displayTitle}
               </p>
             </div>
           </div>

@@ -41,10 +41,17 @@ export default function TotalPaperPurchaseModal({
       reelMap.set(r.id!, r);
     });
 
-    const monthStart = `${currentMonth}-01`;
-    const nextMonthDate = new Date(`${currentMonth}-01`);
-    nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
-    const monthEnd = nextMonthDate.toISOString().split('T')[0];
+    let monthStart = '9999-12-31';
+    let monthEnd = '9999-12-31';
+    if (currentMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(currentMonth)) {
+      const [yStr, mStr] = currentMonth.split('-');
+      const y = parseInt(yStr, 10);
+      const m = parseInt(mStr, 10);
+      monthStart = `${yStr}-${mStr}-01`;
+      const nextMonth = m === 12 ? 1 : m + 1;
+      const nextYear = m === 12 ? y + 1 : y;
+      monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+    }
 
     const purchases = reelTxns
       .filter(txn => {

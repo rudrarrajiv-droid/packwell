@@ -30,6 +30,13 @@ export const getMonthlyReports = async (): Promise<MonthlyReport[]> => {
 };
 
 export const getOrCreateMonthlyReport = async (month: string, user: string): Promise<MonthlyReport> => {
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return {
+      id: '',
+      month: month || '',
+      expenses: []
+    };
+  }
   const reports = await getMonthlyReports();
   const existing = reports.find(r => r.month === month);
   

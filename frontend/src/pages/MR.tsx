@@ -11,10 +11,10 @@ import {
   Loader2, Save, Printer, Plus, Trash2, CheckCircle2,
   TrendingUp, TrendingDown, DollarSign, Wallet, Package, Layers,
   Receipt, Scale, ArrowUpRight, ArrowDownRight, Sparkles, SlidersHorizontal,
-  ChevronDown, X, Building2, HelpCircle, FileDown, FileSpreadsheet, FileText, Search, Truck, RotateCcw, Users, Box
+  ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Building2, HelpCircle, FileDown, FileSpreadsheet, FileText, Search, Truck, RotateCcw, Users, Box, Eye
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { exportMRToPDF, exportMRToExcel } from '../lib/mrExportUtils';
+import { exportMRToPDF, exportMRToExcel, previewMRPDF } from '../lib/mrExportUtils';
 import PaperPurchaseDetailsModal from './PaperPurchaseDetailsModal';
 import TotalPaperPurchaseModal from './TotalPaperPurchaseModal';
 
@@ -57,9 +57,31 @@ const formatINR = (val: number, decimals: number = 0) => {
   });
 };
 
+// Safe month boundaries calculation helper (deterministic strings without Invalid Date crashes)
+const getSafeMonthBounds = (targetMonth: string) => {
+  if (!targetMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth)) {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    return {
+      monthStart: `${y}-${m}-01`,
+      monthEnd: `${y}-${m}-01`,
+      safeMonth: `${y}-${m}`
+    };
+  }
+  const [yStr, mStr] = targetMonth.split('-');
+  const y = parseInt(yStr, 10);
+  const m = parseInt(mStr, 10);
+  const monthStart = `${yStr}-${mStr}-01`;
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? y + 1 : y;
+  const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+  return { monthStart, monthEnd, safeMonth: targetMonth };
+};
+
 // Robust date matching helper for transactions (supports ISO, DD-MM-YYYY, DD/MM/YYYY, '31 Aug 2026')
 const isDateInTargetMonth = (dateStr?: string | null, targetMonth: string = '2026-08'): boolean => {
-  if (!dateStr) return false;
+  if (!dateStr || !targetMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth)) return false;
   const str = String(dateStr).trim();
   if (str.startsWith(targetMonth)) return true;
 
@@ -140,13 +162,17 @@ export default function MR() {
   const { data: rmList = [] } = useQuery({ queryKey: ['rawMaterials'], queryFn: getRawMaterials });
   const { data: rmTransactions = [] } = useQuery({ queryKey: ['rawMaterialTransactions'], queryFn: () => getRawMaterialTransactions() });
   const { data: scrapList = [] } = useQuery({ queryKey: ['scrapEntries'], queryFn: getScrapEntries });
+  const isValidMonth = useMemo(() => /^\d{4}-(0[1-9]|1[0-2])$/.test(currentMonth), [currentMonth]);
+
   const { data: monthAttendance = [] } = useQuery({
     queryKey: ['attendanceMonth', currentMonth],
-    queryFn: () => getAttendanceByMonth(currentMonth)
+    queryFn: () => getAttendanceByMonth(currentMonth),
+    enabled: isValidMonth
   });
   const { data: report, refetch: refetchReport } = useQuery({
     queryKey: ['mrReport', currentMonth],
-    queryFn: () => getOrCreateMonthlyReport(currentMonth, user?.name || 'System')
+    queryFn: () => getOrCreateMonthlyReport(currentMonth, user?.name || 'System'),
+    enabled: isValidMonth
   });
 
   // Close dropdowns when clicking outside
@@ -413,10 +439,7 @@ export default function MR() {
       reelMap.set(r.id!, { type, rate: r.rate || 0 });
     });
 
-    const monthStart = `${currentMonth}-01`;
-    const nextMonthDate = new Date(`${currentMonth}-01`);
-    nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
-    const monthEnd = nextMonthDate.toISOString().split('T')[0];
+    const { monthStart, monthEnd } = getSafeMonthBounds(currentMonth);
 
     reelTxns.forEach(txn => {
       const reelInfo = reelMap.get(txn.reelId);
@@ -643,6 +666,9 @@ export default function MR() {
 
   // Month Title
   const monthFormattedTitle = useMemo(() => {
+    if (!currentMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(currentMonth)) {
+      return 'Select Month';
+    }
     try {
       const [y, m] = currentMonth.split('-');
       const d = new Date(Number(y), Number(m) - 1, 1);
@@ -687,6 +713,10 @@ export default function MR() {
     grandDiffWGST,
     visibleExpenses,
     expenseBreakup,
+    kraftPurchaseWOGST,
+    kraftPurchaseWGST,
+    consumablePurchaseWOGST,
+    consumablePurchaseWGST,
     currentMonthPurchaseWOGST,
     currentMonthPurchaseWGST,
     totalExpenses,
@@ -704,7 +734,9 @@ export default function MR() {
     netSaleWithoutGST, netSaleWithGST, paperUsedWOGST, paperUsedWGST, partyPurchases,
     scrapCashPurWOGST, scrapCashPurWGST, scrapCashDiffWOGST, scrapCashDiffWGST,
     gTotalPurchaseWOGST, gTotalPurchaseWGST, grandDiffWOGST, grandDiffWGST,
-    visibleExpenses, expenseBreakup, currentMonthPurchaseWOGST, currentMonthPurchaseWGST,
+    visibleExpenses, expenseBreakup,
+    kraftPurchaseWOGST, kraftPurchaseWGST, consumablePurchaseWOGST, consumablePurchaseWGST,
+    currentMonthPurchaseWOGST, currentMonthPurchaseWGST,
     totalExpenses, netProfit, profitMarginPercent,
     fgStockValue, nonMovingStockValue, wipStockValue, paperStockValue, rmStockValue, grandTotalStock
   ]);
@@ -718,6 +750,15 @@ export default function MR() {
     }
   };
 
+  const handlePreviewPDF = () => {
+    try {
+      previewMRPDF(exportParams);
+    } catch (e) {
+      console.error('PDF Preview error', e);
+      handleDownloadPDF();
+    }
+  };
+
   const handleDownloadExcel = () => {
     try {
       exportMRToExcel(exportParams);
@@ -727,8 +768,90 @@ export default function MR() {
     }
   };
 
+  const handlePrevMonth = () => {
+    try {
+      const safe = /^\d{4}-(0[1-9]|1[0-2])$/.test(currentMonth) ? currentMonth : format(new Date(), 'yyyy-MM');
+      const [yStr, mStr] = safe.split('-');
+      let y = parseInt(yStr, 10);
+      let m = parseInt(mStr, 10);
+      if (m === 1) {
+        m = 12;
+        y -= 1;
+      } else {
+        m -= 1;
+      }
+      setCurrentMonth(`${y}-${String(m).padStart(2, '0')}`);
+    } catch {}
+  };
+
+  const handleNextMonth = () => {
+    try {
+      const safe = /^\d{4}-(0[1-9]|1[0-2])$/.test(currentMonth) ? currentMonth : format(new Date(), 'yyyy-MM');
+      const [yStr, mStr] = safe.split('-');
+      let y = parseInt(yStr, 10);
+      let m = parseInt(mStr, 10);
+      if (m === 12) {
+        m = 1;
+        y += 1;
+      } else {
+        m += 1;
+      }
+      setCurrentMonth(`${y}-${String(m).padStart(2, '0')}`);
+    } catch {}
+  };
+
+  const handleCurrentMonthClick = () => {
+    setCurrentMonth(format(new Date(), 'yyyy-MM'));
+  };
+
+  const handleMonthInputChange = (val: string) => {
+    if (!val) return;
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(val)) {
+      setCurrentMonth(val);
+    }
+  };
+
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50 font-sans text-slate-800 print:bg-white print:p-0 print-fit-a4">
+    <div className="flex flex-col min-h-screen bg-slate-50 font-sans text-slate-800 print:bg-white print:p-0 print-fit-a4 print-view-multipage print-profit-loss">
+      <style>{`
+        @media print {
+          @page {
+            size: A4 landscape;
+            margin: 6mm;
+          }
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            background: #ffffff !important;
+            color: #0f172a !important;
+            width: 100% !important;
+            height: auto !important;
+            overflow: visible !important;
+          }
+          .print-profit-loss {
+            position: static !important;
+            width: 100% !important;
+            height: auto !important;
+            overflow: visible !important;
+            background: #ffffff !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .print-profit-loss > div {
+            max-width: 100% !important;
+            padding: 0 !important;
+          }
+          .print-table {
+            border-collapse: collapse !important;
+            width: 100% !important;
+          }
+          .print-table th, .print-table td {
+            border: 1px solid #cbd5e1 !important;
+          }
+        }
+      `}</style>
       
       {/* 1. TOP HEADER & CONTROLS (Print Hidden) */}
       <div className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 print:hidden">
@@ -751,15 +874,41 @@ export default function MR() {
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           
-          {/* Month Picker */}
-          <div className="flex items-center bg-slate-100/80 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-1.5 transition">
-            <label className="text-xs font-semibold text-slate-500 mr-2">Month:</label>
-            <input 
-              type="month" 
-              value={currentMonth}
-              onChange={(e) => setCurrentMonth(e.target.value)}
-              className="bg-transparent border-0 text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
-            />
+          {/* Smart Month Navigator */}
+          <div className="flex items-center bg-white border border-slate-200 rounded-xl shadow-sm p-1 gap-1">
+            <button
+              onClick={handlePrevMonth}
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-indigo-600 transition"
+              title="Previous Month"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-lg">
+              <Calendar className="w-3.5 h-3.5 text-indigo-600 mr-1.5 shrink-0" />
+              <input 
+                type="month" 
+                value={currentMonth}
+                onChange={(e) => handleMonthInputChange(e.target.value)}
+                className="bg-transparent border-0 text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
+              />
+            </div>
+
+            <button
+              onClick={handleNextMonth}
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-indigo-600 transition"
+              title="Next Month"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={handleCurrentMonthClick}
+              className="px-2 py-1 text-[11px] font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition border border-transparent hover:border-indigo-100 ml-0.5"
+              title="Go to Current Month"
+            >
+              This Month
+            </button>
           </div>
 
           {/* Smart Active-Only Toggle */}
@@ -794,6 +943,16 @@ export default function MR() {
           >
             <FileText className="w-3.5 h-3.5 text-rose-600" />
             PDF
+          </button>
+
+          {/* PDF Preview in Tab */}
+          <button 
+            onClick={handlePreviewPDF}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100/80 rounded-xl text-xs font-bold shadow-sm transition active:scale-95"
+            title="Open and view PDF directly in browser"
+          >
+            <Eye className="w-3.5 h-3.5 text-indigo-600" />
+            View PDF
           </button>
 
           {/* Browser Direct Print */}
@@ -1214,16 +1373,47 @@ export default function MR() {
                   <h3 className="font-bold text-xs uppercase tracking-wider print:text-[9px]">Current Month Purchase</h3>
                 </div>
               </div>
-              <div className="p-4 space-y-3 text-xs print:p-2 print:text-[9px] print:space-y-1">
+
+              {/* PRINT VIEW TABLE FOR CURRENT MONTH PURCHASE */}
+              <div className="hidden print:block p-1">
+                <table className="w-full text-[9px] border-collapse print-table">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-900 font-bold">
+                      <th className="px-2 py-1 text-left">Particulars</th>
+                      <th className="px-2 py-1 text-right w-24">Without GST (₹)</th>
+                      <th className="px-2 py-1 text-right w-24">With GST (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    <tr>
+                      <td className="px-2 py-1 font-semibold text-slate-800">Kraft Paper Purchase</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(kraftPurchaseWOGST)}</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(kraftPurchaseWGST)}</td>
+                    </tr>
+                    <tr>
+                      <td className="px-2 py-1 font-semibold text-slate-800">Other Consumable Goods Purchase</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(consumablePurchaseWOGST)}</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(consumablePurchaseWGST)}</td>
+                    </tr>
+                    <tr className="bg-amber-100 font-black text-slate-950 border-t-2 border-slate-400">
+                      <td className="px-2 py-1 uppercase text-[8.5px]">Total Current Month Purchase</td>
+                      <td className="px-2 py-1 text-right">₹ {formatINR(currentMonthPurchaseWOGST)}</td>
+                      <td className="px-2 py-1 text-right">₹ {formatINR(currentMonthPurchaseWGST)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* SCREEN INTERACTIVE VIEW */}
+              <div className="p-4 space-y-3 text-xs print:hidden">
                 
                 {/* Kraft Paper */}
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 print:p-1 print:border-none">
-                  <span className="block font-bold text-slate-700 mb-2 print:mb-1 uppercase tracking-wide text-[10px] print:text-[8px]">Kraft Paper Purchase</span>
-                  <div className="grid grid-cols-2 gap-3 print:gap-2">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60">
+                  <span className="block font-bold text-slate-700 mb-2 uppercase tracking-wide text-[10px]">Kraft Paper Purchase</span>
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">W/O GST</label>
-                      <span className="hidden print:inline font-bold">₹ {formatINR(kraftPurchaseWOGST)}</span>
-                      <div className="relative print:hidden">
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">W/O GST</label>
+                      <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
@@ -1235,9 +1425,8 @@ export default function MR() {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">With GST</label>
-                      <span className="hidden print:inline font-bold">₹ {formatINR(kraftPurchaseWGST)}</span>
-                      <div className="relative print:hidden">
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">With GST</label>
+                      <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
@@ -1252,13 +1441,12 @@ export default function MR() {
                 </div>
 
                 {/* Consumables */}
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 print:p-1 print:border-none mt-2">
-                  <span className="block font-bold text-slate-700 mb-2 print:mb-1 uppercase tracking-wide text-[10px] print:text-[8px]">Other Consumable Goods Purchase</span>
-                  <div className="grid grid-cols-2 gap-3 print:gap-2">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 mt-2">
+                  <span className="block font-bold text-slate-700 mb-2 uppercase tracking-wide text-[10px]">Other Consumable Goods Purchase</span>
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">W/O GST</label>
-                      <span className="hidden print:inline font-bold">₹ {formatINR(consumablePurchaseWOGST)}</span>
-                      <div className="relative print:hidden">
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">W/O GST</label>
+                      <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
@@ -1270,9 +1458,8 @@ export default function MR() {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1 print:text-[7px]">With GST</label>
-                      <span className="hidden print:inline font-bold">₹ {formatINR(consumablePurchaseWGST)}</span>
-                      <div className="relative print:hidden">
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">With GST</label>
+                      <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
@@ -1287,15 +1474,15 @@ export default function MR() {
                 </div>
 
                 {/* Totals */}
-                <div className="pt-3 border-t border-slate-200/80 print:border-slate-300 print:pt-1">
-                  <div className="grid grid-cols-2 gap-3 print:gap-2">
-                    <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 flex flex-col justify-center print:p-1 print:bg-transparent print:border-none">
-                      <span className="text-[10px] font-bold text-amber-900/60 uppercase tracking-wider print:text-[7px]">Total W/O GST</span>
-                      <span className="font-black text-amber-700 text-sm print:text-[9px] print:text-slate-900 mt-0.5">₹ {formatINR(currentMonthPurchaseWOGST)}</span>
+                <div className="pt-3 border-t border-slate-200/80">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 flex flex-col justify-center">
+                      <span className="text-[10px] font-bold text-amber-900/60 uppercase tracking-wider">Total W/O GST</span>
+                      <span className="font-black text-amber-700 text-sm mt-0.5">₹ {formatINR(currentMonthPurchaseWOGST)}</span>
                     </div>
-                    <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 flex flex-col justify-center print:p-1 print:bg-transparent print:border-none">
-                      <span className="text-[10px] font-bold text-amber-900/60 uppercase tracking-wider print:text-[7px]">Total With GST</span>
-                      <span className="font-black text-amber-700 text-sm print:text-[9px] print:text-slate-900 mt-0.5">₹ {formatINR(currentMonthPurchaseWGST)}</span>
+                    <div className="bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 flex flex-col justify-center">
+                      <span className="text-[10px] font-bold text-amber-900/60 uppercase tracking-wider">Total With GST</span>
+                      <span className="font-black text-amber-700 text-sm mt-0.5">₹ {formatINR(currentMonthPurchaseWGST)}</span>
                     </div>
                   </div>
                 </div>
@@ -1312,19 +1499,66 @@ export default function MR() {
                 </div>
                 <span className="text-xs font-black text-emerald-400 print:text-[9px]">₹ {formatINR(grandTotalStock)}</span>
               </div>
-              <div className="p-4 space-y-1.5 text-xs print:p-2 print:text-[9px]">
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
+
+              {/* PRINT VIEW TABLE FOR INVENTORY ASSET VALUATION */}
+              <div className="hidden print:block p-1">
+                <table className="w-full text-[9px] border-collapse print-table">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-900 font-bold">
+                      <th className="px-2 py-1 text-left">Category / Asset</th>
+                      <th className="px-2 py-1 text-right w-28">Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    <tr>
+                      <td className="px-2 py-1 text-slate-700">Finished Goods Inventory (Closing)</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(fgStockValue)}</td>
+                    </tr>
+                    <tr>
+                      <td className="px-2 py-1 text-slate-700">Slow-Moving / Obsolete Inventory</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(nonMovingStockValue)}</td>
+                    </tr>
+                    <tr>
+                      <td className="px-2 py-1 text-slate-700">Work in Progress Inventory (Closing)</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(wipStockValue)}</td>
+                    </tr>
+                    <tr className="bg-indigo-50/70 font-semibold">
+                      <td className="px-2 py-1 text-indigo-950">Raw Material Inventory: Semi Kraft Paper</td>
+                      <td className="px-2 py-1 text-right font-black text-indigo-950">₹ {formatINR(paperStats['Semi Kraft']?.cloAmt || 0)}</td>
+                    </tr>
+                    <tr className="bg-indigo-50/70 font-semibold">
+                      <td className="px-2 py-1 text-indigo-950">Raw Material Inventory: Virgin Kraft Paper</td>
+                      <td className="px-2 py-1 text-right font-black text-indigo-950">₹ {formatINR(paperStats['Virgin Kraft']?.cloAmt || 0)}</td>
+                    </tr>
+                    <tr className="bg-indigo-50/70 font-semibold">
+                      <td className="px-2 py-1 text-indigo-950">Raw Material Inventory: Duplex Paper</td>
+                      <td className="px-2 py-1 text-right font-black text-indigo-950">₹ {formatINR(paperStats['Chennai']?.cloAmt || 0)}</td>
+                    </tr>
+                    <tr>
+                      <td className="px-2 py-1 text-slate-700">Other Raw Materials & Consumables</td>
+                      <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(rmStockValue)}</td>
+                    </tr>
+                    <tr className="bg-emerald-100 font-black text-emerald-950 border-t-2 border-slate-400">
+                      <td className="px-2 py-1 uppercase text-[8.5px]">Grand Total Stock Valuation</td>
+                      <td className="px-2 py-1 text-right">₹ {formatINR(grandTotalStock)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* SCREEN INTERACTIVE VIEW */}
+              <div className="p-4 space-y-1.5 text-xs print:hidden">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3">
                   <span className="text-slate-600 font-medium">Finished Goods Inventory (Closing)</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(fgStockValue)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3">
                   <span className="text-slate-600 font-medium">Slow-Moving / Obsolete Inventory</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(nonMovingStockValue)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3 print:py-0.5 print:px-0">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 px-3">
                   <span className="text-slate-600 font-medium">Work in Progress Inventory (Closing)</span>
-                  <span className="hidden print:inline font-bold text-slate-900">₹ {formatINR(wipStockValue)}</span>
-                  <div className="flex items-center gap-1.5 print:hidden">
+                  <div className="flex items-center gap-1.5">
                     <span className="font-bold text-slate-900">₹</span>
                     <input
                       type="number"
@@ -1336,19 +1570,19 @@ export default function MR() {
                     />
                   </div>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mt-1 rounded-t print:py-0.5 print:px-0 print:bg-transparent">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mt-1 rounded-t">
                   <span className="text-indigo-900 font-semibold">Raw Material Inventory: Semi Kraft Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Semi Kraft']?.cloAmt || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 print:py-0.5 print:px-0 print:bg-transparent">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3">
                   <span className="text-indigo-900 font-semibold">Raw Material Inventory: Virgin Kraft Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Virgin Kraft']?.cloAmt || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mb-1 rounded-b print:py-0.5 print:px-0 print:bg-transparent">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mb-1 rounded-b">
                   <span className="text-indigo-900 font-semibold">Raw Material Inventory: Duplex Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Chennai']?.cloAmt || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 px-3 print:py-0.5 print:px-0">
+                <div className="flex justify-between items-center py-1.5 px-3">
                   <span className="text-slate-600 font-medium">Other Raw Materials & Consumables</span>
                   <span className="font-bold text-slate-900">₹ {formatINR(rmStockValue)}</span>
                 </div>

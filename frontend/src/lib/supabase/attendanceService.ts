@@ -75,9 +75,12 @@ export const getAttendanceByDate = async (date: string): Promise<AttendanceRecor
  * date-range query.
  */
 export const getAttendanceByMonth = async (yearMonth: string): Promise<AttendanceRecord[]> => {
+  if (!yearMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(yearMonth)) {
+    return [];
+  }
   const startStr = `${yearMonth}-01`;
-  const year = parseInt(yearMonth.split('-')[0]);
-  const month = parseInt(yearMonth.split('-')[1]);
+  const year = parseInt(yearMonth.split('-')[0], 10);
+  const month = parseInt(yearMonth.split('-')[1], 10);
   const nextMonth = month === 12 ? 1 : month + 1;
   const nextYear = month === 12 ? year + 1 : year;
   const nextMonthStr = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-01`;
