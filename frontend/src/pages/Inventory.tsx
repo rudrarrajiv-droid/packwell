@@ -14,6 +14,7 @@ import ReverseCalculatorTab from './inventory/ReverseCalculatorTab';
 import PrintableReelAudit from './inventory/PrintableReelAudit';
 import ReelAuditModal from './inventory/ReelAuditModal';
 import ReelAuditHistoryModal from './inventory/ReelAuditHistoryModal';
+import MonthlySummaryDetailModal from './inventory/MonthlySummaryDetailModal';
 import { ClipboardCheck } from 'lucide-react';
 
 export default function Inventory() {
@@ -31,6 +32,15 @@ export default function Inventory() {
     setHistorySelectedReel(reel);
     setIsHistoryOpen(true);
   };
+  const [summaryDetailConfig, setSummaryDetailConfig] = useState<{
+    isOpen: boolean;
+    date: string;
+    type: 'INWARD' | 'OUTWARD';
+  }>({
+    isOpen: false,
+    date: '',
+    type: 'OUTWARD'
+  });
   const [purchaseViewMode, setPurchaseViewMode] = useState<'DETAIL' | 'SUMMARY'>('DETAIL');
   const [search, setSearch] = useState('');
   const [paperTypeFilter, setPaperTypeFilter] = useState('ALL');
@@ -695,9 +705,19 @@ export default function Inventory() {
                 <tr>
                   <th className="px-6 py-3 font-medium">Date</th>
                   <th className="px-6 py-3 font-medium text-blue-600 bg-blue-50/30">IN (Reels)</th>
-                  <th className="px-6 py-3 font-medium text-blue-600 bg-blue-50/30">IN (Weight)</th>
+                  <th className="px-6 py-3 font-medium text-blue-700 bg-blue-50/50">
+                    <span className="flex items-center gap-1.5">
+                      IN (Weight)
+                      <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-blue-200/60 text-blue-800">Clickable</span>
+                    </span>
+                  </th>
                   <th className="px-6 py-3 font-medium text-red-600 bg-red-50/30">OUT (Reels)</th>
-                  <th className="px-6 py-3 font-medium text-red-600 bg-red-50/30">OUT (Weight)</th>
+                  <th className="px-6 py-3 font-medium text-red-700 bg-red-50/50">
+                    <span className="flex items-center gap-1.5">
+                      OUT (Weight)
+                      <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-red-200/60 text-red-800">Clickable</span>
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -717,9 +737,37 @@ export default function Inventory() {
                       {new Date(row.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                     </td>
                     <td className="px-6 py-4 font-bold text-blue-600 bg-blue-50/10">{row.inReels || '-'}</td>
-                    <td className="px-6 py-4 font-bold text-blue-600 bg-blue-50/10">{row.inWeight ? `${row.inWeight.toLocaleString()} Kg` : '-'}</td>
+                    <td 
+                      onClick={() => row.inWeight > 0 && setSummaryDetailConfig({ isOpen: true, date: row.date, type: 'INWARD' })}
+                      className={cn(
+                        "px-6 py-4 font-bold text-blue-600 bg-blue-50/10",
+                        row.inWeight > 0 && "cursor-pointer hover:bg-blue-100/60 hover:text-blue-800 transition-all group"
+                      )}
+                      title={row.inWeight > 0 ? `Click to view inward details for ${row.date}` : undefined}
+                    >
+                      {row.inWeight ? (
+                        <span className="inline-flex items-center gap-1.5 border-b border-dashed border-blue-400 group-hover:border-blue-700">
+                          {row.inWeight.toLocaleString()} Kg
+                          <span className="text-[10px] opacity-70 group-hover:scale-125 transition-transform">↗</span>
+                        </span>
+                      ) : '-'}
+                    </td>
                     <td className="px-6 py-4 font-bold text-red-600 bg-red-50/10">{row.outReels || '-'}</td>
-                    <td className="px-6 py-4 font-bold text-red-600 bg-red-50/10">{row.outWeight ? `${row.outWeight.toLocaleString()} Kg` : '-'}</td>
+                    <td 
+                      onClick={() => row.outWeight > 0 && setSummaryDetailConfig({ isOpen: true, date: row.date, type: 'OUTWARD' })}
+                      className={cn(
+                        "px-6 py-4 font-bold text-red-600 bg-red-50/10",
+                        row.outWeight > 0 && "cursor-pointer hover:bg-red-100/60 hover:text-red-800 transition-all group"
+                      )}
+                      title={row.outWeight > 0 ? `Click to view consumption details for ${row.date}` : undefined}
+                    >
+                      {row.outWeight ? (
+                        <span className="inline-flex items-center gap-1.5 font-black border-b border-dashed border-red-400 group-hover:border-red-700">
+                          {row.outWeight.toLocaleString()} Kg
+                          <span className="text-[10px] opacity-70 group-hover:scale-125 transition-transform">↗</span>
+                        </span>
+                      ) : '-'}
+                    </td>
                   </tr>
                 ))}
                 {monthlySummaryData?.rows.length === 0 && (
@@ -736,9 +784,27 @@ export default function Inventory() {
                   <tr>
                     <td className="px-6 py-4 text-right text-foreground uppercase tracking-wider text-xs">Monthly Total:</td>
                     <td className="px-6 py-4 text-blue-700 text-base bg-blue-100/50">{monthlySummaryData?.rows.reduce((sum: number, r: any) => sum + r.inReels, 0)}</td>
-                    <td className="px-6 py-4 text-blue-700 text-base bg-blue-100/50">{monthlySummaryData?.rows.reduce((sum: number, r: any) => sum + r.inWeight, 0).toLocaleString()} Kg</td>
+                    <td 
+                      onClick={() => setSummaryDetailConfig({ isOpen: true, date: 'TOTAL', type: 'INWARD' })}
+                      className="px-6 py-4 text-blue-700 text-base bg-blue-100/50 cursor-pointer hover:bg-blue-200/70 hover:underline transition-all"
+                      title="Click to view all IN inward transactions for this month"
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {monthlySummaryData?.rows.reduce((sum: number, r: any) => sum + r.inWeight, 0).toLocaleString()} Kg
+                        <span className="text-xs opacity-70">↗</span>
+                      </span>
+                    </td>
                     <td className="px-6 py-4 text-red-700 text-base bg-red-100/50">{monthlySummaryData?.rows.reduce((sum: number, r: any) => sum + r.outReels, 0)}</td>
-                    <td className="px-6 py-4 text-red-700 text-base bg-red-100/50">{monthlySummaryData?.rows.reduce((sum: number, r: any) => sum + r.outWeight, 0).toLocaleString()} Kg</td>
+                    <td 
+                      onClick={() => setSummaryDetailConfig({ isOpen: true, date: 'TOTAL', type: 'OUTWARD' })}
+                      className="px-6 py-4 text-red-700 text-base bg-red-100/50 cursor-pointer hover:bg-red-200/70 hover:underline transition-all"
+                      title="Click to view all OUT consumption transactions for this month"
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {monthlySummaryData?.rows.reduce((sum: number, r: any) => sum + r.outWeight, 0).toLocaleString()} Kg
+                        <span className="text-xs opacity-70">↗</span>
+                      </span>
+                    </td>
                   </tr>
                 </tfoot>
               )}
@@ -1033,6 +1099,18 @@ export default function Inventory() {
           </div>
         </div>
       )}
+      <MonthlySummaryDetailModal
+        isOpen={summaryDetailConfig.isOpen}
+        onClose={() => setSummaryDetailConfig(prev => ({ ...prev, isOpen: false }))}
+        date={summaryDetailConfig.date}
+        type={summaryDetailConfig.type}
+        monthTitle={reportDate.substring(0, 7)}
+        transactions={transactions}
+        reels={reels}
+        onOpenFullHistory={(reel) => {
+          handleViewHistory(reel);
+        }}
+      />
     </div>
     <PrintableReelAudit reels={reels} />
     </>
