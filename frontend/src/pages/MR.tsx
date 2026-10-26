@@ -443,8 +443,8 @@ export default function MR() {
 
     reelTxns.forEach(txn => {
       const reelInfo = reelMap.get(txn.reelId);
-      if (!reelInfo) return;
-      const { type, rate } = reelInfo;
+      const type = reelInfo?.type || "Semi Kraft";
+      const rate = reelInfo?.rate || 0;
       const date = txn.date;
       const qty = Number(txn.quantity) || 0;
       const amt = qty * rate;

@@ -604,7 +604,8 @@ export default function Inventory() {
                   कुल Reels: <span className="font-bold">{totalReels}</span>
                 </div>
                 <div className="bg-primary/10 text-primary px-3 py-1.5 rounded-md font-medium border border-primary/20 shadow-sm">
-                  कुल Weight: <span className="font-bold">{totalWeight.toLocaleString()} Kg</span>
+                  {metricFilter === 'OUT' ? 'कुल Consumption (OUT): ' : metricFilter === 'IN' ? 'कुल Inward (IN): ' : metricFilter === 'OPENING' ? 'कुल Opening Stock: ' : 'कुल Stock Balance: '}
+                  <span className="font-bold">{totalWeight.toLocaleString()} Kg</span>
                 </div>
 
                 <div className="bg-green-100 text-green-800 px-3 py-1.5 rounded-md font-medium border border-green-200 shadow-sm">

@@ -455,6 +455,7 @@ export const getOutwardReelTransactionsByMonth = async (monthPrefix: string): Pr
       .eq('is_archived', false)
       .gte('transaction_date', startDate)
       .lt('transaction_date', nextMonthPrefix)
+      .order('transaction_date', { ascending: true })
       .range(from, from + step - 1);
 
     if (error) {
@@ -476,20 +477,36 @@ export const getOutwardReelTransactionsByMonth = async (monthPrefix: string): Pr
 };
 
 export const getReelsByIds = async (reelIds: string[]): Promise<Record<string, Reel>> => {
-  let query = supabase.from('reels').select(REEL_SELECT_COLUMNS);
-
-  if (reelIds.length > 0) {
-    query = query.in('firestore_document_id', reelIds);
+  if (!reelIds || reelIds.length === 0) {
+    const allReels = await getReels();
+    return allReels.reduce<Record<string, Reel>>((accumulator, reel) => {
+      if (reel.id) {
+        accumulator[reel.id] = reel;
+      }
+      return accumulator;
+    }, {});
   }
 
-  const { data, error } = await query;
+  let allData: any[] = [];
+  const chunkSize = 500;
+  for (let i = 0; i < reelIds.length; i += chunkSize) {
+    const chunk = reelIds.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from('reels')
+      .select(REEL_SELECT_COLUMNS)
+      .in('firestore_document_id', chunk);
 
-  if (error) {
-    console.error('Error fetching reels by ID:', error);
-    throw error;
+    if (error) {
+      console.error('Error fetching reels by ID:', error);
+      throw error;
+    }
+
+    if (data) {
+      allData = allData.concat(data);
+    }
   }
 
-  return (data || []).reduce<Record<string, Reel>>((accumulator, row) => {
+  return allData.reduce<Record<string, Reel>>((accumulator, row) => {
     const reel = mapReelRow(row as unknown as ReelRow);
     if (reel.id) {
       accumulator[reel.id] = reel;

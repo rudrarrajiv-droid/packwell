@@ -75,17 +75,12 @@ export default function DC() {
         
         dayTx.forEach(tx => {
           const reel = allReels[tx.reelId];
-          if (!reel) return;
-          
           const qty = tx.quantity || 0;
-          const rate = reel.rate || 0;
+          const rate = reel?.rate || 0;
           const amt = qty * rate;
 
-          const paperType = String(reel.paperType || '').toUpperCase();
-          const bf = String(reel.bf || '');
-
-          const pt = String(reel.paperType || '').toUpperCase();
-          const bfNum = Number(reel.bf) || 0;
+          const pt = String(reel?.paperType || '').toUpperCase();
+          const bfNum = Number(reel?.bf) || 0;
 
           if (pt.includes('SK') || pt.includes('SEMI') || (pt.includes('CHENNAI') && !pt.includes('DUP') && !pt.includes('HWC'))) {
             skWeight += qty;
