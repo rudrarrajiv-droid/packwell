@@ -16,6 +16,7 @@ import DC from './pages/DC';
 import MR from './pages/MR';
 import RM from './pages/RM';
 import Scrap from './pages/Scrap';
+import PlantDailyMIS from './pages/PlantDailyMIS';
 import AppLayout from './layouts/AppLayout';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -41,6 +42,7 @@ function App() {
               <Route element={<AppLayout />}>
                 <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<Dashboard />} />
+                <Route path="plant-daily-mis" element={<PlantDailyMIS />} />
                 <Route path="job-cards" element={<JobCards />} />
                 <Route path="purchase-orders" element={<PurchaseOrders />} />
                 <Route path="master-data" element={<MasterData />} />

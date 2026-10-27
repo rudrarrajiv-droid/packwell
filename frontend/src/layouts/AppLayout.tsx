@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Database, PackageSearch, PackageCheck, Truck, Activity, Settings, LogOut, ShoppingCart, Users, FileSpreadsheet, Box, Archive } from 'lucide-react';
+import { LayoutDashboard, FileText, Database, PackageSearch, PackageCheck, Truck, Activity, Settings, LogOut, ShoppingCart, Users, FileSpreadsheet, Box, Archive, Factory } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 
@@ -17,6 +17,7 @@ export default function AppLayout() {
 
   const navItems = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+    { name: 'Plant Daily MIS', path: '/plant-daily-mis', icon: Factory },
     { name: 'PO Management', path: '/purchase-orders', icon: ShoppingCart },
     { name: 'Job Cards', path: '/job-cards', icon: FileText },
     { name: 'Master Data', path: '/master-data', icon: Database },
