@@ -11,12 +11,14 @@ import {
   Loader2, Save, Printer, Plus, Trash2, CheckCircle2,
   TrendingUp, TrendingDown, DollarSign, Wallet, Package, Layers,
   Receipt, Scale, ArrowUpRight, ArrowDownRight, Sparkles, SlidersHorizontal,
-  ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Building2, HelpCircle, FileDown, FileSpreadsheet, FileText, Search, Truck, RotateCcw, Users, Box, Eye
+  ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Building2, HelpCircle, FileDown, FileSpreadsheet, FileText, Search, Truck, RotateCcw, Users, Box, Eye, Filter
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { exportMRToPDF, exportMRToExcel, previewMRPDF } from '../lib/mrExportUtils';
 import PaperPurchaseDetailsModal from './PaperPurchaseDetailsModal';
 import TotalPaperPurchaseModal from './TotalPaperPurchaseModal';
+import CashLedgerModal from './CashLedgerModal';
+import { getMonthlyExpenseAggregates, getExpenseCategories } from '../lib/supabase/cashLedgerService';
 
 const DEFAULT_EXPENSE_CATEGORIES = [
   "Engineer Food and Lodge Expense",
@@ -133,12 +135,8 @@ export default function MR() {
 
   // Custom expenses and explicitly selected expenses
   const [customExpenses, setCustomExpenses] = useState<string[]>([]);
-  const [userAddedExpenses, setUserAddedExpenses] = useState<string[]>([
-    "Freight Outward Charges",
-    "Salary with Director Remuneration",
-    "Consumable Goods (Excl. Gas)",
-    "LPG Cylinder"
-  ]);
+  const [userAddedExpenses, setUserAddedExpenses] = useState<string[]>([]);
+  const [sessionAddedExpenses, setSessionAddedExpenses] = useState<string[]>([]);
   const [expenseSearchQuery, setExpenseSearchQuery] = useState('');
   const [showExpenseDropdown, setShowExpenseDropdown] = useState(false);
 
@@ -153,6 +151,8 @@ export default function MR() {
   // Paper Purchase Modal State
   const [selectedPaperTypeForModal, setSelectedPaperTypeForModal] = useState<string | null>(null);
   const [showTotalPurchaseModal, setShowTotalPurchaseModal] = useState(false);
+  const [showCashLedgerModal, setShowCashLedgerModal] = useState(false);
+  const [selectedExpenseForLedger, setSelectedExpenseForLedger] = useState<string | undefined>(undefined);
 
   // Queries
   const { data: reels = [] } = useQuery({ queryKey: ['reels'], queryFn: getReels });
@@ -174,6 +174,23 @@ export default function MR() {
     queryFn: () => getOrCreateMonthlyReport(currentMonth, user?.name || 'System'),
     enabled: isValidMonth
   });
+
+  // Query Cash Ledger Expense Aggregates for the active month
+  const { data: cashLedgerExpenseTotals = {}, refetch: refetchCashLedgerTotals } = useQuery({
+    queryKey: ['cashLedgerMonthlyAggregates', currentMonth],
+    queryFn: () => getMonthlyExpenseAggregates(currentMonth),
+    enabled: isValidMonth
+  });
+
+  // Query Master Expense Categories from DB
+  const { data: dbCategories = [], refetch: refetchDbCategories } = useQuery({
+    queryKey: ['expenseCategories'],
+    queryFn: getExpenseCategories,
+  });
+
+  const totalCashLedgerMonth = useMemo(() => {
+    return Object.values(cashLedgerExpenseTotals).reduce((a, b) => a + (Number(b) || 0), 0);
+  }, [cashLedgerExpenseTotals]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -280,12 +297,7 @@ export default function MR() {
       const map: Record<string, number> = {};
       const loadedCustomParties: string[] = [];
       const loadedCustomExpenses: string[] = [];
-      const activeExpNames: string[] = [
-        "Freight Outward Charges",
-        "Salary with Director Remuneration",
-        "Consumable Goods (Excl. Gas)",
-        "LPG Cylinder"
-      ];
+      const activeExpNames: string[] = [];
 
       report.expenses.forEach(e => {
         map[e.name] = e.amount;
@@ -302,7 +314,9 @@ export default function MR() {
           }
         } else if (e.name.startsWith('EXP:')) {
           const expName = e.name.replace('EXP:', '');
-          activeExpNames.push(expName);
+          if (e.amount > 0) {
+            activeExpNames.push(expName);
+          }
           if (expName && !loadedCustomExpenses.includes(expName) && !DEFAULT_EXPENSE_CATEGORIES.includes(expName)) {
             loadedCustomExpenses.push(expName);
           }
@@ -373,12 +387,14 @@ export default function MR() {
     }
 
     setUserAddedExpenses(prev => Array.from(new Set([...prev, trimmed])));
+    setSessionAddedExpenses(prev => Array.from(new Set([...prev, trimmed])));
     setExpenseSearchQuery('');
     setShowExpenseDropdown(false);
   };
 
   const handleRemoveExpense = (exp: string) => {
     setUserAddedExpenses(prev => prev.filter(e => e !== exp));
+    setSessionAddedExpenses(prev => prev.filter(e => e !== exp));
     if (customExpenses.includes(exp)) {
       setCustomExpenses(prev => prev.filter(e => e !== exp));
     }
@@ -508,8 +524,13 @@ export default function MR() {
   }, [customParties]);
 
   const allExpensesList = useMemo(() => {
-    return Array.from(new Set([...DEFAULT_EXPENSE_CATEGORIES, ...customExpenses]));
-  }, [customExpenses]);
+    return Array.from(new Set([
+      ...DEFAULT_EXPENSE_CATEGORIES,
+      ...customExpenses,
+      ...dbCategories,
+      ...Object.keys(cashLedgerExpenseTotals),
+    ])).filter(Boolean);
+  }, [customExpenses, dbCategories, cashLedgerExpenseTotals]);
 
   // SCRAP (CASH) REVENUE (Displayed for visibility, not added to Nett Sale)
   const cashScrapRevenue = useMemo(() => {
@@ -599,7 +620,7 @@ export default function MR() {
   const grandDiffWOGST = netSaleWithoutGST - gTotalPurchaseWOGST;
   const grandDiffWGST = netSaleWithGST - gTotalPurchaseWGST;
 
-  // Helper to resolve effective expense amount (mapped to Freight Sheet, Salary Sheet, and Raw Material if not overridden)
+  // Helper to resolve effective expense amount (mapped to Freight Sheet, Salary Sheet, RM Consumable, and Cash Ledger if not overridden)
   const getEffectiveExpenseValue = (cat: string): number => {
     const manualVal = manualData[`EXP:${cat}`];
     if (manualVal !== undefined && manualVal !== 0) {
@@ -617,24 +638,27 @@ export default function MR() {
     if (cat === "LPG Cylinder") {
       return autoLpgCylinder;
     }
+    // Auto-map from Cash Ledger if present for this category (Only for October 2026 onwards to keep prior months as-is)
+    if (currentMonth >= '2026-10' && cashLedgerExpenseTotals[cat] !== undefined && cashLedgerExpenseTotals[cat] > 0) {
+      return cashLedgerExpenseTotals[cat];
+    }
     return manualVal || 0;
   };
 
   // SMART VISIBILITY FOR EXPENSES:
+  // Strictly show ONLY expenses that have an actual expense amount > 0 in this month
+  // If an expense is 0, its name MUST BE HIDDEN completely!
   const visibleExpenses = useMemo(() => {
-    if (!activeOnlyMode) return allExpensesList;
     return allExpensesList.filter(exp => {
-      if (
-        exp === "Freight Outward Charges" || 
-        exp === "Salary with Director Remuneration" ||
-        exp === "Consumable Goods (Excl. Gas)" ||
-        exp === "LPG Cylinder"
-      ) return true; // Always visible as core auto-mapped items
-      if (userAddedExpenses.includes(exp)) return true;
       const amt = getEffectiveExpenseValue(exp);
-      return amt !== undefined && amt !== 0;
+      // 1. Strictly show if amount > 0 (from Cash Ledger, Freight, Salary, RM, or manual)
+      if (amt !== undefined && amt > 0) return true;
+      // 2. Or if user explicitly clicked 'Add Expense' in this session to enter a value
+      if (sessionAddedExpenses.includes(exp)) return true;
+      // 3. Otherwise HIDE completely! (Expenses with 0 remain hidden)
+      return false;
     });
-  }, [activeOnlyMode, allExpensesList, userAddedExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder]);
+  }, [allExpensesList, sessionAddedExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder, cashLedgerExpenseTotals, currentMonth]);
 
   const unselectedExpenses = useMemo(() => {
     return allExpensesList.filter(e => !visibleExpenses.includes(e));
@@ -647,10 +671,10 @@ export default function MR() {
     return unselectedExpenses.filter(e => e.toLowerCase().includes(query));
   }, [unselectedExpenses, expenseSearchQuery]);
 
-  // Operational Expenses calculation
+  // Operational Expenses calculation: Strictly sums active visible expenses (> 0)
   const totalExpenses = useMemo(() => {
-    return allExpensesList.reduce((acc, cat) => acc + getEffectiveExpenseValue(cat), 0);
-  }, [allExpensesList, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder]);
+    return visibleExpenses.reduce((acc, cat) => acc + getEffectiveExpenseValue(cat), 0);
+  }, [visibleExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder, cashLedgerExpenseTotals]);
 
   // NET PROFIT
   const netProfit = grandDiffWOGST - totalExpenses;
@@ -1775,20 +1799,38 @@ export default function MR() {
                   </span>
                 </div>
 
-                {/* Expense Dropdown Button */}
-                <div className="relative print:hidden" ref={expenseDropdownRef}>
+                {/* Buttons: Cash Ledger & Add Expense */}
+                <div className="flex items-center gap-2 print:hidden">
                   <button
                     onClick={() => {
-                      setShowExpenseDropdown(!showExpenseDropdown);
-                      setShowSalesPartyDropdown(false);
-                      setShowReconPartyDropdown(false);
+                      setSelectedExpenseForLedger(undefined);
+                       setShowCashLedgerModal(true);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-md transition active:scale-95"
+                    className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-md transition active:scale-95"
+                    title="Open Cash Ledger"
                   >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Expense
-                    <ChevronDown className="w-3 h-3" />
+                    <Wallet className="w-3.5 h-3.5" />
+                    Cash Ledger
+                    {totalCashLedgerMonth > 0 && (
+                      <span className="bg-emerald-900/60 text-emerald-200 text-[10px] px-1.5 py-0.2 rounded-full border border-emerald-400/40">
+                        ₹ {formatINR(totalCashLedgerMonth)}
+                      </span>
+                    )}
                   </button>
+
+                  <div className="relative" ref={expenseDropdownRef}>
+                    <button
+                      onClick={() => {
+                        setShowExpenseDropdown(!showExpenseDropdown);
+                        setShowSalesPartyDropdown(false);
+                        setShowReconPartyDropdown(false);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-md transition active:scale-95"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Expense
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
 
                   {showExpenseDropdown && (
                     <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 p-2.5 z-[100] text-slate-800 space-y-2">
@@ -1846,21 +1888,35 @@ export default function MR() {
                   )}
                 </div>
               </div>
+            </div>
 
               <div className="p-4 print:p-2">
                 
                 {/* Active Expenses Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 print:grid-cols-2 print:gap-1.5">
-                  {visibleExpenses.map(exp => {
-                    const isFreightOutward = exp === "Freight Outward Charges";
-                    const isSalaryWages = exp === "Salary with Director Remuneration";
-                    const isConsumableGoods = exp === "Consumable Goods (Excl. Gas)" || exp === "Consumable Goods";
-                    const effectiveVal = getEffectiveExpenseValue(exp);
+                  {visibleExpenses.length === 0 ? (
+                    <div className="col-span-full py-8 text-center text-slate-400 font-medium bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+                      <Wallet className="w-7 h-7 mx-auto text-slate-300 mb-1" />
+                      इस महीने के लिए कोई आपरेशनल खर्च (Expense &gt; 0) दर्ज नहीं है।
+                      <div className="mt-1 text-xs text-rose-600 font-bold">
+                        कैश लेजर में खर्च दर्ज करें या ऊपर &quot;Add Expense&quot; से खर्चा जोड़ें।
+                      </div>
+                    </div>
+                  ) : (
+                    visibleExpenses.map(exp => {
+                      const isFreightOutward = exp === "Freight Outward Charges";
+                      const isSalaryWages = exp === "Salary with Director Remuneration";
+                      const isConsumableGoods = exp === "Consumable Goods (Excl. Gas)" || exp === "Consumable Goods";
+                      const effectiveVal = getEffectiveExpenseValue(exp);
                     
                     const isUsingAutoFreight = isFreightOutward && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoFreightOutward > 0;
                     const isUsingAutoSalary = isSalaryWages && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoSalaryWages > 0;
                     const isUsingAutoConsumable = isConsumableGoods && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoConsumableGoods > 0;
-                    const isAutoMapped = isUsingAutoFreight || isUsingAutoSalary || isUsingAutoConsumable;
+                    
+                    const cashLedgerVal = currentMonth >= '2026-10' ? (cashLedgerExpenseTotals[exp] || 0) : 0;
+                    const isUsingCashLedger = !isFreightOutward && !isSalaryWages && !isConsumableGoods && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && cashLedgerVal > 0;
+
+                    const isAutoMapped = isUsingAutoFreight || isUsingAutoSalary || isUsingAutoConsumable || isUsingCashLedger;
 
                     // Compute input display value
                     const hasManualCustomVal = manualData[`EXP:${exp}`] !== undefined && manualData[`EXP:${exp}`] !== 0;
@@ -1885,7 +1941,20 @@ export default function MR() {
                             </button>
                           )}
                           <div className="min-w-0">
-                            <span className="text-xs font-bold text-slate-800 truncate block print:text-[9px]">{exp}</span>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-xs font-bold text-slate-800 truncate block print:text-[9px]">{exp}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedExpenseForLedger(exp);
+                                  setShowCashLedgerModal(true);
+                                }}
+                                className="text-slate-400 hover:text-rose-600 transition p-0.5 rounded hover:bg-rose-50 print:hidden shrink-0"
+                                title={`"${exp}" का कैश लेजर और तारीख वार विवरण देखें`}
+                              >
+                                <Filter className="w-3 h-3" />
+                              </button>
+                            </div>
                             
                             {/* Auto Badges & Reset Actions */}
                             {isFreightOutward && (
@@ -1941,6 +2010,25 @@ export default function MR() {
                                 )}
                               </div>
                             )}
+
+                            {/* Cash Ledger Auto Mapped Badge */}
+                            {cashLedgerVal > 0 && !isFreightOutward && !isSalaryWages && !isConsumableGoods && (
+                              <div className="flex items-center gap-2 mt-0.5 print:hidden">
+                                {isUsingCashLedger ? (
+                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
+                                    <Wallet className="w-2.5 h-2.5" /> Mapped from Cash Ledger (₹ {formatINR(cashLedgerVal)})
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => handleManualChange(`EXP:${exp}`, String(cashLedgerVal))}
+                                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline"
+                                    title="Reset to live Cash Ledger value"
+                                  >
+                                    <RotateCcw className="w-2.5 h-2.5" /> Reset to Cash Ledger (₹ {formatINR(cashLedgerVal)})
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="w-28 shrink-0 flex items-center justify-end">
@@ -1956,6 +2044,8 @@ export default function MR() {
                                   ? String(autoSalaryWages) 
                                   : isConsumableGoods
                                   ? String(autoConsumableGoods)
+                                  : cashLedgerVal > 0
+                                  ? String(cashLedgerVal)
                                   : "0"
                               }
                               value={displayInputValue}
@@ -1970,15 +2060,9 @@ export default function MR() {
                         </div>
                       </div>
                     );
-                  })}
-                </div>
-
-                {visibleExpenses.length === 0 && (
-                  <div className="text-center py-6 text-slate-400 text-xs">
-                    No active expenses. Click <span className="font-bold text-rose-600">+ Add Expense</span> above to add categories.
-                  </div>
+                  })
                 )}
-
+                </div>
               </div>
             </div>
 
@@ -2026,6 +2110,22 @@ export default function MR() {
         reels={reels}
         reelTxns={reelTxns}
         currentMonth={currentMonth}
+      />
+
+      <CashLedgerModal
+        isOpen={showCashLedgerModal}
+        onClose={() => {
+          setShowCashLedgerModal(false);
+          setSelectedExpenseForLedger(undefined);
+        }}
+        defaultMonth={currentMonth}
+        initialExpenseFilter={selectedExpenseForLedger}
+        standardExpenses={DEFAULT_EXPENSE_CATEGORIES}
+        onEntriesSaved={() => {
+          refetchCashLedgerTotals();
+          refetchReport();
+          refetchDbCategories();
+        }}
       />
     </div>
   );

@@ -7,6 +7,7 @@ import { getReels, createReel, updateReel } from '../lib/supabase/reelService';
 import { updateUserPassword } from '../lib/supabase/userCredentialsService';
 import { CONFIGURED_USERS } from '../lib/auth/users';
 import * as xlsx from 'xlsx';
+import CashLedgerAdminSettings from './CashLedgerAdminSettings';
 
 type BackupTarget = 'products' | 'reels';
 
@@ -258,6 +259,11 @@ export default function Settings() {
             <PasswordChangeForm user={user} hasRole={hasRole} />
           </div>
         </section>
+
+        {/* Admin Only: Cash Ledger Management (Edit & Delete Entries) */}
+        {hasRole('ADMIN') && (
+          <CashLedgerAdminSettings />
+        )}
         
         {/* Active Sessions Section */}
         <section className="bg-card border border-border shadow-sm rounded-xl overflow-hidden">

@@ -196,3 +196,21 @@ export interface MonthlyReport extends BaseModel {
   month: string; // e.g., '2026-07'
   expenses: { id: string; name: string; amount: number }[];
 }
+
+export interface CashLedgerEntry extends BaseModel {
+  date: string; // YYYY-MM-DD
+  voucherNo?: string;
+  expenseHead: string;
+  narration?: string;
+  paymentMode: 'CASH' | 'BANK';
+  dr: number; // Debit / Expense / Payment Out
+  cr: number; // Credit / Receipt / Cash In
+}
+
+export interface ExpenseCategory {
+  id?: string;
+  name: string;
+  isActive?: boolean;
+  createdAt?: string;
+  createdBy?: string;
+}
