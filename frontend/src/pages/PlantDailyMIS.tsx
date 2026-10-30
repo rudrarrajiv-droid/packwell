@@ -5,7 +5,7 @@ import {
   Printer, Edit3, CheckCircle2, AlertTriangle, Layers, 
   Clock, Sun, Moon, Sparkles, TrendingUp, 
   Box, Check, Flame, Calculator, PackageCheck, AlertCircle, Warehouse,
-  Eye, EyeOff, Trash2, Plus, RotateCcw, X
+  Eye, EyeOff, Trash2, Plus, RotateCcw, X, FileText
 } from 'lucide-react';
 import { 
   getPlantMisByDate, 
@@ -21,13 +21,37 @@ import PlantMisEntryModal from './plant-mis/PlantMisEntryModal';
 import CutSizeDetailModal from './plant-mis/CutSizeDetailModal';
 import BulkCutSizeModal from './plant-mis/BulkCutSizeModal';
 import PrintablePlantMis from './plant-mis/PrintablePlantMis';
+import PlantMisWhatsappModal from './plant-mis/PlantMisWhatsappModal';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+
+// Helper to format Date object into local YYYY-MM-DD
+const formatLocalDate = (d: Date): string => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+// Default to Yesterday (Current Date minus 1 day)
+const getYesterdayDate = (): string => {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return formatLocalDate(d);
+};
+
+// First day of current month
+const getFirstDayOfCurrentMonth = (): string => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}-01`;
+};
 
 export default function PlantDailyMIS() {
   const queryClient = useQueryClient();
 
-  // Selected date defaults to 2026-05-27 (the date in user's Excel sheet)
-  const [selectedDate, setSelectedDate] = useState<string>('2026-05-27');
+  // Selected date defaults to Yesterday (1 day before today)
+  const [selectedDate, setSelectedDate] = useState<string>(() => getYesterdayDate());
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'ANALYTICS'>('OVERVIEW');
 
   // Modals state
@@ -52,13 +76,14 @@ export default function PlantDailyMIS() {
     items: CutSizeItem[];
   } | null>(null);
 
-  // WhatsApp copy toast state
+  // WhatsApp modal & copy toast state
+  const [isWhatsappCardModalOpen, setIsWhatsappCardModalOpen] = useState(false);
   const [copiedWhatsapp, setCopiedWhatsapp] = useState(false);
 
-  // Machine Analytics tab states
+  // Machine Analytics tab states (Dynamic to current month)
   const [analyticsMachine, setAnalyticsMachine] = useState('Manual Corrugation Machine');
-  const [analyticsFromDate, setAnalyticsFromDate] = useState('2026-05-01');
-  const [analyticsToDate, setAnalyticsToDate] = useState('2026-05-31');
+  const [analyticsFromDate, setAnalyticsFromDate] = useState(() => getFirstDayOfCurrentMonth());
+  const [analyticsToDate, setAnalyticsToDate] = useState(() => getYesterdayDate());
 
   // Query Daily Data
   const { data, isLoading, refetch } = useQuery<PlantMisFullData>({
@@ -79,21 +104,27 @@ export default function PlantDailyMIS() {
     enabled: activeTab === 'ANALYTICS'
   });
 
-  // Date Navigation
+  // Date Navigation (Local timezone safe)
   const handlePrevDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    dateObj.setDate(dateObj.getDate() - 1);
+    setSelectedDate(formatLocalDate(dateObj));
   };
 
   const handleNextDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + 1);
-    setSelectedDate(d.toISOString().split('T')[0]);
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    dateObj.setDate(dateObj.getDate() + 1);
+    setSelectedDate(formatLocalDate(dateObj));
   };
 
   const handleJumpToToday = () => {
-    setSelectedDate(new Date().toISOString().split('T')[0]);
+    setSelectedDate(formatLocalDate(new Date()));
+  };
+
+  const handleJumpToYesterday = () => {
+    setSelectedDate(getYesterdayDate());
   };
 
   const handleJumpToPrevWorkingDate = () => {
@@ -390,8 +421,17 @@ export default function PlantDailyMIS() {
               </button>
 
               <button
+                onClick={handleJumpToYesterday}
+                className="px-2 py-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 rounded-md transition-colors ml-1"
+                title="Jump to Yesterday (Default)"
+              >
+                Yesterday
+              </button>
+
+              <button
                 onClick={handleJumpToToday}
-                className="px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 rounded-md transition-colors ml-1"
+                className="px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 rounded-md transition-colors"
+                title="Jump to Today"
               >
                 Today
               </button>
@@ -411,16 +451,25 @@ export default function PlantDailyMIS() {
             {/* Action Buttons */}
             <div className="flex items-center gap-2">
               <button
+                onClick={() => setIsWhatsappCardModalOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-extrabold rounded-xl transition-all shadow-md bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25 hover:scale-[1.02] active:scale-[0.98]"
+                title="Preview, Download & Copy WhatsApp MIS Image Card for MD"
+              >
+                <Share2 className="w-4 h-4" />
+                <span>📸 WhatsApp Image Card</span>
+              </button>
+
+              <button
                 onClick={handleCopyWhatsAppReport}
-                className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl transition-all shadow-sm ${
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl transition-all shadow-sm ${
                   copiedWhatsapp
                     ? 'bg-emerald-600 text-white'
-                    : 'bg-emerald-600/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/25'
+                    : 'bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 hover:bg-emerald-600/20'
                 }`}
-                title="Copy WhatsApp Summary for Directors"
+                title="Copy text summary for WhatsApp"
               >
-                {copiedWhatsapp ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
-                <span>{copiedWhatsapp ? 'Copied to WhatsApp!' : 'Copy WhatsApp Report'}</span>
+                {copiedWhatsapp ? <Check className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                <span className="hidden lg:inline">{copiedWhatsapp ? 'Copied Text!' : 'Copy Text'}</span>
               </button>
 
               <button
@@ -986,42 +1035,62 @@ export default function PlantDailyMIS() {
                         <thead className="bg-secondary/60 text-muted-foreground font-semibold uppercase text-[11px] sticky top-0 border-b border-border">
                           <tr>
                             <th className="py-2.5 px-3 w-10 text-center">#</th>
-                            <th className="py-2.5 px-3">Vendor / Customer</th>
+                            <th className="py-2.5 px-3">Vendor</th>
                             <th className="py-2.5 px-3">Item Name / Product</th>
-                            <th className="py-2.5 px-3 text-right">Produced Qty (Box)</th>
+                            <th className="py-2.5 px-3 text-right">Qty (Box)</th>
+                            <th className="py-2.5 px-3 text-right">Rate</th>
+                            <th className="py-2.5 px-3 text-right">Value (₹)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border/60">
                           {data.fgItems.length === 0 ? (
                             <tr>
-                              <td colSpan={4} className="py-8 text-center text-muted-foreground text-xs">
+                              <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
                                 No finished goods production recorded for this date.
                               </td>
                             </tr>
                           ) : (
-                            data.fgItems.map((fg, idx) => (
-                              <tr key={idx} className="hover:bg-secondary/20 transition-colors">
-                                <td className="py-2 px-3 text-center text-muted-foreground font-mono text-[11px]">{idx + 1}</td>
-                                <td className="py-2 px-3 font-semibold text-foreground uppercase tracking-tight">
-                                  <span className="px-1.5 py-0.5 rounded bg-secondary font-mono text-[10px] mr-1.5">
-                                    {fg.vendorName}
-                                  </span>
-                                </td>
-                                <td className="py-2 px-3 text-foreground font-medium">{fg.itemName}</td>
-                                <td className="py-2 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                  {fg.qtyBox.toLocaleString('en-IN')}
-                                </td>
-                              </tr>
-                            ))
+                            data.fgItems.map((fg, idx) => {
+                              const itemRate = Number(fg.rate) || 0;
+                              const itemVal = Number(fg.totalValue) || (itemRate * (Number(fg.qtyBox) || 0));
+                              return (
+                                <tr key={idx} className="hover:bg-secondary/20 transition-colors">
+                                  <td className="py-2 px-3 text-center text-muted-foreground font-mono text-[11px]">{idx + 1}</td>
+                                  <td className="py-2 px-3 font-semibold text-foreground uppercase tracking-tight">
+                                    <span className="px-1.5 py-0.5 rounded bg-secondary font-mono text-[10px] mr-1.5">
+                                      {fg.vendorName}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-3 text-foreground font-medium">{fg.itemName}</td>
+                                  <td className="py-2 px-3 text-right font-mono font-bold text-blue-600 dark:text-blue-400">
+                                    {fg.qtyBox.toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono text-muted-foreground text-[11px]">
+                                    {itemRate > 0 ? `₹${itemRate.toFixed(2)}` : (
+                                      <span className="text-amber-500 font-sans text-[10px]" title="Finish Goods sheet me rate 0 ya missing hai">-</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                    {itemVal > 0 ? `₹${itemVal.toLocaleString('en-IN')}` : '-'}
+                                  </td>
+                                </tr>
+                              );
+                            })
                           )}
                         </tbody>
                         <tfoot className="bg-secondary/40 font-bold border-t border-border sticky bottom-0">
                           <tr>
                             <td colSpan={3} className="py-2.5 px-3 text-right uppercase text-[11px] text-muted-foreground">
-                              Total Produced Boxes:
+                              Total Produced:
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-blue-600 dark:text-blue-400 text-sm">
+                              {totalBoxesProduced.toLocaleString('en-IN')}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-[11px] uppercase text-muted-foreground">
+                              Total Value:
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono text-emerald-600 dark:text-emerald-400 text-sm">
-                              {totalBoxesProduced.toLocaleString('en-IN')}
+                              ₹{data.fgItems.reduce((acc, it) => acc + (Number(it.totalValue) || ((Number(it.rate) || 0) * (Number(it.qtyBox) || 0))), 0).toLocaleString('en-IN')}
                             </td>
                           </tr>
                         </tfoot>
@@ -1602,6 +1671,16 @@ export default function PlantDailyMIS() {
             </form>
           </div>
         </div>
+      )}
+      {/* WhatsApp MIS Image Card Modal */}
+      {data && (
+        <PlantMisWhatsappModal
+          isOpen={isWhatsappCardModalOpen}
+          onClose={() => setIsWhatsappCardModalOpen(false)}
+          data={data}
+          formattedDateStr={formattedDateStr}
+          onCopyTextReport={handleCopyWhatsAppReport}
+        />
       )}
     </div>
   );

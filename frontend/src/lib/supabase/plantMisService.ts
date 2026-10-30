@@ -43,6 +43,8 @@ export interface PlantMisFgItem {
   qtyBox: number;
   scrapBox: number;
   sortOrder: number;
+  rate?: number;
+  totalValue?: number;
 }
 
 export interface PlantMisMachineLog {
@@ -289,7 +291,7 @@ export const getPlantMisByDate = async (dateStr: string): Promise<PlantMisFullDa
     showMachines: true
   };
 
-  // 2. Fetch FG Items
+  // 2. Fetch FG Items & Lookup Rates from finish_goods table
   let fgItems: PlantMisFgItem[] = [];
   if (isExisting) {
     const { data: fgData, error: fgError } = await supabase
@@ -298,16 +300,106 @@ export const getPlantMisByDate = async (dateStr: string): Promise<PlantMisFullDa
       .eq('report_date', dateStr)
       .order('sort_order', { ascending: true });
 
+    // Comprehensive Rates Lookup:
+    // 1. finish_goods table (rates with > 0)
+    // 2. purchase_orders table (contract/PO rates fallback)
+    const [fgRatesRes, poRatesRes] = await Promise.all([
+      supabase
+        .from('finish_goods')
+        .select('product_name, rate')
+        .eq('is_archived', false)
+        .gt('rate', 0),
+      supabase
+        .from('purchase_orders')
+        .select('product_name, rate')
+        .gt('rate', 0)
+    ]);
+
+    interface RateCandidate {
+      name: string;
+      rawLower: string;
+      alphaOnly: string;
+      rate: number;
+    }
+
+    const rateCandidates: RateCandidate[] = [];
+    const seenNames = new Set<string>();
+
+    (fgRatesRes.data || []).forEach((r: any) => {
+      if (r.product_name && Number(r.rate) > 0) {
+        const raw = String(r.product_name).trim().toLowerCase();
+        seenNames.add(raw);
+        rateCandidates.push({
+          name: String(r.product_name).trim(),
+          rawLower: raw,
+          alphaOnly: raw.replace(/[^a-z0-9]/g, ''),
+          rate: Number(r.rate)
+        });
+      }
+    });
+
+    (poRatesRes.data || []).forEach((r: any) => {
+      if (r.product_name && Number(r.rate) > 0) {
+        const raw = String(r.product_name).trim().toLowerCase();
+        if (!seenNames.has(raw)) {
+          seenNames.add(raw);
+          rateCandidates.push({
+            name: String(r.product_name).trim(),
+            rawLower: raw,
+            alphaOnly: raw.replace(/[^a-z0-9]/g, ''),
+            rate: Number(r.rate)
+          });
+        }
+      }
+    });
+
+    const resolveItemRate = (itemName: string): number => {
+      if (!itemName) return 0;
+      const targetRaw = itemName.trim().toLowerCase();
+      const targetAlpha = targetRaw.replace(/[^a-z0-9]/g, '');
+
+      // Level 1: Exact raw match
+      const exact = rateCandidates.find(c => c.rawLower === targetRaw);
+      if (exact) return exact.rate;
+
+      // Level 2: Exact alphanumeric match (ignoring spaces, dashes, parentheses)
+      const alphaMatch = rateCandidates.find(c => c.alphaOnly === targetAlpha);
+      if (alphaMatch) return alphaMatch.rate;
+
+      // Level 3: Token coverage (e.g. 'homefoil' and '20+5' in same string)
+      const tokens = targetRaw.split(/[^a-z0-9+]/g).filter(t => t.length >= 3);
+      if (tokens.length >= 2) {
+        const tokenMatch = rateCandidates.find(c => tokens.every(t => c.rawLower.includes(t)));
+        if (tokenMatch) return tokenMatch.rate;
+      }
+
+      // Level 4: Substring match for substantial names (>= 5 chars)
+      if (targetAlpha.length >= 5) {
+        const subMatch = rateCandidates.find(c => 
+          c.alphaOnly.includes(targetAlpha) || (c.alphaOnly.length >= 5 && targetAlpha.includes(c.alphaOnly))
+        );
+        if (subMatch) return subMatch.rate;
+      }
+
+      return 0;
+    };
+
     if (!fgError && fgData) {
-      fgItems = fgData.map(item => ({
-        id: item.id,
-        reportDate: item.report_date,
-        vendorName: item.vendor_name,
-        itemName: item.item_name,
-        qtyBox: Number(item.qty_box) || 0,
-        scrapBox: 0,
-        sortOrder: item.sort_order || 0
-      }));
+      fgItems = fgData.map(item => {
+        const rate = resolveItemRate(item.item_name || '');
+        const qty = Number(item.qty_box) || 0;
+        return {
+          id: item.id,
+          reportDate: item.report_date,
+          vendorName: item.vendor_name,
+          itemName: item.item_name,
+          qtyBox: qty,
+          scrapBox: 0,
+          sortOrder: item.sort_order || 0,
+          rate: rate,
+          totalValue: Math.round(qty * rate)
+        };
+      });
     }
   }
 
