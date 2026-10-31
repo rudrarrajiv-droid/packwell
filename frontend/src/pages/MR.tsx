@@ -1942,17 +1942,27 @@ export default function MR() {
                           )}
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="text-xs font-bold text-slate-800 truncate block print:text-[9px]">{exp}</span>
                               <button
                                 type="button"
                                 onClick={() => {
                                   setSelectedExpenseForLedger(exp);
                                   setShowCashLedgerModal(true);
                                 }}
-                                className="text-slate-400 hover:text-rose-600 transition p-0.5 rounded hover:bg-rose-50 print:hidden shrink-0"
+                                className="text-left text-xs font-bold text-slate-800 hover:text-rose-600 transition truncate block print:text-[9px] hover:underline cursor-pointer group-hover:text-rose-600"
+                                title={`Click to view date-wise expense details for "${exp}"`}
+                              >
+                                {exp}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedExpenseForLedger(exp);
+                                  setShowCashLedgerModal(true);
+                                }}
+                                className="text-slate-400 hover:text-rose-600 transition p-1 rounded hover:bg-rose-50 print:hidden shrink-0 cursor-pointer"
                                 title={`"${exp}" का कैश लेजर और तारीख वार विवरण देखें`}
                               >
-                                <Filter className="w-3 h-3" />
+                                <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
                               </button>
                             </div>
                             

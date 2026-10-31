@@ -134,12 +134,20 @@ export default function CashLedgerModal({
   const [selectedExpenseFilter, setSelectedExpenseFilter] = useState<string>(initialExpenseFilter || 'ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Sync initialExpenseFilter when passed from parent (e.g. from P&L expense eye button)
+  // Sync initialExpenseFilter and defaultMonth when passed from parent (e.g. from P&L expense click)
   useEffect(() => {
-    if (initialExpenseFilter) {
-      setSelectedExpenseFilter(initialExpenseFilter);
+    if (isOpen) {
+      if (initialExpenseFilter) {
+        setSelectedExpenseFilter(initialExpenseFilter);
+      } else {
+        setSelectedExpenseFilter('ALL');
+      }
+      if (defaultMonth) {
+        setSelectedMonth(defaultMonth);
+        setFilterType('MONTH');
+      }
     }
-  }, [initialExpenseFilter, isOpen]);
+  }, [initialExpenseFilter, defaultMonth, isOpen]);
   
   // Show / Toggle Fast Entry Sheet
   const [showEntrySheet, setShowEntrySheet] = useState(true);
