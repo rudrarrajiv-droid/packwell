@@ -3,6 +3,7 @@ import {
   X, Plus, Trash2, Save, Zap, AlertCircle, Calculator, 
   Layers, Clock, Sun, Moon, Gauge, Sparkles, Check, CheckCircle2 
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase/config';
 import { 
   savePlantMisFullReport, getAutoFillProducedFgForDate, getAutoFillDispatchesForDate, 
   DEFAULT_PRESET_MACHINES 
@@ -63,9 +64,38 @@ export default function PlantMisEntryModal({
       return initialData.fgItems.map(item => ({ ...item, scrapBox: 0 }));
     }
     return [
-      { reportDate, vendorName: '', itemName: '', qtyBox: 0, scrapBox: 0, sortOrder: 1 }
+      { reportDate, vendorName: '', itemName: '', qtyBox: 0, rate: 0, scrapBox: 0, sortOrder: 1 }
     ];
   });
+
+  // Finish Goods Master suggestions (Product Name, Customer, Rate)
+  const [fgMasterSuggestions, setFgMasterSuggestions] = useState<Array<{ productName: string; customerName: string; rate: number }>>([]);
+
+  useEffect(() => {
+    async function loadFgMaster() {
+      try {
+        const { data } = await supabase
+          .from('finish_goods')
+          .select('product_name, customer_name, rate')
+          .eq('is_archived', false)
+          .order('product_name', { ascending: true });
+        
+        if (data) {
+          const suggestions = data
+            .filter((d: any) => Boolean(d.product_name))
+            .map((d: any) => ({
+              productName: String(d.product_name).trim(),
+              customerName: String(d.customer_name || '').trim(),
+              rate: Number(d.rate) || 0
+            }));
+          setFgMasterSuggestions(suggestions);
+        }
+      } catch (err) {
+        console.error('Failed to load FG master suggestions:', err);
+      }
+    }
+    loadFgMaster();
+  }, []);
 
   // Machine Logs state
   const [machines, setMachines] = useState<PlantMisMachineLog[]>(() => {
@@ -140,19 +170,35 @@ export default function PlantMisEntryModal({
   const handleFgChange = (index: number, field: keyof PlantMisFgItem, value: any) => {
     const updated = [...fgItems];
     updated[index] = { ...updated[index], [field]: value };
+
+    // Auto-fill rate and vendor if itemName matches Master FG Data
+    if (field === 'itemName' && typeof value === 'string' && value.trim()) {
+      const match = fgMasterSuggestions.find(
+        s => s.productName.toLowerCase() === value.trim().toLowerCase()
+      );
+      if (match) {
+        if (match.rate > 0 && (!updated[index].rate || Number(updated[index].rate) === 0)) {
+          updated[index].rate = match.rate;
+        }
+        if (match.customerName && !updated[index].vendorName) {
+          updated[index].vendorName = match.customerName;
+        }
+      }
+    }
+
     setFgItems(updated);
   };
 
   const handleAddFgRow = () => {
     setFgItems(prev => [
       ...prev,
-      { reportDate, vendorName: '', itemName: '', qtyBox: 0, scrapBox: 0, sortOrder: prev.length + 1 }
+      { reportDate, vendorName: '', itemName: '', qtyBox: 0, rate: 0, scrapBox: 0, sortOrder: prev.length + 1 }
     ]);
   };
 
   const handleRemoveFgRow = (index: number) => {
     if (fgItems.length <= 1) {
-      setFgItems([{ reportDate, vendorName: '', itemName: '', qtyBox: 0, scrapBox: 0, sortOrder: 1 }]);
+      setFgItems([{ reportDate, vendorName: '', itemName: '', qtyBox: 0, rate: 0, scrapBox: 0, sortOrder: 1 }]);
       return;
     }
     setFgItems(prev => prev.filter((_, i) => i !== index));
@@ -678,67 +724,103 @@ export default function PlantMisEntryModal({
             )}
 
             <div className="border border-border rounded-xl overflow-hidden shadow-sm">
+              {/* Datalist for Master FG suggestions */}
+              <datalist id="fg-master-items-list">
+                {fgMasterSuggestions.map((s, sIdx) => (
+                  <option key={sIdx} value={s.productName}>
+                    {s.customerName ? `${s.customerName} • ` : ''}Rate: ₹{s.rate > 0 ? s.rate.toFixed(2) : '0'}
+                  </option>
+                ))}
+              </datalist>
+
               <table className="w-full text-left text-xs">
                 <thead className="bg-secondary/60 text-muted-foreground font-semibold uppercase text-[11px] border-b border-border">
                   <tr>
-                    <th className="py-2.5 px-3 w-12 text-center">#</th>
-                    <th className="py-2.5 px-3 w-1/3">Vendor / Customer</th>
-                    <th className="py-2.5 px-3">Item Name / Product</th>
-                    <th className="py-2.5 px-3 w-40 text-right">Produced Qty (Boxes)</th>
-                    <th className="py-2.5 px-3 w-12 text-center">Action</th>
+                    <th className="py-2.5 px-3 w-10 text-center">#</th>
+                    <th className="py-2.5 px-3 w-1/4">Vendor / Customer</th>
+                    <th className="py-2.5 px-3">Item Name / Product (Master Dropdown)</th>
+                    <th className="py-2.5 px-3 w-28 text-right">Qty (Boxes)</th>
+                    <th className="py-2.5 px-3 w-24 text-right">Rate (₹)</th>
+                    <th className="py-2.5 px-3 w-28 text-right">Value (₹)</th>
+                    <th className="py-2.5 px-3 w-10 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
-                  {fgItems.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-secondary/20">
-                      <td className="py-2 px-3 text-center text-muted-foreground font-mono text-[11px]">
-                        {idx + 1}
-                      </td>
-                      <td className="py-2 px-3">
-                        <input
-                          type="text"
-                          value={item.vendorName}
-                          onChange={e => handleFgChange(idx, 'vendorName', e.target.value)}
-                          placeholder="e.g. ROYALUX, MAT, RBC"
-                          className="w-full text-xs font-semibold px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground uppercase"
-                        />
-                      </td>
-                      <td className="py-2 px-3">
-                        <input
-                          type="text"
-                          value={item.itemName}
-                          onChange={e => handleFgChange(idx, 'itemName', e.target.value)}
-                          placeholder="e.g. 1240mm / MONO LIGHT INNER"
-                          className="w-full text-xs px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground"
-                        />
-                      </td>
-                      <td className="py-2 px-3">
-                        <input
-                          type="number"
-                          min="0"
-                          value={item.qtyBox || ''}
-                          onChange={e => handleFgChange(idx, 'qtyBox', parseFloat(e.target.value) || 0)}
-                          placeholder="0"
-                          className="w-full text-xs font-mono font-bold text-right px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground"
-                        />
-                      </td>
-                      <td className="py-2 px-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFgRow(idx)}
-                          className="p-1 rounded text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {fgItems.map((item, idx) => {
+                    const rowRate = Number(item.rate) || 0;
+                    const rowQty = Number(item.qtyBox) || 0;
+                    const rowValue = Math.round(rowQty * rowRate);
+
+                    return (
+                      <tr key={idx} className="hover:bg-secondary/20">
+                        <td className="py-2 px-3 text-center text-muted-foreground font-mono text-[11px]">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2 px-3">
+                          <input
+                            type="text"
+                            value={item.vendorName}
+                            onChange={e => handleFgChange(idx, 'vendorName', e.target.value)}
+                            placeholder="e.g. ROYALUX, MAT, RBC"
+                            className="w-full text-xs font-semibold px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground uppercase"
+                          />
+                        </td>
+                        <td className="py-2 px-3">
+                          <input
+                            type="text"
+                            list="fg-master-items-list"
+                            value={item.itemName}
+                            onChange={e => handleFgChange(idx, 'itemName', e.target.value)}
+                            placeholder="Type to search from Master FG items..."
+                            className="w-full text-xs px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground focus:ring-1 focus:ring-primary"
+                          />
+                        </td>
+                        <td className="py-2 px-3">
+                          <input
+                            type="number"
+                            min="0"
+                            value={item.qtyBox || ''}
+                            onChange={e => handleFgChange(idx, 'qtyBox', parseFloat(e.target.value) || 0)}
+                            placeholder="0"
+                            className="w-full text-xs font-mono font-bold text-right px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground"
+                          />
+                        </td>
+                        <td className="py-2 px-3">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={item.rate !== undefined && item.rate !== null && item.rate > 0 ? item.rate : ''}
+                            onChange={e => handleFgChange(idx, 'rate', parseFloat(e.target.value) || 0)}
+                            placeholder="0.00"
+                            className="w-full text-xs font-mono text-right px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground focus:ring-1 focus:ring-primary"
+                          />
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          {rowValue > 0 ? `₹${rowValue.toLocaleString('en-IN')}` : '-'}
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFgRow(idx)}
+                            className="p-1 rounded text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 <tfoot className="bg-secondary/40 font-bold border-t border-border">
                   <tr>
-                    <td colSpan={3} className="py-2.5 px-3 text-right uppercase text-[11px] text-muted-foreground">Total Produced Boxes</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-emerald-600 dark:text-emerald-400 text-sm">
+                    <td colSpan={3} className="py-2.5 px-3 text-right uppercase text-[11px] text-muted-foreground">Total Produced:</td>
+                    <td className="py-2.5 px-3 text-right font-mono text-blue-600 dark:text-blue-400 text-sm">
                       {totalFgBoxes.toLocaleString('en-IN')} Boxes
+                    </td>
+                    <td className="py-2.5 px-3 text-right uppercase text-[11px] text-muted-foreground">Total Value:</td>
+                    <td className="py-2.5 px-3 text-right font-mono text-emerald-600 dark:text-emerald-400 text-sm">
+                      ₹{fgItems.reduce((acc, it) => acc + Math.round((Number(it.qtyBox) || 0) * (Number(it.rate) || 0)), 0).toLocaleString('en-IN')}
                     </td>
                     <td></td>
                   </tr>

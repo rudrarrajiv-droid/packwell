@@ -386,7 +386,9 @@ export const getPlantMisByDate = async (dateStr: string): Promise<PlantMisFullDa
 
     if (!fgError && fgData) {
       fgItems = fgData.map(item => {
-        const rate = resolveItemRate(item.item_name || '');
+        const storedRate = Number(item.rate) || 0;
+        const autoRate = resolveItemRate(item.item_name || '');
+        const rate = storedRate > 0 ? storedRate : autoRate;
         const qty = Number(item.qty_box) || 0;
         return {
           id: item.id,
@@ -604,6 +606,7 @@ export const savePlantMisFullReport = async (payload: {
       vendor_name: item.vendorName,
       item_name: item.itemName,
       qty_box: item.qtyBox,
+      rate: Number(item.rate) || 0,
       scrap_box: 0,
       sort_order: index + 1
     }));
