@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FileText, Database, PackageSearch, PackageCheck, 
   Truck, Activity, Settings, LogOut, ShoppingCart, Users, 
   FileSpreadsheet, Box, Archive, Factory, Calendar, 
-  ChevronDown, ChevronRight 
+  ChevronDown, ChevronRight, Calculator 
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -14,9 +14,7 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [isPlanningOpen, setIsPlanningOpen] = useState<boolean>(
-    Boolean(location.pathname.startsWith('/planning') || true)
-  );
+  const [isPlanningOpen, setIsPlanningOpen] = useState<boolean>(true);
 
   const handleLogout = () => {
     logout();
@@ -38,6 +36,7 @@ export default function AppLayout() {
     },
     { name: 'PO Management', path: '/purchase-orders', icon: ShoppingCart },
     { name: 'Job Cards', path: '/job-cards', icon: FileText },
+    { name: 'Job Costing (P/L)', path: '/job-costing', icon: Calculator },
     { name: 'Master Data', path: '/master-data', icon: Database },
     { name: 'Reel Inventory', path: '/inventory', icon: PackageSearch },
     { name: 'Finish Goods', path: '/finish-goods', icon: PackageCheck },

@@ -10,12 +10,14 @@ export interface CorrugationPlanningRow {
   nosOfPly: number | string | null;
   boxQty: number | string | null;
   remarks: string;
+  isDone?: boolean;
 }
 
 export interface DispatchPlanItem {
   id: string;
   jobName: string;
   qty: number | string | null;
+  isDone?: boolean;
 }
 
 export interface DispatchPlanGroup {
