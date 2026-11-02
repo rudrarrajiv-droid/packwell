@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Search, CheckCircle2, CircleDashed, FileText, X, Edit, Printer, AlertTriangle, Layers, Play, Trash2, AlertCircle } from 'lucide-react';
+import { Plus, Search, CheckCircle2, CircleDashed, FileText, X, Edit, Printer, AlertTriangle, Layers, Play, Trash2, AlertCircle, Calculator } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { cn } from '../lib/utils';
 import { getAllJobCards, getNextJobCardNumber, updateJobCard, executeJobCardTransaction, deleteJobCardSoft, parseJobCardSerial, formatJobCardDateSuffix } from '../lib/supabase/jobCardService';
@@ -270,6 +271,14 @@ export default function JobCards() {
             <p className="text-muted-foreground text-sm mt-1">Manage and track production job cards</p>
           </div>
           <div className="flex gap-3">
+            <Link
+              to="/job-costing"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 flex items-center text-sm font-bold rounded-md shadow transition-colors"
+              title="Open Job Card Costing & P/L Sheet (01/11/2026 onwards)"
+            >
+              <Calculator className="w-4 h-4 mr-2" />
+              Job Costing (P/L)
+            </Link>
             <ExportButtons 
               data={filteredCards} 
               filenamePrefix="JobCards"
