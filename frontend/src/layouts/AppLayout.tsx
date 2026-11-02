@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Database, PackageSearch, PackageCheck, Truck, Activity, Settings, LogOut, ShoppingCart, Users, FileSpreadsheet, Box, Archive, Factory } from 'lucide-react';
+import { 
+  LayoutDashboard, FileText, Database, PackageSearch, PackageCheck, 
+  Truck, Activity, Settings, LogOut, ShoppingCart, Users, 
+  FileSpreadsheet, Box, Archive, Factory, Calendar, 
+  ChevronDown, ChevronRight 
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 
@@ -9,6 +14,9 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [isPlanningOpen, setIsPlanningOpen] = useState<boolean>(
+    Boolean(location.pathname.startsWith('/planning') || true)
+  );
 
   const handleLogout = () => {
     logout();
@@ -18,6 +26,16 @@ export default function AppLayout() {
   const navItems = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Plant Daily MIS', path: '/plant-daily-mis', icon: Factory },
+    { 
+      name: 'Planning', 
+      path: '/planning', 
+      icon: Calendar,
+      isDropdown: true,
+      subItems: [
+        { name: '1. Corrugation Machine Planning', path: '/planning/corrugation', tab: 'corrugation', icon: Factory },
+        { name: '2. Dispatch Planning', path: '/planning/dispatch', tab: 'dispatch', icon: Truck },
+      ]
+    },
     { name: 'PO Management', path: '/purchase-orders', icon: ShoppingCart },
     { name: 'Job Cards', path: '/job-cards', icon: FileText },
     { name: 'Master Data', path: '/master-data', icon: Database },
@@ -42,10 +60,68 @@ export default function AppLayout() {
         </div>
 
         <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto custom-scrollbar">
-          {navItems.map((item) => {
+          {navItems.map((item: any) => {
             const Icon = item.icon;
             const isActive = location.pathname.startsWith(item.path);
             
+            if (item.isDropdown) {
+              return (
+                <div key={item.name} className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPlanningOpen(prev => !prev);
+                      navigate('/planning');
+                    }}
+                    className={cn(
+                      "w-full flex items-center justify-between px-4 py-3 rounded-md transition-colors text-sm font-medium cursor-pointer",
+                      isActive 
+                        ? "bg-[#2563eb] text-white shadow-md shadow-blue-900/20" 
+                        : "text-blue-200 hover:bg-blue-800 hover:text-white"
+                    )}
+                  >
+                    <div className="flex items-center">
+                      <Icon className="w-5 h-5 mr-3" />
+                      <span>{item.name}</span>
+                    </div>
+                    {isPlanningOpen ? (
+                      <ChevronDown className="w-4 h-4 text-blue-200" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-blue-200" />
+                    )}
+                  </button>
+
+                  {/* 2 Sub Buttons revealed when Planning is clicked */}
+                  {isPlanningOpen && (
+                    <div className="pl-3 pr-1 py-1 space-y-1 bg-blue-950/40 rounded-lg border border-blue-800/40">
+                      {item.subItems?.map((sub: any) => {
+                        const SubIcon = sub.icon;
+                        const isSubActive = location.pathname === sub.path || 
+                          (location.pathname === '/planning' && location.search.includes(`tab=${sub.tab}`)) ||
+                          (location.pathname === '/planning' && !location.search && sub.tab === 'corrugation');
+                        
+                        return (
+                          <Link
+                            key={sub.name}
+                            to={sub.path}
+                            className={cn(
+                              "flex items-center px-3 py-2 rounded-md transition-all text-xs font-semibold",
+                              isSubActive
+                                ? "bg-blue-500 text-white shadow-sm"
+                                : "text-blue-200 hover:bg-blue-800/80 hover:text-white"
+                            )}
+                          >
+                            <SubIcon className="w-3.5 h-3.5 mr-2 opacity-90" />
+                            <span>{sub.name}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
             return (
               <Link
                 key={item.name}
@@ -70,7 +146,13 @@ export default function AppLayout() {
         {/* Top Header */}
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-8 print:hidden">
           <h2 className="text-lg font-semibold text-foreground">
-            {navItems.find(i => location.pathname.startsWith(i.path))?.name || 'Packwell India'}
+            {location.pathname.startsWith('/planning/corrugation')
+              ? 'Corrugation Machine Planning'
+              : location.pathname.startsWith('/planning/dispatch')
+              ? 'Dispatch Planning'
+              : location.pathname.startsWith('/planning')
+              ? 'Daily Planning'
+              : navItems.find((i: any) => location.pathname.startsWith(i.path))?.name || 'Packwell India'}
           </h2>
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-3">

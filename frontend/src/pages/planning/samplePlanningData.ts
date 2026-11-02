@@ -1,0 +1,113 @@
+import type { CorrugationPlanningRow, DispatchPlanGroup } from './PlanningTypes';
+
+export const INITIAL_CORRUGATION_ROWS: CorrugationPlanningRow[] = [
+  { id: 'c-1', sNo: 1, customerName: 'N.G ELECTRO', jobName: 'SHIPPER', reelSize: 45, cutSize: 32, ups: 3, fluteType: 'A', nosOfPly: 6000, boxQty: 18000, remarks: '' },
+  { id: 'c-2', sNo: 2, customerName: 'JAI DURGA', jobName: '690X400X510 PRINTING', reelSize: 37, cutSize: 44.75, ups: 0.5, fluteType: 'A', nosOfPly: 1400, boxQty: 700, remarks: '' },
+  { id: 'c-3', sNo: 3, customerName: 'COLORMANN', jobName: 'A FLUTE BOX', reelSize: 36, cutSize: 43.5, ups: 0.5, fluteType: 'A', nosOfPly: 3000, boxQty: 3000, remarks: '' },
+  { id: 'c-4', sNo: 4, customerName: 'SHAKTI', jobName: '12X400 SQUEEZE BOX', reelSize: 36, cutSize: 40.5, ups: 2, fluteType: 'B', nosOfPly: 5000, boxQty: 5000, remarks: '' },
+  { id: 'c-5', sNo: 5, customerName: 'SHAKTI', jobName: '12X400 SQUEEZE HOLE PLATE', reelSize: 36, cutSize: 32.5, ups: 16, fluteType: 'B', nosOfPly: 300, boxQty: 500, remarks: '' },
+  { id: 'c-6', sNo: 6, customerName: 'RBI', jobName: 'JK MAINI 01U512336i50', reelSize: 35, cutSize: 32.5, ups: 3, fluteType: 'B', nosOfPly: 340, boxQty: 500, remarks: '' },
+  { id: 'c-7', sNo: 7, customerName: 'RBI', jobName: 'JK MAINI 01U512338i50', reelSize: 38, cutSize: 36, ups: 3, fluteType: 'B', nosOfPly: 340, boxQty: 500, remarks: '' },
+  { id: 'c-8', sNo: 8, customerName: 'RBI', jobName: 'JK MAINI 01U512030i50', reelSize: 34, cutSize: 43, ups: 2, fluteType: 'B', nosOfPly: 500, boxQty: 500, remarks: '' },
+  { id: 'c-9', sNo: 9, customerName: 'RBI', jobName: 'JK MAINI 01U512426i50', reelSize: 35, cutSize: 56.5, ups: 3, fluteType: 'B', nosOfPly: 340, boxQty: 500, remarks: '' },
+  { id: 'c-10', sNo: 10, customerName: 'RBI', jobName: 'JK MAINI 01U512428i50', reelSize: 28, cutSize: 56, ups: 2, fluteType: 'B', nosOfPly: 500, boxQty: 500, remarks: '' },
+  { id: 'c-11', sNo: 11, customerName: 'SUHAG', jobName: 'XL BOX', reelSize: 48, cutSize: 48.5, ups: 0.5, fluteType: 'B', nosOfPly: 1200, boxQty: 200, remarks: '' },
+  { id: 'c-12', sNo: 12, customerName: 'LIT', jobName: 'REMOTE BOX', reelSize: 41, cutSize: 66.5, ups: 2, fluteType: 'B', nosOfPly: 2300, boxQty: 2300, remarks: '' },
+  { id: 'c-13', sNo: 13, customerName: 'LIT', jobName: 'REMOTE BOX JALLI', reelSize: 30, cutSize: 33, ups: 1, fluteType: 'B', nosOfPly: 2900, boxQty: 2900, remarks: '' },
+  { id: 'c-14', sNo: 14, customerName: 'LIT', jobName: 'PHONEPE BOX', reelSize: 52, cutSize: 65.75, ups: 3, fluteType: 'B', nosOfPly: 3067, boxQty: 4600, remarks: '' },
+  { id: 'c-15', sNo: 15, customerName: 'MBI', jobName: '01U512225', reelSize: 31, cutSize: 42.5, ups: 3, fluteType: 'B', nosOfPly: 2000, boxQty: 6000, remarks: '' },
+  { id: 'c-16', sNo: 16, customerName: 'MBI', jobName: '01U512227', reelSize: 31, cutSize: 45, ups: 2, fluteType: 'B', nosOfPly: 5000, boxQty: 10000, remarks: '' },
+  { id: 'c-17', sNo: 17, customerName: 'DBI', jobName: '01U512288', reelSize: 32.5, cutSize: 45.5, ups: 3, fluteType: 'B', nosOfPly: 850, boxQty: 2500, remarks: '' },
+  { id: 'c-18', sNo: 18, customerName: 'RBI', jobName: '01U222-01', reelSize: 50, cutSize: 32.5, ups: 3, fluteType: 'B', nosOfPly: 2000, boxQty: 8000, remarks: '' },
+  { id: 'c-19', sNo: 19, customerName: 'MBSI', jobName: '01U512484', reelSize: 36, cutSize: 33.5, ups: 1, fluteType: 'B', nosOfPly: 6000, boxQty: 3000, remarks: '' },
+  { id: 'c-20', sNo: 20, customerName: 'SHYAM', jobName: 'RG JUNCTION BOX', reelSize: '', cutSize: '', ups: '', fluteType: 'B', nosOfPly: 1000, boxQty: 2000, remarks: '' },
+  { id: 'c-21', sNo: 21, customerName: 'RBC', jobName: 'PGPR INNER', reelSize: 32, cutSize: 44.5, ups: 2, fluteType: 'B', nosOfPly: 500, boxQty: 1000, remarks: '' },
+  { id: 'c-22', sNo: 22, customerName: 'RBC', jobName: 'PGPR OUTER', reelSize: 28, cutSize: 65.5, ups: 1, fluteType: 'B', nosOfPly: 250, boxQty: 250, remarks: '' },
+  { id: 'c-23', sNo: 23, customerName: 'RBC', jobName: 'SL-250', reelSize: 34, cutSize: 49.5, ups: 2, fluteType: 'B', nosOfPly: 1000, boxQty: 2000, remarks: '' },
+  { id: 'c-24', sNo: 24, customerName: 'PROCMART', jobName: '3 LTR HD', reelSize: 30, cutSize: 47, ups: 2, fluteType: 'B', nosOfPly: 3500, boxQty: 7000, remarks: '' },
+  { id: 'c-25', sNo: 25, customerName: 'PROCMART', jobName: '5 LTR HD', reelSize: 34, cutSize: 54, ups: 2, fluteType: 'B', nosOfPly: 1500, boxQty: 3000, remarks: '' },
+];
+
+export const INITIAL_DISPATCH_GROUPS: DispatchPlanGroup[] = [
+  {
+    id: 'grp-1',
+    sNo: 1,
+    dispatchDate: '2026-10-27',
+    customerName: 'SAAT BAZARI',
+    items: [
+      { id: 'item-1-1', jobName: 'MANKINDS 10 PCS', qty: 2000 },
+      { id: 'item-1-2', jobName: 'GT SWEET', qty: 1000 },
+      { id: 'item-1-3', jobName: 'BARK-10', qty: 1000 },
+    ],
+  },
+  {
+    id: 'grp-2',
+    sNo: 2,
+    dispatchDate: '2026-10-27',
+    customerName: 'SUHAG',
+    items: [
+      { id: 'item-2-1', jobName: 'SMALL', qty: 500 },
+      { id: 'item-2-2', jobName: 'BIG', qty: 300 },
+      { id: 'item-2-3', jobName: 'XL CARTON', qty: 200 },
+    ],
+  },
+  {
+    id: 'grp-3',
+    sNo: 3,
+    dispatchDate: '2026-10-27',
+    customerName: 'SHAKTI',
+    items: [
+      { id: 'item-3-1', jobName: '12X400 SQUEEZE BOX', qty: 5000 },
+      { id: 'item-3-2', jobName: '12 X400 QUEEZE HOLE PLATE', qty: 5000 },
+      { id: 'item-3-3', jobName: 'RAJDHANI TEDDY BEAR BOX', qty: 2000 },
+      { id: 'item-3-4', jobName: 'RAJDHANI TEDDY BEAR JALLI', qty: 2000 },
+      { id: 'item-3-5', jobName: 'SAMPLE INNER', qty: 20 },
+      { id: 'item-3-6', jobName: 'SAMPLE OUTER', qty: 10 },
+    ],
+  },
+  {
+    id: 'grp-4',
+    sNo: 4,
+    dispatchDate: '2026-10-27',
+    customerName: 'RBC',
+    items: [
+      { id: 'item-4-1', jobName: 'PGPR INNER', qty: 1200 },
+      { id: 'item-4-2', jobName: 'PGPR OUTER', qty: 250 },
+      { id: 'item-4-3', jobName: 'D-MART', qty: 400 },
+      { id: 'item-4-4', jobName: 'SAMPLE', qty: 50 },
+      { id: 'item-4-5', jobName: 'SAMPLE', qty: 50 },
+    ],
+  },
+  {
+    id: 'grp-5',
+    sNo: 5,
+    dispatchDate: '2026-10-28',
+    customerName: 'LIT',
+    items: [
+      { id: 'item-5-1', jobName: 'REMOTE BOX', qty: 2300 },
+      { id: 'item-5-2', jobName: 'REMOTE BOX JALLI', qty: 2900 },
+    ],
+  },
+  {
+    id: 'grp-6',
+    sNo: 6,
+    dispatchDate: '2026-10-28',
+    customerName: 'DBI',
+    items: [
+      { id: 'item-6-1', jobName: '01U512141', qty: 4000 },
+      { id: 'item-6-2', jobName: '01U512452', qty: 520 },
+      { id: 'item-6-3', jobName: '01U512289', qty: 2500 },
+      { id: 'item-6-4', jobName: '01U512288', qty: 2500 },
+    ],
+  },
+  {
+    id: 'grp-7',
+    sNo: 7,
+    dispatchDate: '2026-10-28',
+    customerName: 'PACKBLAZE',
+    items: [
+      { id: 'item-7-1', jobName: 'BIG BOX', qty: 1000 },
+      { id: 'item-7-2', jobName: 'MEDIUM', qty: 1000 },
+    ],
+  },
+];
