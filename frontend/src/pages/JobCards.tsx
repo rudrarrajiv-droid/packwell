@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Plus, Search, CheckCircle2, CircleDashed, FileText, X, Edit, Printer, AlertTriangle, Layers, Play, Trash2, AlertCircle } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { cn } from '../lib/utils';
-import { getAllJobCards, getNextJobCardNumber, updateJobCard, executeJobCardTransaction, deleteJobCardSoft } from '../lib/supabase/jobCardService';
+import { getAllJobCards, getNextJobCardNumber, updateJobCard, executeJobCardTransaction, deleteJobCardSoft, parseJobCardSerial, formatJobCardDateSuffix } from '../lib/supabase/jobCardService';
 import { getProducts } from '../lib/supabase/productService';
 import { getPurchaseOrders } from '../lib/supabase/purchaseOrderService';
 import { useAuth } from '../contexts/AuthContext';
@@ -117,11 +117,7 @@ export default function JobCards() {
     };
 
     const parseJcNum = (jcNo: string | null | undefined): number => {
-      if (!jcNo) return 0;
-      const parts = String(jcNo).split('/');
-      const last = parts[parts.length - 1];
-      const parsed = parseInt(last, 10);
-      return isNaN(parsed) ? 0 : parsed;
+      return parseJobCardSerial(jcNo);
     };
 
     list.sort((a, b) => {
@@ -675,7 +671,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
         setValue('jobCardNo', await getNextJobCardNumber());
       } catch (err) {
         console.error(err);
-        setValue('jobCardNo', 'PI/JC/1001');
+        setValue('jobCardNo', `1${formatJobCardDateSuffix()}`);
       } finally {
         setLoadingNextNo(false);
       }

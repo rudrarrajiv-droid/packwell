@@ -447,30 +447,79 @@ export const getPendingApprovalJobCards = async (): Promise<JobCardRecord[]> => 
   return getJobCards({ includeArchived: true, statuses: ['PENDING APPROVAL'] });
 };
 
+export const formatJobCardDateSuffix = (date: Date = new Date()): string => {
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yy = String(date.getFullYear()).slice(-2);
+  return `${dd}${mm}${yy}`;
+};
+
+export const parseJobCardSerial = (jcNo: string | null | undefined): number => {
+  if (!jcNo) return 0;
+  const str = String(jcNo).trim();
+  // New format (started 1 Nov 2026): [Serial][DDMMYY] (min 7 numeric digits)
+  if (/^\d{7,}$/.test(str)) {
+    const serial = parseInt(str.slice(0, -6), 10);
+    // Offset by 1,000,000 so all new-format job cards sort above legacy (PI/JC/1569) in descending order
+    return Number.isFinite(serial) ? 1000000 + serial : 0;
+  }
+  // Legacy format: PI/JC/1569
+  if (str.includes('/')) {
+    const parts = str.split('/');
+    const last = parts[parts.length - 1];
+    const parsed = parseInt(last, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  const parsed = parseInt(str, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 export const getNextJobCardNumber = async (): Promise<string> => {
+  const dateSuffix = formatJobCardDateSuffix();
+
+  // Query job cards created on/after 1 Nov 2026 or non-legacy job card numbers
   const { data, error } = await supabase
     .from('job_cards')
-    .select('job_card_no')
-    .order('job_card_no', { ascending: false, nullsFirst: false })
-    .limit(1);
+    .select('job_card_no, created_at')
+    .or('created_at.gte.2026-11-01T00:00:00+00:00,job_card_no.not.like.PI/JC/%')
+    .order('created_at', { ascending: false, nullsFirst: false });
 
-  if (error) {
-    console.error('Error fetching next job card number:', error);
-    throw error;
+  let maxSerial = 0;
+
+  if (!error && data && data.length > 0) {
+    for (const row of data) {
+      const jcNo = (row.job_card_no || '').trim();
+      if (/^\d{7,}$/.test(jcNo)) {
+        const serial = parseInt(jcNo.slice(0, -6), 10);
+        if (Number.isFinite(serial) && serial > maxSerial) {
+          maxSerial = serial;
+        }
+      }
+    }
+  } else if (error) {
+    console.error('Error fetching job cards for next sequence:', error);
+    // Fallback: fetch recent rows
+    const { data: fallbackData } = await supabase
+      .from('job_cards')
+      .select('job_card_no')
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(100);
+
+    if (fallbackData) {
+      for (const row of fallbackData) {
+        const jcNo = (row.job_card_no || '').trim();
+        if (/^\d{7,}$/.test(jcNo)) {
+          const serial = parseInt(jcNo.slice(0, -6), 10);
+          if (Number.isFinite(serial) && serial > maxSerial) {
+            maxSerial = serial;
+          }
+        }
+      }
+    }
   }
 
-  const lastNo = data?.[0]?.job_card_no;
-  if (!lastNo) {
-    return 'PI/JC/1001';
-  }
-
-  const parts = lastNo.split('/');
-  const numberPart = parseInt(parts[parts.length - 1] || '0', 10);
-  if (Number.isNaN(numberPart)) {
-    return 'PI/JC/1001';
-  }
-
-  return `PI/JC/${numberPart + 1}`;
+  const nextSerial = maxSerial + 1;
+  return `${nextSerial}${dateSuffix}`;
 };
 
 export const updateJobCard = async (

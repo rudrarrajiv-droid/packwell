@@ -7,7 +7,7 @@ import DashboardListModal from './dashboard/DashboardListModal';
 import PrintableJobCard from './job-cards/PrintableJobCard';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '../lib/utils';
-import { getJobCards, getPendingApprovalJobCards, updateJobCard } from '../lib/supabase/jobCardService';
+import { getJobCards, getPendingApprovalJobCards, updateJobCard, parseJobCardSerial } from '../lib/supabase/jobCardService';
 import { getFrozenReels, unfreezeReel } from '../lib/supabase/reelService';
 import { getRecentActivityLogs } from '../lib/supabase/activityLogService';
 
@@ -195,8 +195,8 @@ export default function Dashboard() {
       }
       if (a.targetMs !== null) return -1;
       if (b.targetMs !== null) return 1;
-      const numA = parseInt(String(a.jobCardNo).split('/').pop() || '0', 10);
-      const numB = parseInt(String(b.jobCardNo).split('/').pop() || '0', 10);
+      const numA = parseJobCardSerial(a.jobCardNo);
+      const numB = parseJobCardSerial(b.jobCardNo);
       return numB - numA;
     });
 
