@@ -29,9 +29,12 @@ export const saveCostingData = async (
 
   // 2. Persist to Supabase in job_cards record
   try {
-    await updateJobCard(jobCardId, {
-      costingData: costingData
-    }, { log: true, logAction: 'SAVE_JOB_COSTING' });
+    await updateJobCard(
+      jobCardId, 
+      { costingData: costingData }, 
+      'System', 
+      { log: true, logAction: 'SAVE_JOB_COSTING' }
+    );
   } catch (e) {
     console.warn('Could not sync costing to Supabase, local cache retained:', e);
   }
