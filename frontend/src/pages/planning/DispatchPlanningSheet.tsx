@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { 
   Plus, Trash2, Printer, Download, RotateCcw, Save, 
-  Calendar, Check, Share2, Sparkles, CheckCircle2, Eye, EyeOff 
+  Calendar, Check, Share2, Sparkles, CheckCircle2, 
+  Eye, EyeOff, Users, Truck, FileText, PackageCheck 
 } from 'lucide-react';
 import { exportToExcel } from '../../lib/exportUtils';
 import type { DispatchPlanGroup, DispatchPlanItem } from './PlanningTypes';
@@ -23,7 +24,6 @@ const formatDateToDMY = (dateStr: string): string => {
   if (dateStr.includes('-')) {
     const parts = dateStr.split('-');
     if (parts.length === 3 && parts[0].length === 4) {
-      // YYYY-MM-DD -> DD-MM-YYYY
       return `${parts[2]}-${parts[1]}-${parts[0]}`;
     }
   }
@@ -86,7 +86,7 @@ const getInitialGroupsForDate = (date: string): DispatchPlanGroup[] => {
               ...grp,
               id: `grp-${Date.now()}-${pendingGroups.length + 1}`,
               sNo: pendingGroups.length + 1,
-              dispatchDate: date, // update to new date
+              dispatchDate: date,
               items: pendingItems.map((it, itIdx) => ({
                 ...it,
                 id: `item-${Date.now()}-${pendingGroups.length}-${itIdx}`,
@@ -105,7 +105,6 @@ const getInitialGroupsForDate = (date: string): DispatchPlanGroup[] => {
     }
   }
 
-  // 3. If no previous saved date exists, return INITIAL_DISPATCH_GROUPS
   return INITIAL_DISPATCH_GROUPS;
 };
 
@@ -195,7 +194,7 @@ export default function DispatchPlanningSheet() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filtered products for smart autocomplete (matches item name or customer name)
+  // Filtered products for smart autocomplete
   const searchMatches = useMemo(() => {
     if (!activeSearchKey) return [];
     const q = searchQuery.toLowerCase().trim();
@@ -221,7 +220,7 @@ export default function DispatchPlanningSheet() {
           return { ...it, jobName: product.itemName || it.jobName };
         });
 
-        // Auto-fill customer name from Master Data Product as requested
+        // Auto-fill customer name from Master Data Product
         const updatedCustomer = product.customerName || g.customerName;
         return {
           ...g,
@@ -244,7 +243,7 @@ export default function DispatchPlanningSheet() {
     }, 60);
   };
 
-  // Mark an item as Done (Completed) -> removes from active plan & future carry-forwards
+  // Mark an item as Done (Completed)
   const markItemDone = (groupId: string, itemId: string) => {
     setGroups(prev => {
       const updated = prev.map(g => {
@@ -270,7 +269,7 @@ export default function DispatchPlanningSheet() {
     });
   };
 
-  // Update customer group level field (dispatchDate or customerName)
+  // Update customer group level field
   const updateGroup = (groupId: string, field: 'dispatchDate' | 'customerName', value: string) => {
     setGroups(prev => {
       const updated = prev.map(g => {
@@ -282,7 +281,7 @@ export default function DispatchPlanningSheet() {
     });
   };
 
-  // Update item field (jobName or qty)
+  // Update item field
   const updateItem = (groupId: string, itemId: string, field: 'jobName' | 'qty', value: any) => {
     setGroups(prev => {
       const updated = prev.map(g => {
@@ -363,7 +362,6 @@ export default function DispatchPlanningSheet() {
       const updated = prev.map(g => {
         if (g.id !== groupId) return g;
         if (g.items.length <= 1) {
-          // Keep at least one empty item row
           return { ...g, items: [{ id: `item-${Date.now()}`, jobName: '', qty: '', isDone: false }] };
         }
         return { ...g, items: g.items.filter(it => it.id !== itemId) };
@@ -402,9 +400,7 @@ export default function DispatchPlanningSheet() {
     }
   };
 
-  // Visible groups based on showCompleted toggle:
-  // When showCompleted is false (default), completed items are hidden.
-  // Groups with no active items are also hidden.
+  // Visible groups based on showCompleted toggle
   const visibleGroups = useMemo(() => {
     if (showCompleted) return groups;
     return groups
@@ -464,7 +460,6 @@ export default function DispatchPlanningSheet() {
       });
     });
 
-    // Append total row
     flatData.push({
       'S No.': '',
       'DISPATCH DATE': '',
@@ -486,7 +481,7 @@ export default function DispatchPlanningSheet() {
         text += `\n*${g.sNo}. ${g.customerName}* (Dispatch: ${formatDateToDMY(g.dispatchDate)})\n`;
         g.items.forEach((it) => {
           if (it.jobName) {
-            text += `  • ${it.jobName}: *${it.qty || 0}* ${it.isDone ? '(✓ Dispatched)' : ''}\n`;
+            text += `  • ${it.jobName}: *${(Number(it.qty) || 0).toLocaleString()}* ${it.isDone ? '(✓ Dispatched)' : ''}\n`;
           }
         });
       }
@@ -502,48 +497,90 @@ export default function DispatchPlanningSheet() {
   const displayPlanDateDMY = formatDateToDMY(planDate);
 
   return (
-    <div className="space-y-4">
-      {/* Top Action Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-card p-4 rounded-xl border border-border shadow-sm print:hidden">
+    <div className="space-y-5">
+      {/* 1. EXECUTIVE KPI SUMMARY CARDS */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 print:hidden">
+        {/* Customer Parties */}
+        <div className="bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent p-4 rounded-xl border border-emerald-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 block">Customer Parties</span>
+            <span className="text-2xl font-black text-emerald-950 mt-0.5 block">{visibleGroups.length}</span>
+            <span className="text-[10px] text-emerald-600/80 font-medium">Parties scheduled</span>
+          </div>
+          <div className="p-3 bg-emerald-600 text-white rounded-xl shadow-xs">
+            <Users className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Scheduled Items */}
+        <div className="bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-transparent p-4 rounded-xl border border-blue-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 block">Dispatch Items</span>
+            <span className="text-2xl font-black text-blue-950 mt-0.5 block">{activeCount}</span>
+            <span className="text-[10px] text-blue-600/80 font-medium">Distinct line items</span>
+          </div>
+          <div className="p-3 bg-blue-600 text-white rounded-xl shadow-xs">
+            <FileText className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Total Dispatch Qty */}
+        <div className="bg-gradient-to-br from-teal-500/10 via-teal-500/5 to-transparent p-4 rounded-xl border border-teal-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-teal-700 block">Total Quantity</span>
+            <span className="text-2xl font-black text-teal-950 mt-0.5 block">{totalQty.toLocaleString()}</span>
+            <span className="text-[10px] text-teal-600/80 font-medium">Boxes to dispatch</span>
+          </div>
+          <div className="p-3 bg-teal-600 text-white rounded-xl shadow-xs">
+            <Truck className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Completed / Dispatched */}
+        <div className="bg-gradient-to-br from-purple-500/10 via-purple-500/5 to-transparent p-4 rounded-xl border border-purple-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-purple-700 block">Dispatched Today</span>
+            <span className="text-2xl font-black text-purple-950 mt-0.5 block">{completedCount}</span>
+            <span className="text-[10px] text-purple-600/80 font-medium">Marked completed</span>
+          </div>
+          <div className="p-3 bg-purple-600 text-white rounded-xl shadow-xs">
+            <PackageCheck className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* 2. TOP ACTION TOOLBAR */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-card p-3.5 rounded-xl border border-border shadow-xs print:hidden">
         {/* Left: Plan Date Selector & Summary badges */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 bg-secondary/50 px-3 py-1.5 rounded-lg border border-border">
+          <div className="flex items-center gap-2 bg-secondary/70 hover:bg-secondary px-3.5 py-1.5 rounded-lg border border-border transition-colors">
             <Calendar className="w-4 h-4 text-emerald-600" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Plan Date:</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-foreground">Date:</span>
             <input 
               type="date" 
               value={planDate}
               onChange={(e) => setPlanDate(e.target.value)}
-              className="bg-transparent text-sm font-semibold text-foreground focus:outline-none cursor-pointer"
+              className="bg-transparent text-sm font-bold text-foreground focus:outline-none cursor-pointer"
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
-            <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              {visibleGroups.length} Parties • {activeCount} Active Items
-            </span>
-            <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-              Total Qty: {totalQty.toLocaleString()}
-            </span>
-
-            {/* Toggle Completed Items */}
-            {completedCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowCompleted(!showCompleted)}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border transition-all cursor-pointer",
-                  showCompleted 
-                    ? "bg-purple-100 text-purple-900 border-purple-300" 
-                    : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200"
-                )}
-                title="Toggle visibility of dispatched/completed items"
-              >
-                {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                <span>{showCompleted ? 'Hide Done' : `Show Done (${completedCount})`}</span>
-              </button>
-            )}
-          </div>
+          {/* Toggle Completed Items */}
+          {completedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowCompleted(!showCompleted)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer shadow-2xs",
+                showCompleted 
+                  ? "bg-purple-100 text-purple-900 border-purple-300" 
+                  : "bg-secondary text-foreground border-border hover:bg-secondary/80"
+              )}
+              title="Toggle visibility of dispatched/completed items"
+            >
+              {showCompleted ? <EyeOff className="w-3.5 h-3.5 text-purple-700" /> : <Eye className="w-3.5 h-3.5 text-purple-600" />}
+              <span>{showCompleted ? 'Hide Done' : `Show Done (${completedCount})`}</span>
+            </button>
+          )}
         </div>
 
         {/* Right: Actions */}
@@ -551,7 +588,7 @@ export default function DispatchPlanningSheet() {
           <button
             type="button"
             onClick={addGroup}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95"
           >
             <Plus className="w-4 h-4" />
             Add Customer Party
@@ -560,7 +597,7 @@ export default function DispatchPlanningSheet() {
           <button
             type="button"
             onClick={handleManualSave}
-            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95"
             title="Saves dispatch plan for this date"
           >
             <Save className="w-4 h-4" />
@@ -570,7 +607,7 @@ export default function DispatchPlanningSheet() {
           <button
             type="button"
             onClick={copyWhatsApp}
-            className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95"
             title="Copy formatted text to paste on WhatsApp for MD"
           >
             <Share2 className="w-4 h-4" />
@@ -580,7 +617,7 @@ export default function DispatchPlanningSheet() {
           <button
             type="button"
             onClick={exportExcel}
-            className="flex items-center gap-1.5 px-3 py-2 bg-card hover:bg-secondary text-foreground text-xs font-medium rounded-lg border border-border shadow-sm transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground text-xs font-semibold rounded-lg border border-border shadow-2xs transition-all cursor-pointer"
           >
             <Download className="w-4 h-4 text-emerald-600" />
             Excel
@@ -589,7 +626,7 @@ export default function DispatchPlanningSheet() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="flex items-center gap-1.5 px-3 py-2 bg-card hover:bg-secondary text-foreground text-xs font-medium rounded-lg border border-border shadow-sm transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground text-xs font-semibold rounded-lg border border-border shadow-2xs transition-all cursor-pointer"
           >
             <Printer className="w-4 h-4 text-primary" />
             Print / PDF
@@ -598,7 +635,7 @@ export default function DispatchPlanningSheet() {
           <button
             type="button"
             onClick={resetToSample}
-            className="flex items-center gap-1 px-2.5 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-all cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-2 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all cursor-pointer"
             title="Reset to sample data"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -619,47 +656,50 @@ export default function DispatchPlanningSheet() {
 
       {/* Notifications */}
       {savedToast && (
-        <div className="flex items-center gap-2 p-3 bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg border border-emerald-300 animate-in fade-in slide-in-from-top-1 print:hidden">
+        <div className="flex items-center gap-2 p-3 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg border border-emerald-300 animate-in fade-in slide-in-from-top-1 print:hidden">
           <Check className="w-4 h-4 text-emerald-600" />
           Dispatch Plan saved successfully for {formatDateToDMY(planDate)}!
         </div>
       )}
       {whatsappToast && (
-        <div className="flex items-center gap-2 p-3 bg-green-100 text-green-800 text-xs font-semibold rounded-lg border border-green-300 animate-in fade-in slide-in-from-top-1 print:hidden">
+        <div className="flex items-center gap-2 p-3 bg-green-100 text-green-800 text-xs font-bold rounded-lg border border-green-300 animate-in fade-in slide-in-from-top-1 print:hidden">
           <Check className="w-4 h-4 text-green-600" />
           Copied WhatsApp dispatch plan to clipboard!
         </div>
       )}
 
       {/* Smart Autocomplete Helper Bar */}
-      <div className="text-xs text-muted-foreground bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-200 flex flex-wrap items-center justify-between gap-2 print:hidden">
+      <div className="text-xs text-slate-700 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 p-2.5 rounded-lg border border-emerald-200/80 flex flex-wrap items-center justify-between gap-2 shadow-2xs print:hidden">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          <Sparkles className="w-4 h-4 text-emerald-600 flex-shrink-0 animate-pulse" />
           <span>
-            <strong>Smart Master Data Typing:</strong> Type <strong>Item Name</strong> $\to$ floating dropdown opens $\to$ select to auto-fill <strong>Item Name & Customer Name</strong> $\to$ enter <strong>Qty</strong> $\to$ press <strong>Enter</strong> to add next item!
+            <strong>Smart Master Data Typing:</strong> Type <strong>Item Name</strong> $\to$ floating dropdown opens $\to$ select product to auto-fill <strong>Item Name & Customer Name</strong> $\to$ enter <strong>Qty</strong> $\to$ press <strong>Enter</strong> to add next item!
           </span>
         </div>
-        <span className="font-semibold text-emerald-800">
-          Click <strong>✓ Done</strong> to complete & remove an item from future plans!
+        <span className="font-bold text-emerald-900 bg-white/80 px-2.5 py-0.5 rounded border border-emerald-200 text-[11px]">
+          Click ✓ Done to mark dispatched
         </span>
       </div>
 
-      {/* Main Table Container - Matching Screenshot 2 Exact Style */}
-      <div className="bg-white rounded-xl shadow-md border border-gray-300 overflow-x-auto print:shadow-none print:border-none print:rounded-none">
+      {/* 3. MAIN TABLE CONTAINER */}
+      <div className="bg-white rounded-xl shadow-sm border-2 border-slate-900 overflow-x-auto print:shadow-none print:border-none print:rounded-none">
         {/* Table Title Banner: DISPATCH PLAN (DD-MM-YYYY) */}
-        <div className="text-center py-2.5 bg-white border-b-2 border-black font-extrabold text-lg sm:text-xl tracking-wider text-black uppercase">
+        <div className="text-center py-3 bg-slate-900 text-white font-black text-base sm:text-lg tracking-widest uppercase border-b-2 border-slate-900">
           DISPATCH PLAN ({displayPlanDateDMY})
+          <span className="block text-xs font-semibold text-slate-300 capitalize tracking-normal mt-0.5">
+            Daily Customer Party & Finished Goods Dispatch Report
+          </span>
         </div>
 
-        <table className="w-full text-xs border-collapse text-black">
+        <table className="w-full text-xs border-collapse text-slate-950 font-sans">
           <thead>
-            <tr className="bg-white border-b border-black text-center font-bold text-xs sm:text-sm">
-              <th className="border border-black px-2 py-2 w-14 text-center">S No.</th>
-              <th className="border border-black px-3 py-2 text-center min-w-[130px]">DATE</th>
-              <th className="border border-black px-4 py-2 text-center min-w-[200px]">CUSTOMER NAME</th>
-              <th className="border border-black px-4 py-2 text-center min-w-[260px]">ITEM NAME</th>
-              <th className="border border-black px-3 py-2 text-center w-28">QTY</th>
-              <th className="border border-black px-2 py-2 w-32 text-center print:hidden bg-gray-100">
+            <tr className="bg-slate-100 border-b-2 border-slate-900 text-center font-black text-[11px] sm:text-xs tracking-wider uppercase text-slate-900">
+              <th className="border border-slate-900 px-2 py-2.5 w-16 text-center bg-slate-200/80">S No.</th>
+              <th className="border border-slate-900 px-3 py-2.5 text-center min-w-[130px] bg-slate-200/60">DATE</th>
+              <th className="border border-slate-900 px-4 py-2.5 text-left min-w-[200px] bg-slate-100">CUSTOMER NAME</th>
+              <th className="border border-slate-900 px-4 py-2.5 text-left min-w-[280px] bg-slate-100">ITEM NAME</th>
+              <th className="border border-slate-900 px-3 py-2.5 text-center w-32 bg-emerald-100/80 text-emerald-950">QTY</th>
+              <th className="border border-slate-900 px-2 py-2.5 w-32 text-center print:hidden bg-slate-200">
                 Actions
               </th>
             </tr>
@@ -667,13 +707,20 @@ export default function DispatchPlanningSheet() {
           <tbody>
             {visibleGroups.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-gray-500 font-semibold">
-                  No active dispatch items for this date. All items completed or click below to add a customer party!
+                <td colSpan={6} className="py-12 text-center text-slate-500 font-bold text-sm">
+                  No active dispatch items scheduled for this date.
+                  <button
+                    type="button"
+                    onClick={addGroup}
+                    className="block mx-auto mt-2 text-xs text-emerald-700 hover:underline font-bold"
+                  >
+                    + Click here to add a customer party
+                  </button>
                   {completedCount > 0 && (
                     <button
                       type="button"
                       onClick={() => setShowCompleted(true)}
-                      className="block mx-auto mt-2 text-xs text-blue-600 hover:underline font-bold"
+                      className="block mx-auto mt-1 text-xs text-blue-600 hover:underline font-semibold"
                     >
                       View {completedCount} Completed Items
                     </button>
@@ -691,17 +738,20 @@ export default function DispatchPlanningSheet() {
                     <tr 
                       key={item.id} 
                       className={cn(
-                        "hover:bg-blue-50/30 transition-colors",
-                        item.isDone ? "bg-emerald-50/40 opacity-70" : ""
+                        "transition-colors group",
+                        group.sNo % 2 === 0 ? "bg-white" : "bg-slate-50/40",
+                        item.isDone ? "bg-emerald-50/60 opacity-60" : "hover:bg-amber-50/40"
                       )}
                     >
                       {/* S No - Merged for the party */}
                       {isFirstRow && (
                         <td
                           rowSpan={rowSpanCount}
-                          className="border border-black px-2 py-2 text-center font-bold align-middle bg-white"
+                          className="border border-slate-900 px-2 py-2 text-center font-black align-middle bg-slate-100/60"
                         >
-                          {group.sNo}
+                          <span className="inline-block w-7 h-7 leading-7 rounded-full bg-slate-200 text-slate-900 font-mono font-black text-xs">
+                            {group.sNo}
+                          </span>
                         </td>
                       )}
 
@@ -709,14 +759,14 @@ export default function DispatchPlanningSheet() {
                       {isFirstRow && (
                         <td
                           rowSpan={rowSpanCount}
-                          className="border border-black px-2 py-2 text-center font-bold align-middle bg-white"
+                          className="border border-slate-900 px-2 py-2 text-center font-mono font-bold align-middle bg-white"
                         >
                           <input
                             type="text"
                             value={formatDateToDMY(group.dispatchDate)}
                             onChange={(e) => updateGroup(group.id, 'dispatchDate', e.target.value)}
                             placeholder="DD-MM-YYYY"
-                            className="w-full text-center bg-transparent font-bold text-black border-none focus:outline-none focus:bg-yellow-50 px-1 py-0.5 rounded"
+                            className="w-full text-center bg-transparent font-mono font-bold text-slate-900 border-none focus:outline-none focus:bg-amber-100/70 px-1 py-1 rounded text-xs"
                           />
                         </td>
                       )}
@@ -725,20 +775,20 @@ export default function DispatchPlanningSheet() {
                       {isFirstRow && (
                         <td
                           rowSpan={rowSpanCount}
-                          className="border border-black px-3 py-2 text-center font-bold align-middle bg-white"
+                          className="border border-slate-900 px-3 py-2 text-left font-black align-middle bg-white"
                         >
                           <input
                             type="text"
                             value={group.customerName}
                             onChange={(e) => updateGroup(group.id, 'customerName', e.target.value.toUpperCase())}
                             placeholder="CUSTOMER / PARTY NAME"
-                            className="w-full text-center bg-transparent font-bold text-black border-none focus:outline-none focus:bg-yellow-50 px-1 py-0.5 rounded uppercase"
+                            className="w-full text-left bg-transparent font-extrabold text-blue-950 border-none focus:outline-none focus:bg-amber-100/70 px-1.5 py-1 rounded uppercase tracking-tight text-xs"
                           />
                         </td>
                       )}
 
                       {/* Item / Job Name with Smart Floating Autocomplete Dropdown */}
-                      <td className="border border-black px-3 py-2 text-center font-semibold">
+                      <td className="border border-slate-900 px-3 py-1.5 text-left font-bold">
                         <input
                           ref={(el) => { itemInputRefs.current[item.id] = el; }}
                           type="text"
@@ -775,14 +825,14 @@ export default function DispatchPlanningSheet() {
                           }}
                           placeholder="Type item or party to search master data..."
                           className={cn(
-                            "w-full text-center bg-transparent font-semibold text-black border-none focus:outline-none focus:bg-yellow-100 px-1 py-0.5 rounded uppercase",
-                            item.isDone ? "line-through text-gray-500" : ""
+                            "w-full text-left bg-transparent font-extrabold text-slate-950 border-none focus:outline-none focus:bg-amber-100/70 px-1.5 py-1 rounded uppercase text-xs",
+                            item.isDone ? "line-through text-slate-400" : ""
                           )}
                         />
                       </td>
 
                       {/* Qty */}
-                      <td className="border border-black px-2 py-2 text-center font-bold">
+                      <td className="border border-slate-900 px-2 py-1.5 text-center font-black bg-emerald-50/60">
                         <input
                           ref={(el) => { qtyInputRefs.current[item.id] = el; }}
                           type="number"
@@ -791,22 +841,22 @@ export default function DispatchPlanningSheet() {
                           onKeyDown={(e) => handleQtyKeyDown(e, group.id, itemIdx, rowSpanCount)}
                           placeholder="0"
                           className={cn(
-                            "w-full text-center bg-transparent font-bold text-black border-none focus:outline-none focus:bg-yellow-200 px-1 py-0.5 rounded",
-                            item.isDone ? "line-through text-gray-500" : ""
+                            "w-full text-center bg-transparent font-mono font-black text-emerald-950 border-none focus:outline-none focus:bg-amber-200 px-1 py-1 rounded text-xs",
+                            item.isDone ? "line-through text-slate-400" : ""
                           )}
                           title="Enter Qty and press ENTER to add another item"
                         />
                       </td>
 
                       {/* Row & Group Actions (hidden during print) */}
-                      <td className="border border-black px-2 py-1 text-center print:hidden bg-gray-50/50">
+                      <td className="border border-slate-900 px-2 py-1 text-center print:hidden bg-slate-100">
                         <div className="flex items-center justify-center gap-1.5">
                           {/* Done Button: Removes job from plan & future carry forwards */}
                           {item.isDone ? (
                             <button
                               type="button"
                               onClick={() => restoreItem(group.id, item.id)}
-                              className="px-2 py-0.5 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors cursor-pointer"
+                              className="px-2 py-0.5 text-[10px] font-black bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors cursor-pointer"
                               title="Click to restore to active"
                             >
                               ✓ Done
@@ -838,7 +888,7 @@ export default function DispatchPlanningSheet() {
                           <button
                             type="button"
                             onClick={() => removeItemFromGroup(group.id, item.id)}
-                            className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors cursor-pointer"
+                            className="p-1 text-slate-400 hover:text-red-500 rounded transition-colors cursor-pointer"
                             title="Remove this item row"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -866,23 +916,23 @@ export default function DispatchPlanningSheet() {
 
           {/* Footer Total Row */}
           <tfoot>
-            <tr className="bg-gray-100 border-t-2 border-black font-extrabold text-black">
-              <td colSpan={3} className="border border-black px-4 py-2 text-center uppercase tracking-wider text-xs sm:text-sm font-black">
+            <tr className="bg-slate-200 border-t-2 border-slate-900 font-black text-slate-950">
+              <td colSpan={3} className="border border-slate-900 px-4 py-2.5 text-center uppercase tracking-wider text-xs sm:text-sm font-black">
                 TOTAL DISPATCH SUMMARY ({visibleGroups.length} PARTIES)
               </td>
-              <td className="border border-black px-4 py-2 text-center text-xs sm:text-sm font-black uppercase">
-                TOTAL QUANTITY
+              <td className="border border-slate-900 px-4 py-2.5 text-right text-xs sm:text-sm font-black uppercase tracking-wider">
+                TOTAL QUANTITY:
               </td>
-              <td className="border border-black px-2 py-2 text-center text-xs sm:text-sm font-black bg-emerald-50 text-emerald-950">
+              <td className="border border-slate-900 px-2 py-2.5 text-center text-xs sm:text-sm font-black bg-emerald-200/90 text-emerald-950 font-mono">
                 {totalQty.toLocaleString()}
               </td>
-              <td className="border border-black px-2 py-2 print:hidden bg-gray-100"></td>
+              <td className="border border-slate-900 px-2 py-2.5 print:hidden bg-slate-300"></td>
             </tr>
           </tfoot>
         </table>
       </div>
 
-      {/* FIXED FLOATING DROPDOWN (Rendered completely outside table container so it is NEVER clipped) */}
+      {/* FIXED FLOATING DROPDOWN */}
       {activeSearchKey && searchMatches.length > 0 && dropdownPos && (
         <div 
           ref={dropdownRef}
@@ -893,8 +943,8 @@ export default function DispatchPlanningSheet() {
             width: `${dropdownPos.width}px`,
             zIndex: 99999
           }}
-          onMouseDown={(e) => e.preventDefault()} // Prevents input blur on mouse click
-          className="bg-white border-2 border-emerald-600 rounded-xl shadow-2xl overflow-hidden divide-y divide-gray-100 text-xs animate-in fade-in"
+          onMouseDown={(e) => e.preventDefault()}
+          className="bg-white border-2 border-emerald-600 rounded-xl shadow-2xl overflow-hidden divide-y divide-slate-100 text-xs animate-in fade-in"
         >
           <div className="bg-emerald-600 text-white font-bold px-3 py-1.5 flex items-center justify-between text-[11px]">
             <span className="flex items-center gap-1.5">
@@ -911,11 +961,11 @@ export default function DispatchPlanningSheet() {
                 onClick={() => handleSelectProduct(activeSearchKey.groupId, activeSearchKey.itemId, prod)}
                 onMouseEnter={() => setHighlightedIndex(pIdx)}
                 className={cn(
-                  "w-full text-left p-2.5 transition-colors cursor-pointer block border-b border-gray-100 last:border-b-0",
-                  highlightedIndex === pIdx ? "bg-emerald-100 text-emerald-950 font-semibold" : "hover:bg-gray-50 text-gray-800"
+                  "w-full text-left p-2.5 transition-colors cursor-pointer block border-b border-slate-100 last:border-b-0",
+                  highlightedIndex === pIdx ? "bg-emerald-100 text-emerald-950 font-semibold" : "hover:bg-slate-50 text-slate-800"
                 )}
               >
-                <div className="font-extrabold text-sm text-black flex items-center justify-between">
+                <div className="font-extrabold text-sm text-slate-950 flex items-center justify-between">
                   <span>{prod.itemName}</span>
                   {prod.ups && (
                     <span className="text-[11px] font-black px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
@@ -923,8 +973,8 @@ export default function DispatchPlanningSheet() {
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-gray-600 font-medium mt-0.5 flex items-center justify-between">
-                  <span>Party: <strong className="text-emerald-800">{prod.customerName}</strong></span>
+                <div className="text-xs text-slate-600 font-medium mt-0.5 flex items-center justify-between">
+                  <span>Party: <strong className="text-emerald-900">{prod.customerName}</strong></span>
                   <span>Reel: {prod.reelSize || '-'}" | Cut: {prod.cutSize || '-'}" | Flute: {prod.flute || 'B'}</span>
                 </div>
               </button>
@@ -934,16 +984,16 @@ export default function DispatchPlanningSheet() {
       )}
 
       {/* Bottom Buttons */}
-      <div className="flex flex-wrap justify-between items-center print:hidden pt-2 gap-3">
+      <div className="flex flex-wrap justify-between items-center print:hidden pt-1 gap-3">
         <button
           type="button"
           onClick={addGroup}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-lg border border-emerald-300 transition-all cursor-pointer"
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-lg border border-emerald-300 transition-all cursor-pointer shadow-2xs"
         >
           <Plus className="w-4 h-4" />
           Add Another Customer Party
         </button>
-        <span className="text-xs text-muted-foreground italic">
+        <span className="text-xs text-slate-500 italic">
           Tip: In <strong>Qty</strong>, press <strong>Enter</strong> to instantly add another item for the same customer!
         </span>
       </div>
