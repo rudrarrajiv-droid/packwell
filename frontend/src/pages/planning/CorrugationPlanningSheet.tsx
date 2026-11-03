@@ -7,6 +7,7 @@ import {
   Layers, Box, ArrowUpDown
 } from 'lucide-react';
 import type { CorrugationPlanningRow } from './PlanningTypes';
+import PlanningWhatsappModal from './PlanningWhatsappModal';
 import { getProducts } from '../../lib/supabase/productService';
 import { savePlanningSheet, fetchPlanningSheet, fetchMostRecentPreviousPlanning, subscribeToPlanningSheet } from '../../lib/supabase/planningService';
 import { RefreshCw, CloudUpload, Loader2 } from 'lucide-react';
@@ -110,6 +111,7 @@ export default function CorrugationPlanningSheet() {
   const [syncToastMsg, setSyncToastMsg] = useState<string | null>(null);
   const [lastSyncedTime, setLastSyncedTime] = useState<string>('');
   const [whatsappToast, setWhatsappToast] = useState(false);
+  const [showWhatsappModal, setShowWhatsappModal] = useState(false);
   const syncTimeoutRef = useRef<any>(null);
 
   // Autocomplete state
@@ -692,9 +694,9 @@ export default function CorrugationPlanningSheet() {
 
           <button
             type="button"
-            onClick={copyWhatsApp}
+            onClick={() => setShowWhatsappModal(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95"
-            title="Copy formatted text to send on WhatsApp for MD"
+            title="Export / Copy WhatsApp Image Card with exact screen boxes"
           >
             <Share2 className="w-4 h-4" />
             WhatsApp
@@ -765,7 +767,22 @@ export default function CorrugationPlanningSheet() {
       </div>
 
       {/* 3. MAIN TABLE CONTAINER */}
-      <div className="bg-white rounded-xl shadow-sm border-2 border-slate-900 overflow-x-auto print:shadow-none print:border-none print:rounded-none">
+      <div id="planning-print-area" className="print-planning-sheet space-y-4">
+        {/* Print-only company header */}
+        <div className="hidden print:block border-b-2 border-slate-900 pb-2 mb-2">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">PACKWELL INDIA</h1>
+              <h2 className="text-sm font-bold text-slate-700 uppercase">CORRUGATION MACHINE PLANNING</h2>
+            </div>
+            <div className="text-right">
+              <div className="text-sm font-black text-slate-900">DATE: {formatDateToDMY(selectedDate)}</div>
+              <div className="text-xs text-slate-600 font-bold">Planned Jobs: {visibleRows.length} | Total Box: {totalBoxQty.toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border-2 border-slate-900 overflow-x-auto print:shadow-none print:border-none print:rounded-none">
         {/* Table Title Banner - Matching Physical Factory Printout Style */}
         <div className="text-center py-3 bg-slate-900 text-white font-black text-base sm:text-lg tracking-widest uppercase border-b-2 border-slate-900">
           CORRUGATION MACHINE PLANNING
@@ -1065,6 +1082,7 @@ export default function CorrugationPlanningSheet() {
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
 
       {/* FIXED FLOATING DROPDOWN */}
@@ -1130,6 +1148,18 @@ export default function CorrugationPlanningSheet() {
           Tip: In <strong>Box Qty</strong>, press <strong>Enter</strong> to instantly add the next row!
         </span>
       </div>
+      {/* WhatsApp Image Card Modal */}
+      <PlanningWhatsappModal
+        isOpen={showWhatsappModal}
+        onClose={() => setShowWhatsappModal(false)}
+        type="corrugation"
+        dateStr={selectedDate}
+        formattedDateStr={formatDateToDMY(selectedDate)}
+        corrugationRows={visibleRows}
+        totalPly={totalPly}
+        totalBoxQty={totalBoxQty}
+        onCopyTextReport={copyWhatsApp}
+      />
     </div>
   );
 }

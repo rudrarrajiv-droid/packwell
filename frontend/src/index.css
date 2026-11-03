@@ -101,6 +101,25 @@
     box-shadow: none !important;
   }
 
+  /* Planning sheets print container */
+  #planning-print-area, #planning-print-area *,
+  .print-planning-sheet, .print-planning-sheet * {
+    visibility: visible !important;
+  }
+  #planning-print-area, .print-planning-sheet {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 8px !important;
+    background: white !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
   .print-fit-a4 {
     zoom: 0.70;
   }

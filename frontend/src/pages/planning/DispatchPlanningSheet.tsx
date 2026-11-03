@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { exportToExcel } from '../../lib/exportUtils';
 import type { DispatchPlanGroup, DispatchPlanItem } from './PlanningTypes';
+import PlanningWhatsappModal from './PlanningWhatsappModal';
 import { INITIAL_DISPATCH_GROUPS } from './samplePlanningData';
 import { getProducts } from '../../lib/supabase/productService';
 import { savePlanningSheet, fetchPlanningSheet, fetchMostRecentPreviousPlanning, subscribeToPlanningSheet } from '../../lib/supabase/planningService';
@@ -121,6 +122,7 @@ export default function DispatchPlanningSheet() {
   const [syncToastMsg, setSyncToastMsg] = useState<string | null>(null);
   const [lastSyncedTime, setLastSyncedTime] = useState<string>('');
   const [whatsappToast, setWhatsappToast] = useState(false);
+  const [showWhatsappModal, setShowWhatsappModal] = useState(false);
   const syncTimeoutRef = useRef<any>(null);
 
   // Autocomplete state
@@ -742,9 +744,9 @@ export default function DispatchPlanningSheet() {
 
           <button
             type="button"
-            onClick={copyWhatsApp}
+            onClick={() => setShowWhatsappModal(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95"
-            title="Copy formatted text to paste on WhatsApp for MD"
+            title="Export / Copy WhatsApp Image Card with exact screen boxes"
           >
             <Share2 className="w-4 h-4" />
             WhatsApp
@@ -825,7 +827,22 @@ export default function DispatchPlanningSheet() {
       </div>
 
       {/* 3. MAIN TABLE CONTAINER */}
-      <div className="bg-white rounded-xl shadow-sm border-2 border-slate-900 overflow-x-auto print:shadow-none print:border-none print:rounded-none">
+      <div id="planning-print-area" className="print-planning-sheet space-y-4">
+        {/* Print-only company header */}
+        <div className="hidden print:block border-b-2 border-slate-900 pb-2 mb-2">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">PACKWELL INDIA</h1>
+              <h2 className="text-sm font-bold text-slate-700 uppercase">DAILY DISPATCH PLANNING</h2>
+            </div>
+            <div className="text-right">
+              <div className="text-sm font-black text-slate-900">DATE: {displayPlanDateDMY}</div>
+              <div className="text-xs text-slate-600 font-bold">Total Parties: {visibleGroups.length} | Total Qty: {totalQty.toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border-2 border-slate-900 overflow-x-auto print:shadow-none print:border-none print:rounded-none">
         {/* Table Title Banner: DISPATCH PLAN (DD-MM-YYYY) */}
         <div className="text-center py-3 bg-slate-900 text-white font-black text-base sm:text-lg tracking-widest uppercase border-b-2 border-slate-900">
           DISPATCH PLAN ({displayPlanDateDMY})
@@ -1073,6 +1090,7 @@ export default function DispatchPlanningSheet() {
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
 
       {/* FIXED FLOATING DROPDOWN */}
@@ -1140,6 +1158,17 @@ export default function DispatchPlanningSheet() {
           Tip: In <strong>Qty</strong>, press <strong>Enter</strong> to instantly add another item for the same customer!
         </span>
       </div>
+      {/* WhatsApp Image Card Modal */}
+      <PlanningWhatsappModal
+        isOpen={showWhatsappModal}
+        onClose={() => setShowWhatsappModal(false)}
+        type="dispatch"
+        dateStr={planDate}
+        formattedDateStr={displayPlanDateDMY}
+        dispatchGroups={visibleGroups}
+        totalBoxQty={totalQty}
+        onCopyTextReport={copyWhatsApp}
+      />
     </div>
   );
 }
