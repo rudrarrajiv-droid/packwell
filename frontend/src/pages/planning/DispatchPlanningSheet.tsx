@@ -9,6 +9,8 @@ import { exportToExcel } from '../../lib/exportUtils';
 import type { DispatchPlanGroup, DispatchPlanItem } from './PlanningTypes';
 import { INITIAL_DISPATCH_GROUPS } from './samplePlanningData';
 import { getProducts } from '../../lib/supabase/productService';
+import { savePlanningSheet, fetchPlanningSheet, fetchMostRecentPreviousPlanning } from '../../lib/supabase/planningService';
+import { RefreshCw, CloudUpload, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const formatTodayDate = (): string => {
@@ -112,9 +114,12 @@ export default function DispatchPlanningSheet() {
   const [planDate, setPlanDate] = useState<string>(formatTodayDate);
   const [groups, setGroups] = useState<DispatchPlanGroup[]>(() => getInitialGroupsForDate(formatTodayDate()));
   const [showCompleted, setShowCompleted] = useState<boolean>(false);
+  const [isLoadingPlan, setIsLoadingPlan] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const [savedToast, setSavedToast] = useState(false);
   const [whatsappToast, setWhatsappToast] = useState(false);
+  const syncTimeoutRef = useRef<any>(null);
 
   // Autocomplete state
   const [activeSearchKey, setActiveSearchKey] = useState<{ groupId: string; itemId: string } | null>(null);
@@ -134,22 +139,111 @@ export default function DispatchPlanningSheet() {
     staleTime: 1000 * 60 * 10
   });
 
-  // Load from localStorage or carry-forward when planDate changes
+  const loadPlanForDate = async (targetDate: string) => {
+    setIsLoadingPlan(true);
+
+    // 1. Try fetching from Cloud (Supabase) - this syncs data saved from other computers
+    const cloudData = await fetchPlanningSheet('dispatch', targetDate);
+    if (cloudData && Array.isArray(cloudData) && cloudData.length > 0) {
+      setGroups(cloudData);
+      setIsLoadingPlan(false);
+      return;
+    }
+
+    // 2. Check local storage on this computer (e.g. if saved offline or before sync)
+    const localKey = `packwell_dispatch_planning_${targetDate}`;
+    try {
+      const local = localStorage.getItem(localKey);
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setGroups(parsed);
+          // Automatically sync to Cloud so other computers see it!
+          savePlanningSheet('dispatch', targetDate, parsed);
+          setIsLoadingPlan(false);
+          return;
+        }
+      }
+    } catch (e) {}
+
+    // 3. If no plan exists for this date, carry forward pending/uncompleted items from previous date
+    const prevPlan = await fetchMostRecentPreviousPlanning('dispatch', targetDate);
+    if (prevPlan && Array.isArray(prevPlan.data) && prevPlan.data.length > 0) {
+      const pendingGroups: DispatchPlanGroup[] = [];
+      prevPlan.data.forEach((grp: any) => {
+        const pendingItems = (grp.items || []).filter((it: any) => !it.isDone && (it.jobName || it.qty));
+        if (pendingItems.length > 0) {
+          pendingGroups.push({
+            ...grp,
+            id: `grp-${Date.now()}-${pendingGroups.length + 1}`,
+            sNo: pendingGroups.length + 1,
+            dispatchDate: targetDate,
+            items: pendingItems.map((it: any, itIdx: number) => ({
+              ...it,
+              id: `item-${Date.now()}-${pendingGroups.length}-${itIdx}`,
+              isDone: false
+            }))
+          });
+        }
+      });
+
+      if (pendingGroups.length > 0) {
+        setGroups(pendingGroups);
+        savePlanningSheet('dispatch', targetDate, pendingGroups);
+        setIsLoadingPlan(false);
+        return;
+      }
+    }
+
+    // 4. Default: Initial sample / template
+    setGroups(INITIAL_DISPATCH_GROUPS);
+    setIsLoadingPlan(false);
+  };
+
+  // Load groups when planDate changes
   useEffect(() => {
-    const loaded = getInitialGroupsForDate(planDate);
-    setGroups(loaded);
+    loadPlanForDate(planDate);
   }, [planDate]);
 
-  const saveToLocalStorage = (updatedGroups: DispatchPlanGroup[]) => {
+  // Auto-refresh when user focuses or returns to window
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchPlanningSheet('dispatch', planDate).then(cloudData => {
+        if (cloudData && Array.isArray(cloudData) && cloudData.length > 0) {
+          setGroups(cloudData);
+        }
+      });
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [planDate]);
+
+  // Save to both LocalStorage (instant) and Supabase Cloud (synced across all computers)
+  const savePlanData = (updatedGroups: DispatchPlanGroup[], immediateCloudSync = false) => {
     try {
       localStorage.setItem(`packwell_dispatch_planning_${planDate}`, JSON.stringify(updatedGroups));
     } catch (e) {
       console.error('Error saving dispatch plan', e);
     }
-  };
 
-  const handleManualSave = () => {
-    saveToLocalStorage(groups);
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+
+    if (immediateCloudSync) {
+      savePlanningSheet('dispatch', planDate, updatedGroups);
+    } else {
+      syncTimeoutRef.current = setTimeout(() => {
+        savePlanningSheet('dispatch', planDate, updatedGroups);
+      }, 1200);
+    }
+  };
+  const saveToLocalStorage = savePlanData;
+
+  const handleManualSave = async () => {
+    setIsSaving(true);
+    await savePlanningSheet('dispatch', planDate, groups);
+    setIsSaving(false);
     setSavedToast(true);
     setTimeout(() => setSavedToast(false), 2500);
   };
@@ -562,6 +656,15 @@ export default function DispatchPlanningSheet() {
               onChange={(e) => setPlanDate(e.target.value)}
               className="bg-transparent text-sm font-bold text-foreground focus:outline-none cursor-pointer"
             />
+            <button
+              type="button"
+              onClick={() => loadPlanForDate(planDate)}
+              disabled={isLoadingPlan}
+              className="p-1 rounded hover:bg-secondary/80 text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+              title="Refresh / Sync from Cloud"
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5 text-emerald-600", isLoadingPlan && "animate-spin")} />
+            </button>
           </div>
 
           {/* Toggle Completed Items */}
@@ -597,11 +700,12 @@ export default function DispatchPlanningSheet() {
           <button
             type="button"
             onClick={handleManualSave}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95"
-            title="Saves dispatch plan for this date"
+            disabled={isSaving}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+            title="Saves & syncs dispatch plan across all computers"
           >
-            <Save className="w-4 h-4" />
-            Save
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
+            <span>{isSaving ? 'Syncing...' : 'Save'}</span>
           </button>
 
           <button

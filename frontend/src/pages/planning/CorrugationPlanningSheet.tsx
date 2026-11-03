@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import type { CorrugationPlanningRow } from './PlanningTypes';
 import { getProducts } from '../../lib/supabase/productService';
+import { savePlanningSheet, fetchPlanningSheet, fetchMostRecentPreviousPlanning } from '../../lib/supabase/planningService';
+import { RefreshCw, CloudUpload, Loader2 } from 'lucide-react';
 import { exportToExcel } from '../../lib/exportUtils';
 import { cn } from '../../lib/utils';
 
@@ -101,9 +103,12 @@ export default function CorrugationPlanningSheet() {
   const [selectedDate, setSelectedDate] = useState<string>(formatTodayDate);
   const [rows, setRows] = useState<CorrugationPlanningRow[]>(() => getInitialRowsForDate(formatTodayDate()));
   const [showCompleted, setShowCompleted] = useState<boolean>(false);
+  const [isLoadingPlan, setIsLoadingPlan] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const [savedToast, setSavedToast] = useState(false);
   const [whatsappToast, setWhatsappToast] = useState(false);
+  const syncTimeoutRef = useRef<any>(null);
 
   // Autocomplete state
   const [activeSearchRowId, setActiveSearchRowId] = useState<string | null>(null);
@@ -123,10 +128,72 @@ export default function CorrugationPlanningSheet() {
     staleTime: 1000 * 60 * 10
   });
 
+  const loadPlanForDate = async (targetDate: string) => {
+    setIsLoadingPlan(true);
+
+    // 1. Try fetching from Cloud (Supabase) - this syncs data saved from other computers
+    const cloudData = await fetchPlanningSheet('corrugation', targetDate);
+    if (cloudData && Array.isArray(cloudData) && cloudData.length > 0) {
+      setRows(cloudData);
+      setIsLoadingPlan(false);
+      return;
+    }
+
+    // 2. Check local storage on this computer (e.g. if saved offline or before sync)
+    const localKey = `packwell_corrugation_planning_${targetDate}`;
+    try {
+      const local = localStorage.getItem(localKey);
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setRows(parsed);
+          // Automatically sync to Cloud so other computers see it!
+          savePlanningSheet('corrugation', targetDate, parsed);
+          setIsLoadingPlan(false);
+          return;
+        }
+      }
+    } catch (e) {}
+
+    // 3. If no plan exists for this date, carry forward pending/uncompleted jobs from previous date
+    const prevPlan = await fetchMostRecentPreviousPlanning('corrugation', targetDate);
+    if (prevPlan && Array.isArray(prevPlan.data) && prevPlan.data.length > 0) {
+      const pendingJobs = prevPlan.data.filter((r: any) => !r.isDone && (r.jobName || r.customerName));
+      if (pendingJobs.length > 0) {
+        const carried = pendingJobs.map((r: any, idx: number) => ({
+          ...r,
+          id: `c-${Date.now()}-${idx}`,
+          sNo: idx + 1,
+          isDone: false
+        }));
+        setRows(carried);
+        savePlanningSheet('corrugation', targetDate, carried);
+        setIsLoadingPlan(false);
+        return;
+      }
+    }
+
+    // 4. Default: 1 clean blank row
+    setRows([createBlankRow(1)]);
+    setIsLoadingPlan(false);
+  };
+
   // Load rows when selectedDate changes
   useEffect(() => {
-    const loadedRows = getInitialRowsForDate(selectedDate);
-    setRows(loadedRows);
+    loadPlanForDate(selectedDate);
+  }, [selectedDate]);
+
+  // Auto-refresh when user focuses or returns to window
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchPlanningSheet('corrugation', selectedDate).then(cloudData => {
+        if (cloudData && Array.isArray(cloudData) && cloudData.length > 0) {
+          setRows(cloudData);
+        }
+      });
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, [selectedDate]);
 
   // Auto-focus cursor in Job Name of the first row on mount
@@ -139,17 +206,32 @@ export default function CorrugationPlanningSheet() {
     }
   }, [selectedDate]);
 
-  // Save to localStorage
-  const saveToLocalStorage = (updatedRows: CorrugationPlanningRow[]) => {
+  // Save to both LocalStorage (instant) and Supabase Cloud (synced across all computers)
+  const savePlanData = (updatedRows: CorrugationPlanningRow[], immediateCloudSync = false) => {
     try {
       localStorage.setItem(`packwell_corrugation_planning_${selectedDate}`, JSON.stringify(updatedRows));
     } catch (e) {
       console.error(e);
     }
-  };
 
-  const handleManualSave = () => {
-    saveToLocalStorage(rows);
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+
+    if (immediateCloudSync) {
+      savePlanningSheet('corrugation', selectedDate, updatedRows);
+    } else {
+      syncTimeoutRef.current = setTimeout(() => {
+        savePlanningSheet('corrugation', selectedDate, updatedRows);
+      }, 1200);
+    }
+  };
+  const saveToLocalStorage = savePlanData;
+
+  const handleManualSave = async () => {
+    setIsSaving(true);
+    await savePlanningSheet('corrugation', selectedDate, rows);
+    setIsSaving(false);
     setSavedToast(true);
     setTimeout(() => setSavedToast(false), 2500);
   };
@@ -526,6 +608,15 @@ export default function CorrugationPlanningSheet() {
               onChange={(e) => setSelectedDate(e.target.value)}
               className="bg-transparent text-sm font-bold text-foreground focus:outline-none cursor-pointer"
             />
+            <button
+              type="button"
+              onClick={() => loadPlanForDate(selectedDate)}
+              disabled={isLoadingPlan}
+              className="p-1 rounded hover:bg-secondary/80 text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+              title="Refresh / Sync from Cloud"
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5 text-blue-600", isLoadingPlan && "animate-spin")} />
+            </button>
           </div>
 
           {/* Toggle Completed Jobs */}
@@ -560,11 +651,12 @@ export default function CorrugationPlanningSheet() {
           <button
             type="button"
             onClick={handleManualSave}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95"
-            title="Saves planning for this date"
+            disabled={isSaving}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+            title="Saves & syncs planning across all computers"
           >
-            <Save className="w-4 h-4" />
-            Save Plan
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
+            <span>{isSaving ? 'Syncing...' : 'Save Plan'}</span>
           </button>
 
           <button
