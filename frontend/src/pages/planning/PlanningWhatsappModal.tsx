@@ -3,7 +3,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { 
   X, Download, Share2, Loader2, FileText, 
-  Sparkles, Box, Factory, Truck, Info, Layers, Eye
+  Sparkles, Box, Factory, Truck, Check
 } from 'lucide-react';
 import type { CorrugationPlanningRow, DispatchPlanGroup } from './PlanningTypes';
 
@@ -23,11 +23,11 @@ interface PlanningWhatsappModalProps {
 /**
  * Paginates dispatch customer groups strictly keeping each customer's items intact.
  * Rule 1: NEVER split a customer's items across two pages.
- * Rule 2: If only 1-2 small lines exceed, auto-adjust in compact mode on Page 1.
- * Rule 3: Otherwise, move the entire customer group to Page 2.
+ * Rule 2: If only 1-2 small lines exceed, auto-adjust in compact mode on current page.
+ * Rule 3: Otherwise, move the entire customer group to next page.
+ * Supports unlimited pages (1, 2, 3, 4, ...).
  */
 function paginateDispatchGroups(groups: DispatchPlanGroup[]): { pages: DispatchPlanGroup[][]; isCompact: boolean } {
-  // Only include groups with a customer name or non-empty items
   const activeGroups = groups.filter(g => 
     (g.customerName && g.customerName.trim().length > 0) || 
     (g.items && g.items.some(i => (i.jobName && i.jobName.trim().length > 0) || i.qty))
@@ -37,48 +37,45 @@ function paginateDispatchGroups(groups: DispatchPlanGroup[]): { pages: DispatchP
     return { pages: [[]], isCompact: false };
   }
 
-  // Calculate approximate pixel height for each customer party block
-  // Standard A4 portrait is ~1130px. Overhead (Header, Badges, Footer, Totals) ~ 260px.
-  // Standard usable height: ~870px. Compact usable height: ~940px.
-  const PAGE1_STANDARD_CAPACITY = 870;
-  const PAGE1_COMPACT_CAPACITY = 940;
+  // A4 Portrait height budget:
+  // Page 1 capacity: ~840px (allowing for logo, header, KPI boxes, footer, subtotal)
+  // Page 2+ capacity: ~920px
+  const PAGE1_CAPACITY = 840;
   const SUBSEQUENT_PAGE_CAPACITY = 920;
+  const COMPACT_TOLERANCE = 55; // 1-2 lines tolerance
 
   const weights = activeGroups.map(grp => {
     const validItems = (grp.items || []).filter(i => (i.jobName && i.jobName.trim().length > 0) || i.qty);
     const count = Math.max(1, validItems.length);
-    // Standard: header 38px + table-head 26px + count*28px + margin 14px
-    const stdH = 78 + (count * 28);
-    // Compact: header 32px + table-head 22px + count*22px + margin 10px
-    const compH = 64 + (count * 22);
+    const stdH = 76 + (count * 28);
+    const compH = 62 + (count * 22);
     return { group: grp, stdH, compH, count };
   });
 
   const totalStdH = weights.reduce((sum, w) => sum + w.stdH, 0);
   const totalCompH = weights.reduce((sum, w) => sum + w.compH, 0);
 
-  // Case 1: Fits comfortably in 1 standard page
-  if (totalStdH <= PAGE1_STANDARD_CAPACITY) {
+  // Single page fits normally
+  if (totalStdH <= PAGE1_CAPACITY) {
     return { pages: [activeGroups], isCompact: false };
   }
 
-  // Case 2: Auto-adjust: 1-2 lines exceed, squeeze automatically onto Page 1 in compact mode!
-  if (totalCompH <= PAGE1_COMPACT_CAPACITY) {
+  // Single page fits with compact auto-adjustment (1-2 lines over)
+  if (totalCompH <= PAGE1_CAPACITY + COMPACT_TOLERANCE) {
     return { pages: [activeGroups], isCompact: true };
   }
 
-  // Case 3: Needs 2 (or more) pages. Customer groups MUST NEVER BE SPLIT!
+  // Multiple pages (Customer blocks NEVER split)
   const pages: DispatchPlanGroup[][] = [];
   let currentPage: DispatchPlanGroup[] = [];
   let currentHeight = 0;
-  let pageLimit = PAGE1_STANDARD_CAPACITY;
+  let pageLimit = PAGE1_CAPACITY;
 
   for (let i = 0; i < weights.length; i++) {
     const w = weights[i];
 
-    // If adding this group exceeds page limit
     if (currentPage.length > 0 && (currentHeight + w.stdH > pageLimit)) {
-      // Check if this is the last remaining group and compact fits on Page 1
+      // Check if this is the last group and compact mode fits
       const remaining = weights.slice(i);
       const remainingCompH = remaining.reduce((s, r) => s + r.compH, 0);
       const currentCompH = currentPage.reduce((s, g) => {
@@ -86,8 +83,7 @@ function paginateDispatchGroups(groups: DispatchPlanGroup[]): { pages: DispatchP
         return s + (itemW ? itemW.compH : 80);
       }, 0);
 
-      if (currentCompH + remainingCompH <= PAGE1_COMPACT_CAPACITY) {
-        // Auto-adjusted on current page!
+      if (currentCompH + remainingCompH <= pageLimit + COMPACT_TOLERANCE) {
         currentPage.push(w.group);
         currentHeight += w.stdH;
         continue;
@@ -120,17 +116,15 @@ function paginateCorrugationRows(rows: CorrugationPlanningRow[]): { pages: Corru
     return { pages: [activeRows], isCompact: false };
   }
   if (activeRows.length <= 22) {
-    // 1-2 lines over -> auto-adjust compact mode
     return { pages: [activeRows], isCompact: true };
   }
-  // 2 pages
-  return {
-    pages: [
-      activeRows.slice(0, 18),
-      activeRows.slice(18)
-    ],
-    isCompact: false
-  };
+  
+  // Split into pages of ~18 rows
+  const pages: CorrugationPlanningRow[][] = [];
+  for (let i = 0; i < activeRows.length; i += 18) {
+    pages.push(activeRows.slice(i, i + 18));
+  }
+  return { pages, isCompact: false };
 }
 
 export default function PlanningWhatsappModal({
@@ -146,12 +140,10 @@ export default function PlanningWhatsappModal({
   onCopyTextReport,
 }: PlanningWhatsappModalProps) {
   const [isCapturing, setIsCapturing] = useState(false);
-  const [copiedImage, setCopiedImage] = useState(false);
-  const [activePageIndex, setActivePageIndex] = useState<number>(0);
-  const [showAllPagesView, setShowAllPagesView] = useState<boolean>(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // References to rendered Portrait A4 card elements
+  // References to rendered Portrait A4 card elements (all kept live in DOM)
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const isCorrugation = type === 'corrugation';
@@ -181,7 +173,7 @@ export default function PlanningWhatsappModal({
   };
 
   /**
-   * Captures an exact Portrait A4 DOM element without any scroll clipping.
+   * Captures an exact Portrait A4 DOM element with crisp DPI.
    */
   const captureElement = async (element: HTMLElement) => {
     const parent = element.parentElement;
@@ -193,7 +185,7 @@ export default function PlanningWhatsappModal({
 
     try {
       return await html2canvas(element, {
-        scale: 2.2, // Crisp 2.2x DPI for crystal-clear readability
+        scale: 2.2, // 2.2x High DPI for crystal-clear readability
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false,
@@ -224,61 +216,74 @@ export default function PlanningWhatsappModal({
     }
   };
 
-  // 1. Copy Selected Vertical A4 Image to Clipboard (for WhatsApp Ctrl+V)
-  const handleCopyImageToClipboard = async () => {
+  /**
+   * 1. Copy Selected Vertical A4 Page Image to Clipboard (Ctrl+V into WhatsApp)
+   * Uses Promise<Blob> pattern so Chromium never revokes the user gesture!
+   */
+  const handleCopyPageImage = async (pageIdx: number) => {
+    const targetEl = pageRefs.current[pageIdx];
+    if (!targetEl) {
+      showToast('❌ Page element not found');
+      return;
+    }
+
     setIsCapturing(true);
+
     try {
-      const targetEl = pageRefs.current[activePageIndex];
-      if (!targetEl) throw new Error('Target page element not found');
-
-      const canvas = await captureElement(targetEl);
-      if (!canvas) throw new Error('Canvas capture failed');
-
-      canvas.toBlob(async (blob) => {
-        if (!blob) throw new Error('Blob conversion failed');
-
-        if (navigator.clipboard && window.ClipboardItem) {
+      if (navigator.clipboard && window.ClipboardItem) {
+        // Standard Chromium Async Clipboard Item with Promise<Blob>
+        const clipboardPromise = new Promise<Blob>(async (resolve, reject) => {
           try {
-            await navigator.clipboard.write([
-              new ClipboardItem({ 'image/png': blob })
-            ]);
-            setCopiedImage(true);
-            const pageText = pagesCount > 1 ? `Page ${activePageIndex + 1}` : 'Dispatch Plan';
-            showToast(`✅ ${pageText} Image Copied! WhatsApp me jakar Ctrl+V karein.`);
-            setTimeout(() => setCopiedImage(false), 3500);
-          } catch (clipErr) {
-            console.warn('Clipboard write failed, downloading image instead:', clipErr);
-            handleDownloadImage();
-            showToast('⚠️ Clipboard unsupported. Image downloaded!');
+            const canvas = await captureElement(targetEl);
+            if (!canvas) return reject(new Error('Canvas capture failed'));
+            canvas.toBlob((blob) => {
+              if (blob) resolve(blob);
+              else reject(new Error('Blob conversion failed'));
+            }, 'image/png');
+          } catch (e) {
+            reject(e);
           }
-        } else {
-          handleDownloadImage();
-          showToast('Image downloaded! WhatsApp par attach karein.');
-        }
-        setIsCapturing(false);
-      }, 'image/png');
-    } catch (err) {
-      console.error(err);
-      showToast('❌ Image capture failed.');
+        });
+
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': clipboardPromise })
+        ]);
+
+        setCopiedIndex(pageIdx);
+        const label = pagesCount > 1 ? `Part ${pageIdx + 1}` : 'Dispatch Plan';
+        showToast(`✅ ${label} Image Copied! WhatsApp me jaakar Ctrl + V karein.`);
+        setTimeout(() => setCopiedIndex(null), 3500);
+      } else {
+        // Fallback for browsers without image clipboard support
+        await handleDownloadPageImage(pageIdx);
+        showToast('📥 Image Downloaded! WhatsApp par attach karke bhein.');
+      }
+    } catch (clipErr) {
+      console.warn('Clipboard write failed, downloading image instead:', clipErr);
+      await handleDownloadPageImage(pageIdx);
+      showToast('⚠️ Clipboard unsupported. Image downloaded successfully!');
+    } finally {
       setIsCapturing(false);
     }
   };
 
-  // 2. Download Image as Vertical PNG
-  const handleDownloadImage = async () => {
+  /**
+   * 2. Download Image as PNG for a specific page
+   */
+  const handleDownloadPageImage = async (pageIdx: number) => {
+    const targetEl = pageRefs.current[pageIdx];
+    if (!targetEl) return;
     setIsCapturing(true);
     try {
-      const targetEl = pageRefs.current[activePageIndex];
-      if (!targetEl) return;
       const canvas = await captureElement(targetEl);
       if (!canvas) return;
 
       const link = document.createElement('a');
-      const pageSuffix = pagesCount > 1 ? `_Page${activePageIndex + 1}` : '';
+      const pageSuffix = pagesCount > 1 ? `_Part${pageIdx + 1}` : '';
       link.download = `Packwell_${isCorrugation ? 'Corrugation' : 'Dispatch'}_${dateStr}${pageSuffix}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
-      showToast('📥 Image Downloaded successfully!');
+      showToast(`📥 Part ${pageIdx + 1} PNG Downloaded!`);
     } catch (e) {
       console.error(e);
       showToast('❌ Failed to download image');
@@ -287,7 +292,9 @@ export default function PlanningWhatsappModal({
     }
   };
 
-  // 3. Download True Vertical A4 PDF (Multi-Page, Customer-Intact)
+  /**
+   * 3. Download True Multi-Page Vertical A4 PDF (Customer-Intact across 1, 2, 3, 4+ pages)
+   */
   const handleDownloadPdf = async () => {
     setIsCapturing(true);
     try {
@@ -327,7 +334,7 @@ export default function PlanningWhatsappModal({
       }
 
       pdf.save(`Packwell_${isCorrugation ? 'Corrugation' : 'Dispatch'}_Plan_${dateStr}.pdf`);
-      showToast('📄 Vertical A4 PDF Downloaded! WhatsApp par send karein.');
+      showToast(`📄 ${pagesCount} Page Vertical A4 PDF Downloaded! WhatsApp group me attach karein.`);
     } catch (e) {
       console.error(e);
       showToast('❌ PDF export failed.');
@@ -336,7 +343,7 @@ export default function PlanningWhatsappModal({
     }
   };
 
-  // Helper to calculate cumulative customer start index for Page 2
+  // Helper to calculate cumulative customer start index for Page N
   const getStartingCustomerIndex = (pIdx: number): number => {
     if (isCorrugation || pIdx === 0) return 0;
     let sum = 0;
@@ -347,18 +354,18 @@ export default function PlanningWhatsappModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[70] bg-slate-900 border border-emerald-500/50 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 text-sm font-semibold animate-in slide-in-from-top-3">
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[70] bg-slate-900 border border-emerald-500/80 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 text-sm font-semibold animate-in slide-in-from-top-3">
           <span>{toastMessage}</span>
         </div>
       )}
 
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl max-h-[94vh] flex flex-col shadow-2xl overflow-hidden text-slate-100">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden text-slate-100">
         
         {/* Top Header */}
-        <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+        <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400">
               <Share2 className="w-5 h-5" />
@@ -367,7 +374,7 @@ export default function PlanningWhatsappModal({
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 WhatsApp & PDF Export Center
                 <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Vertical A4 Format
+                  Vertical A4 Boxes
                 </span>
                 {pagesCount > 1 && (
                   <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
@@ -394,85 +401,69 @@ export default function PlanningWhatsappModal({
           </button>
         </div>
 
-        {/* Page Switcher Tabs */}
-        {pagesCount > 1 && (
-          <div className="px-5 py-2.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
-              {Array.from({ length: pagesCount }).map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    setActivePageIndex(idx);
-                    setShowAllPagesView(false);
-                  }}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-                    !showAllPagesView && activePageIndex === idx
-                      ? 'bg-emerald-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>Part {idx + 1} (Page {idx + 1})</span>
-                </button>
-              ))}
-
-              <button
-                onClick={() => setShowAllPagesView(true)}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-                  showAllPagesView
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>View Both Pages</span>
-              </button>
-            </div>
-
-            <div className="text-[11px] text-amber-300/90 bg-amber-950/40 border border-amber-800/50 px-3 py-1 rounded-lg flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>
-                <strong>Customer Intact Rule:</strong> Ek customer ke items aadhe is page par aur aadhe dusre page par nahi split honge.
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Action Toolbar */}
         <div className="px-5 py-3 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleCopyImageToClipboard}
-              disabled={isCapturing}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-emerald-950/40 flex items-center gap-2 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
-            >
-              {isCapturing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
-              <span>
-                {copiedImage 
-                  ? 'Copied to Clipboard!' 
-                  : `Copy ${pagesCount > 1 ? `Part ${activePageIndex + 1}` : ''} Image (Ctrl+V in WhatsApp)`}
-              </span>
-            </button>
-
+            {/* Primary Action: Download Vertical A4 PDF */}
             <button
               onClick={handleDownloadPdf}
               disabled={isCapturing}
-              title="Download Vertical A4 PDF to send directly in WhatsApp"
-              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              title="Download Vertical A4 PDF with all pages ready to attach to WhatsApp"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-blue-950/40 flex items-center gap-2 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
             >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Download PDF (Vertical A4)</span>
+              {isCapturing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              <span>Download PDF ({pagesCount} Page{pagesCount > 1 ? 's' : ''} Vertical A4)</span>
             </button>
 
-            <button
-              onClick={handleDownloadImage}
-              disabled={isCapturing}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Download PNG</span>
-            </button>
+            {/* Copy Image Buttons */}
+            {pagesCount === 1 ? (
+              <button
+                onClick={() => handleCopyPageImage(0)}
+                disabled={isCapturing}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-emerald-950/40 flex items-center gap-2 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+              >
+                {isCapturing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+                <span>{copiedIndex === 0 ? 'Image Copied!' : 'Copy Image (Ctrl+V in WhatsApp)'}</span>
+              </button>
+            ) : (
+              Array.from({ length: pagesCount }).map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleCopyPageImage(idx)}
+                  disabled={isCapturing}
+                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>{copiedIndex === idx ? `Part ${idx + 1} Copied!` : `Copy Part ${idx + 1} Image`}</span>
+                </button>
+              ))
+            )}
 
+            {/* Download PNG Buttons */}
+            {pagesCount === 1 ? (
+              <button
+                onClick={() => handleDownloadPageImage(0)}
+                disabled={isCapturing}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Download PNG</span>
+              </button>
+            ) : (
+              Array.from({ length: pagesCount }).map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleDownloadPageImage(idx)}
+                  disabled={isCapturing}
+                  className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Download className="w-3 h-3 text-emerald-400" />
+                  <span>PNG Part {idx + 1}</span>
+                </button>
+              ))
+            )}
+
+            {/* Copy Text Option */}
             <button
               onClick={() => {
                 onCopyTextReport();
@@ -485,15 +476,17 @@ export default function PlanningWhatsappModal({
             </button>
           </div>
 
-          <span className="text-xs text-slate-400 hidden sm:inline italic">
-            Copy button dabayein aur WhatsApp Web par <strong>Ctrl + V</strong> karein!
-          </span>
+          <div className="text-[11px] text-amber-300/90 bg-amber-950/40 border border-amber-800/50 px-3 py-1 rounded-lg flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span>
+              <strong>PDF Tip:</strong> Download PDF dabakar direct WhatsApp group me file attach kar dein (100% crisp rahegi).
+            </span>
+          </div>
         </div>
 
-        {/* Scrollable Preview Area */}
+        {/* Scrollable Preview Area (ALL PAGES RENDERED LIVE) */}
         <div className="flex-1 overflow-auto p-6 bg-slate-950 flex flex-col items-center gap-8">
           {Array.from({ length: pagesCount }).map((_, pIdx) => {
-            const isVisible = showAllPagesView || activePageIndex === pIdx;
             const startCustIdx = getStartingCustomerIndex(pIdx);
 
             const pageDispatchGroups = dispatchPagination.pages[pIdx] || [];
@@ -516,12 +509,14 @@ export default function PlanningWhatsappModal({
             return (
               <div
                 key={pIdx}
-                className={isVisible ? 'block' : 'hidden'}
+                className="w-[820px]"
                 style={{ width: '820px', minWidth: '820px' }}
               >
+                {/* Visual Page Tag above card */}
                 {pagesCount > 1 && (
                   <div className="text-xs font-bold text-slate-400 mb-2 flex items-center justify-between px-1">
-                    <span className="uppercase tracking-wider">
+                    <span className="uppercase tracking-wider flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
                       PAGE {pIdx + 1} OF {pagesCount} (PORTRAIT A4)
                     </span>
                     <span className="text-emerald-400">
@@ -532,7 +527,7 @@ export default function PlanningWhatsappModal({
                   </div>
                 )}
 
-                {/* THE ACTUAL VERTICAL A4 CARD RENDERED FOR HTML2CANVAS */}
+                {/* THE VERTICAL A4 CARD RENDERED FOR HTML2CANVAS */}
                 <div
                   ref={(el) => { pageRefs.current[pIdx] = el; }}
                   className={`bg-white text-slate-900 w-[820px] min-h-[1140px] p-6 rounded-xl border-2 border-slate-900 shadow-2xl flex flex-col justify-between font-sans ${
@@ -540,7 +535,7 @@ export default function PlanningWhatsappModal({
                   }`}
                   style={{ minWidth: '820px', minHeight: '1140px' }}
                 >
-                  {/* Top Content */}
+                  {/* Top Header & Table */}
                   <div>
                     {/* Brand Header */}
                     <div className="border-b-2 border-slate-900 pb-3 mb-3 flex items-center justify-between">
@@ -777,7 +772,7 @@ export default function PlanningWhatsappModal({
 
                   {/* Bottom Footer & Page Totals */}
                   <div className="mt-4 pt-2">
-                    {/* Page Subtotal / Grand Total Banner */}
+                    {/* Page Subtotal */}
                     <div className="bg-slate-100 border-2 border-slate-900 rounded-lg p-2 flex items-center justify-between font-black text-xs text-slate-900 mb-2">
                       <span className="uppercase tracking-wider">
                         {pagesCount > 1 ? `PAGE ${pIdx + 1} TOTAL BOXES:` : 'GRAND TOTAL DISPATCH BOXES:'}
@@ -787,6 +782,7 @@ export default function PlanningWhatsappModal({
                       </span>
                     </div>
 
+                    {/* Grand Total on Final Page */}
                     {pagesCount > 1 && pIdx === pagesCount - 1 && (
                       <div className="bg-slate-900 text-white rounded-lg p-2 flex items-center justify-between font-black text-xs mb-2">
                         <span className="uppercase tracking-wider text-amber-300">
