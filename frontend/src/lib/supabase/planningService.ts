@@ -139,3 +139,37 @@ export async function fetchMostRecentPreviousPlanning(
 
   return null;
 }
+
+/**
+ * Subscribe to realtime updates for a specific sheet type.
+ * Automatically triggers whenever any system saves or updates planning rows!
+ */
+export function subscribeToPlanningSheet(
+  sheetType: PlanningSheetType,
+  planDate: string,
+  onUpdate: (data: any[]) => void
+) {
+  const channel = supabase
+    .channel(`planning_realtime_${sheetType}_${planDate}_${Date.now()}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'daily_planning_sheets',
+        filter: `sheet_type=eq.${sheetType}`
+      },
+      (payload: any) => {
+        const newRecord = payload.new;
+        if (newRecord && newRecord.plan_date === planDate && Array.isArray(newRecord.data)) {
+          onUpdate(newRecord.data);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+

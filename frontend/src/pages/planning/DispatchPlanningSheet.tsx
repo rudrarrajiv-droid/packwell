@@ -9,7 +9,7 @@ import { exportToExcel } from '../../lib/exportUtils';
 import type { DispatchPlanGroup, DispatchPlanItem } from './PlanningTypes';
 import { INITIAL_DISPATCH_GROUPS } from './samplePlanningData';
 import { getProducts } from '../../lib/supabase/productService';
-import { savePlanningSheet, fetchPlanningSheet, fetchMostRecentPreviousPlanning } from '../../lib/supabase/planningService';
+import { savePlanningSheet, fetchPlanningSheet, fetchMostRecentPreviousPlanning, subscribeToPlanningSheet } from '../../lib/supabase/planningService';
 import { RefreshCw, CloudUpload, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -118,6 +118,8 @@ export default function DispatchPlanningSheet() {
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const [savedToast, setSavedToast] = useState(false);
+  const [syncToastMsg, setSyncToastMsg] = useState<string | null>(null);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string>('');
   const [whatsappToast, setWhatsappToast] = useState(false);
   const syncTimeoutRef = useRef<any>(null);
 
@@ -205,17 +207,35 @@ export default function DispatchPlanningSheet() {
     loadPlanForDate(planDate);
   }, [planDate]);
 
-  // Auto-refresh when user focuses or returns to window
+  // Realtime subscription + auto-polling so changes on other systems reflect automatically
   useEffect(() => {
+    // A. Realtime WebSocket subscription
+    const unsubscribe = subscribeToPlanningSheet('dispatch', planDate, (updatedCloudGroups) => {
+      if (Array.isArray(updatedCloudGroups) && updatedCloudGroups.length > 0) {
+        setGroups(updatedCloudGroups);
+        setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      }
+    });
+
+    // B. Window focus refresh
     const handleFocus = () => {
       fetchPlanningSheet('dispatch', planDate).then(cloudData => {
         if (cloudData && Array.isArray(cloudData) && cloudData.length > 0) {
           setGroups(cloudData);
+          setLastSyncedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
         }
       });
     };
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
+
+    // C. 15-second background polling guarantee
+    const pollInterval = setInterval(handleFocus, 15000);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(pollInterval);
+    };
   }, [planDate]);
 
   // Save to both LocalStorage (instant) and Supabase Cloud (synced across all computers)
@@ -658,13 +678,25 @@ export default function DispatchPlanningSheet() {
             />
             <button
               type="button"
-              onClick={() => loadPlanForDate(planDate)}
+              onClick={async () => {
+                await loadPlanForDate(planDate);
+                let totalItems = 0;
+                groups.forEach(g => { totalItems += (g.items || []).filter(i => i.jobName || i.qty).length; });
+                setSyncToastMsg(`Cloud Synced! ${totalItems} items loaded for ${planDate}`);
+                setTimeout(() => setSyncToastMsg(null), 3000);
+              }}
               disabled={isLoadingPlan}
-              className="p-1 rounded hover:bg-secondary/80 text-muted-foreground hover:text-foreground transition-all cursor-pointer"
-              title="Refresh / Sync from Cloud"
+              className="p-1.5 rounded-md hover:bg-emerald-100 bg-emerald-50 text-emerald-700 transition-all cursor-pointer flex items-center gap-1 text-xs font-semibold"
+              title="Click to manually refresh and sync from Cloud"
             >
               <RefreshCw className={cn("w-3.5 h-3.5 text-emerald-600", isLoadingPlan && "animate-spin")} />
+              <span className="hidden sm:inline">Sync Cloud</span>
             </button>
+            <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-emerald-700">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Live Cloud Synced</span>
+              {lastSyncedTime && <span className="text-emerald-600 font-normal">({lastSyncedTime})</span>}
+            </div>
           </div>
 
           {/* Toggle Completed Items */}
@@ -759,6 +791,13 @@ export default function DispatchPlanningSheet() {
       </div>
 
       {/* Notifications */}
+      {syncToastMsg && (
+        <div className="fixed top-6 right-6 z-50 bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 text-sm font-semibold animate-in fade-in slide-in-from-top-3 duration-200">
+          <Check className="w-4 h-4" />
+          <span>{syncToastMsg}</span>
+        </div>
+      )}
+
       {savedToast && (
         <div className="flex items-center gap-2 p-3 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg border border-emerald-300 animate-in fade-in slide-in-from-top-1 print:hidden">
           <Check className="w-4 h-4 text-emerald-600" />
