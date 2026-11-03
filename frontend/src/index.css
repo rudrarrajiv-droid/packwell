@@ -61,7 +61,7 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 8mm 6mm;
   }
   /* Hide everything by default in body */
   body * {
@@ -122,6 +122,14 @@
 
   .print-fit-a4 {
     zoom: 0.70;
+  }
+
+  /* Prevent splitting a customer party across printed pages */
+  .print-avoid-break,
+  tbody.print-party-group,
+  .print-party-group {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }
 

@@ -864,8 +864,8 @@ export default function DispatchPlanningSheet() {
               </th>
             </tr>
           </thead>
-          <tbody>
-            {visibleGroups.length === 0 ? (
+          {visibleGroups.length === 0 ? (
+            <tbody>
               <tr>
                 <td colSpan={6} className="py-12 text-center text-slate-500 font-bold text-sm">
                   No active dispatch items scheduled for this date.
@@ -887,12 +887,15 @@ export default function DispatchPlanningSheet() {
                   )}
                 </td>
               </tr>
-            ) : (
-              visibleGroups.map((group) => {
-                const rowSpanCount = group.items.length;
+            </tbody>
+          ) : (
+            visibleGroups.map((group) => {
+              const rowSpanCount = group.items.length;
 
-                return group.items.map((item, itemIdx) => {
-                  const isFirstRow = itemIdx === 0;
+              return (
+                <tbody key={group.id} className="print-party-group">
+                  {group.items.map((item, itemIdx) => {
+                    const isFirstRow = itemIdx === 0;
 
                   return (
                     <tr 
@@ -1069,10 +1072,11 @@ export default function DispatchPlanningSheet() {
                       </td>
                     </tr>
                   );
-                });
-              })
-            )}
-          </tbody>
+                })}
+              </tbody>
+            );
+          })
+        )}
 
           {/* Footer Total Row */}
           <tfoot>

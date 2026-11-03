@@ -3,7 +3,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { 
   X, Download, Share2, Loader2, FileText, 
-  Sparkles, Box, Factory, Truck, Info, Layers
+  Sparkles, Box, Factory, Truck, Info, Layers, Eye
 } from 'lucide-react';
 import type { CorrugationPlanningRow, DispatchPlanGroup } from './PlanningTypes';
 
@@ -20,6 +20,119 @@ interface PlanningWhatsappModalProps {
   onCopyTextReport: () => void;
 }
 
+/**
+ * Paginates dispatch customer groups strictly keeping each customer's items intact.
+ * Rule 1: NEVER split a customer's items across two pages.
+ * Rule 2: If only 1-2 small lines exceed, auto-adjust in compact mode on Page 1.
+ * Rule 3: Otherwise, move the entire customer group to Page 2.
+ */
+function paginateDispatchGroups(groups: DispatchPlanGroup[]): { pages: DispatchPlanGroup[][]; isCompact: boolean } {
+  // Only include groups with a customer name or non-empty items
+  const activeGroups = groups.filter(g => 
+    (g.customerName && g.customerName.trim().length > 0) || 
+    (g.items && g.items.some(i => (i.jobName && i.jobName.trim().length > 0) || i.qty))
+  );
+
+  if (activeGroups.length === 0) {
+    return { pages: [[]], isCompact: false };
+  }
+
+  // Calculate approximate pixel height for each customer party block
+  // Standard A4 portrait is ~1130px. Overhead (Header, Badges, Footer, Totals) ~ 260px.
+  // Standard usable height: ~870px. Compact usable height: ~940px.
+  const PAGE1_STANDARD_CAPACITY = 870;
+  const PAGE1_COMPACT_CAPACITY = 940;
+  const SUBSEQUENT_PAGE_CAPACITY = 920;
+
+  const weights = activeGroups.map(grp => {
+    const validItems = (grp.items || []).filter(i => (i.jobName && i.jobName.trim().length > 0) || i.qty);
+    const count = Math.max(1, validItems.length);
+    // Standard: header 38px + table-head 26px + count*28px + margin 14px
+    const stdH = 78 + (count * 28);
+    // Compact: header 32px + table-head 22px + count*22px + margin 10px
+    const compH = 64 + (count * 22);
+    return { group: grp, stdH, compH, count };
+  });
+
+  const totalStdH = weights.reduce((sum, w) => sum + w.stdH, 0);
+  const totalCompH = weights.reduce((sum, w) => sum + w.compH, 0);
+
+  // Case 1: Fits comfortably in 1 standard page
+  if (totalStdH <= PAGE1_STANDARD_CAPACITY) {
+    return { pages: [activeGroups], isCompact: false };
+  }
+
+  // Case 2: Auto-adjust: 1-2 lines exceed, squeeze automatically onto Page 1 in compact mode!
+  if (totalCompH <= PAGE1_COMPACT_CAPACITY) {
+    return { pages: [activeGroups], isCompact: true };
+  }
+
+  // Case 3: Needs 2 (or more) pages. Customer groups MUST NEVER BE SPLIT!
+  const pages: DispatchPlanGroup[][] = [];
+  let currentPage: DispatchPlanGroup[] = [];
+  let currentHeight = 0;
+  let pageLimit = PAGE1_STANDARD_CAPACITY;
+
+  for (let i = 0; i < weights.length; i++) {
+    const w = weights[i];
+
+    // If adding this group exceeds page limit
+    if (currentPage.length > 0 && (currentHeight + w.stdH > pageLimit)) {
+      // Check if this is the last remaining group and compact fits on Page 1
+      const remaining = weights.slice(i);
+      const remainingCompH = remaining.reduce((s, r) => s + r.compH, 0);
+      const currentCompH = currentPage.reduce((s, g) => {
+        const itemW = weights.find(x => x.group.id === g.id);
+        return s + (itemW ? itemW.compH : 80);
+      }, 0);
+
+      if (currentCompH + remainingCompH <= PAGE1_COMPACT_CAPACITY) {
+        // Auto-adjusted on current page!
+        currentPage.push(w.group);
+        currentHeight += w.stdH;
+        continue;
+      }
+
+      // Customer does not fit without cutting -> MOVE ENTIRE CUSTOMER TO NEXT PAGE!
+      pages.push(currentPage);
+      currentPage = [w.group];
+      currentHeight = w.stdH;
+      pageLimit = SUBSEQUENT_PAGE_CAPACITY;
+    } else {
+      currentPage.push(w.group);
+      currentHeight += w.stdH;
+    }
+  }
+
+  if (currentPage.length > 0) {
+    pages.push(currentPage);
+  }
+
+  return { pages, isCompact: false };
+}
+
+/**
+ * Paginates corrugation rows cleanly for Portrait A4.
+ */
+function paginateCorrugationRows(rows: CorrugationPlanningRow[]): { pages: CorrugationPlanningRow[][]; isCompact: boolean } {
+  const activeRows = rows.filter(r => r.customerName || r.jobName);
+  if (activeRows.length <= 18) {
+    return { pages: [activeRows], isCompact: false };
+  }
+  if (activeRows.length <= 22) {
+    // 1-2 lines over -> auto-adjust compact mode
+    return { pages: [activeRows], isCompact: true };
+  }
+  // 2 pages
+  return {
+    pages: [
+      activeRows.slice(0, 18),
+      activeRows.slice(18)
+    ],
+    isCompact: false
+  };
+}
+
 export default function PlanningWhatsappModal({
   isOpen,
   onClose,
@@ -34,100 +147,31 @@ export default function PlanningWhatsappModal({
 }: PlanningWhatsappModalProps) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [copiedImage, setCopiedImage] = useState(false);
-  const [activeTab, setActiveTab] = useState<'full' | 'page-1' | 'page-2'>('full');
+  const [activePageIndex, setActivePageIndex] = useState<number>(0);
+  const [showAllPagesView, setShowAllPagesView] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
+
+  // References to rendered Portrait A4 card elements
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const isCorrugation = type === 'corrugation';
 
-  // 1. Filter active rows / groups
-  const activeCorrugationRows = useMemo(() => {
-    return corrugationRows.filter(r => r.customerName || r.jobName);
-  }, [corrugationRows]);
-
-  const activeDispatchGroups = useMemo(() => {
-    return dispatchGroups.filter(g => 
-      (g.customerName && g.customerName.trim().length > 0) || 
-      (g.items && g.items.some(i => (i.jobName && i.jobName.trim().length > 0) || i.qty))
-    );
+  // 1. Paginate data
+  const dispatchPagination = useMemo(() => {
+    return paginateDispatchGroups(dispatchGroups);
   }, [dispatchGroups]);
 
-  // 2. Determine if document needs multi-page pagination (> 1 page)
-  const totalDispatchItems = useMemo(() => {
-    return activeDispatchGroups.reduce(
-      (acc, g) => acc + (g.items || []).filter(i => (i.jobName && i.jobName.trim().length > 0) || i.qty).length,
-      0
-    );
-  }, [activeDispatchGroups]);
+  const corrugationPagination = useMemo(() => {
+    return paginateCorrugationRows(corrugationRows);
+  }, [corrugationRows]);
 
-  const needsPaging = useMemo(() => {
-    if (isCorrugation) {
-      return activeCorrugationRows.length > 13;
-    } else {
-      return activeDispatchGroups.length > 3 || totalDispatchItems > 7;
-    }
-  }, [isCorrugation, activeCorrugationRows.length, activeDispatchGroups.length, totalDispatchItems]);
+  const pagesCount = isCorrugation 
+    ? corrugationPagination.pages.length 
+    : dispatchPagination.pages.length;
 
-  // 3. Compute split groups / rows for Page 1 & Page 2
-  const { page1Items, page2Items, splitIndex } = useMemo(() => {
-    if (isCorrugation) {
-      const split = 13;
-      return {
-        page1Items: activeCorrugationRows.slice(0, split),
-        page2Items: activeCorrugationRows.slice(split),
-        splitIndex: split
-      };
-    } else {
-      // Balance dispatch groups across 2 pages based on items
-      let split = Math.ceil(activeDispatchGroups.length / 2);
-      let cumulativeItems = 0;
-      const targetHalf = totalDispatchItems / 2;
-      for (let i = 0; i < activeDispatchGroups.length; i++) {
-        const count = (activeDispatchGroups[i].items || []).filter(it => it.jobName || it.qty).length;
-        cumulativeItems += count;
-        if (cumulativeItems >= targetHalf && i < activeDispatchGroups.length - 1) {
-          split = i + 1;
-          break;
-        }
-      }
-      return {
-        page1Items: activeDispatchGroups.slice(0, split),
-        page2Items: activeDispatchGroups.slice(split),
-        splitIndex: split
-      };
-    }
-  }, [isCorrugation, activeCorrugationRows, activeDispatchGroups, totalDispatchItems]);
-
-  // Rows or groups to display according to activeTab
-  const displayedCorrugationRows = useMemo(() => {
-    if (!isCorrugation) return [];
-    if (activeTab === 'page-1') return page1Items as CorrugationPlanningRow[];
-    if (activeTab === 'page-2') return page2Items as CorrugationPlanningRow[];
-    return activeCorrugationRows;
-  }, [isCorrugation, activeTab, page1Items, page2Items, activeCorrugationRows]);
-
-  const displayedDispatchGroups = useMemo(() => {
-    if (isCorrugation) return [];
-    if (activeTab === 'page-1') return page1Items as DispatchPlanGroup[];
-    if (activeTab === 'page-2') return page2Items as DispatchPlanGroup[];
-    return activeDispatchGroups;
-  }, [isCorrugation, activeTab, page1Items, page2Items, activeDispatchGroups]);
-
-  // Active metrics
-  const displayedBoxQty = useMemo(() => {
-    if (isCorrugation) {
-      return displayedCorrugationRows.reduce((sum, r) => sum + (Number(r.boxQty) || 0), 0);
-    } else {
-      return displayedDispatchGroups.reduce((acc, g) => {
-        return acc + (g.items || []).reduce((itemSum, item) => itemSum + (Number(item.qty) || 0), 0);
-      }, 0);
-    }
-  }, [isCorrugation, displayedCorrugationRows, displayedDispatchGroups]);
-
-  const displayedPlyQty = useMemo(() => {
-    if (!isCorrugation) return 0;
-    return displayedCorrugationRows.reduce((sum, r) => sum + (Number(r.nosOfPly) || 0), 0);
-  }, [isCorrugation, displayedCorrugationRows]);
+  const isCompact = isCorrugation
+    ? corrugationPagination.isCompact
+    : dispatchPagination.isCompact;
 
   if (!isOpen) return null;
 
@@ -137,32 +181,26 @@ export default function PlanningWhatsappModal({
   };
 
   /**
-   * Ultra reliable capture that captures the FULL height of the card,
-   * bypassing any modal scroll clipping.
+   * Captures an exact Portrait A4 DOM element without any scroll clipping.
    */
-  const captureCanvas = async () => {
-    const element = cardRef.current;
-    if (!element) return null;
-
+  const captureElement = async (element: HTMLElement) => {
     const parent = element.parentElement;
     const origScrollTop = parent ? parent.scrollTop : 0;
-    if (parent) {
-      parent.scrollTop = 0;
-    }
+    if (parent) parent.scrollTop = 0;
 
     const scrollWidth = element.scrollWidth || element.offsetWidth;
     const scrollHeight = element.scrollHeight || element.offsetHeight;
 
     try {
       return await html2canvas(element, {
-        scale: 2, // 2x DPI for crystal-clear readability without blowing up file size
+        scale: 2.2, // Crisp 2.2x DPI for crystal-clear readability
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false,
         width: scrollWidth,
         height: scrollHeight,
-        windowWidth: scrollWidth + 200,
-        windowHeight: scrollHeight + 200,
+        windowWidth: scrollWidth + 100,
+        windowHeight: scrollHeight + 100,
         scrollX: 0,
         scrollY: 0,
         x: 0,
@@ -182,17 +220,18 @@ export default function PlanningWhatsappModal({
         }
       });
     } finally {
-      if (parent) {
-        parent.scrollTop = origScrollTop;
-      }
+      if (parent) parent.scrollTop = origScrollTop;
     }
   };
 
-  // 1. Copy high-res image directly to Clipboard (for WhatsApp Ctrl+V)
+  // 1. Copy Selected Vertical A4 Image to Clipboard (for WhatsApp Ctrl+V)
   const handleCopyImageToClipboard = async () => {
     setIsCapturing(true);
     try {
-      const canvas = await captureCanvas();
+      const targetEl = pageRefs.current[activePageIndex];
+      if (!targetEl) throw new Error('Target page element not found');
+
+      const canvas = await captureElement(targetEl);
       if (!canvas) throw new Error('Canvas capture failed');
 
       canvas.toBlob(async (blob) => {
@@ -204,8 +243,8 @@ export default function PlanningWhatsappModal({
               new ClipboardItem({ 'image/png': blob })
             ]);
             setCopiedImage(true);
-            const label = activeTab === 'page-1' ? 'Part 1' : activeTab === 'page-2' ? 'Part 2' : 'Full Plan';
-            showToast(`✅ ${label} Image Copied! WhatsApp me Ctrl+V karein.`);
+            const pageText = pagesCount > 1 ? `Page ${activePageIndex + 1}` : 'Dispatch Plan';
+            showToast(`✅ ${pageText} Image Copied! WhatsApp me jakar Ctrl+V karein.`);
             setTimeout(() => setCopiedImage(false), 3500);
           } catch (clipErr) {
             console.warn('Clipboard write failed, downloading image instead:', clipErr);
@@ -225,15 +264,18 @@ export default function PlanningWhatsappModal({
     }
   };
 
-  // 2. Download Image as PNG
+  // 2. Download Image as Vertical PNG
   const handleDownloadImage = async () => {
     setIsCapturing(true);
     try {
-      const canvas = await captureCanvas();
+      const targetEl = pageRefs.current[activePageIndex];
+      if (!targetEl) return;
+      const canvas = await captureElement(targetEl);
       if (!canvas) return;
+
       const link = document.createElement('a');
-      const suffix = activeTab === 'full' ? 'Full' : activeTab === 'page-1' ? 'Part1' : 'Part2';
-      link.download = `Packwell_${isCorrugation ? 'Corrugation' : 'Dispatch'}_${dateStr}_${suffix}.png`;
+      const pageSuffix = pagesCount > 1 ? `_Page${activePageIndex + 1}` : '';
+      link.download = `Packwell_${isCorrugation ? 'Corrugation' : 'Dispatch'}_${dateStr}${pageSuffix}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
       showToast('📥 Image Downloaded successfully!');
@@ -245,66 +287,63 @@ export default function PlanningWhatsappModal({
     }
   };
 
-  // 3. Download True Multi-Page PDF (Landscape A4, crystal-clear, no squishing)
+  // 3. Download True Vertical A4 PDF (Multi-Page, Customer-Intact)
   const handleDownloadPdf = async () => {
     setIsCapturing(true);
     try {
-      const canvas = await captureCanvas();
-      if (!canvas) return;
-
       const pdf = new jsPDF({
-        orientation: 'landscape',
+        orientation: 'portrait',
         unit: 'mm',
         format: 'a4'
       });
 
-      const pageWidth = pdf.internal.pageSize.getWidth(); // 297mm
-      const pageHeight = pdf.internal.pageSize.getHeight(); // 210mm
-      const margin = 8;
-      const usableWidth = pageWidth - (margin * 2); // 281mm
-      const usableHeight = pageHeight - (margin * 2); // 194mm
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 5;
+      const usableWidth = pageWidth - (margin * 2); // 200mm
+      const usableHeight = pageHeight - (margin * 2); // 287mm
 
-      const totalRenderedHeight = (canvas.height * usableWidth) / canvas.width;
+      for (let pIdx = 0; pIdx < pagesCount; pIdx++) {
+        const pageEl = pageRefs.current[pIdx];
+        if (!pageEl) continue;
 
-      if (totalRenderedHeight <= usableHeight) {
-        // Fits in 1 single landscape page
+        if (pIdx > 0) {
+          pdf.addPage('a4', 'portrait');
+        }
+
+        const canvas = await captureElement(pageEl);
+        if (!canvas) continue;
+
         const imgData = canvas.toDataURL('image/png');
-        pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, totalRenderedHeight);
-      } else {
-        // Multi-page slicing: creates Page 1, Page 2 without squishing text!
-        const canvasSliceHeight = (usableHeight / usableWidth) * canvas.width;
-        const totalPdfPages = Math.ceil(canvas.height / canvasSliceHeight);
+        const renderedHeight = (canvas.height * usableWidth) / canvas.width;
 
-        for (let p = 0; p < totalPdfPages; p++) {
-          if (p > 0) pdf.addPage('a4', 'landscape');
-
-          const sY = p * canvasSliceHeight;
-          const sH = Math.min(canvasSliceHeight, canvas.height - sY);
-
-          const pageCanvas = document.createElement('canvas');
-          pageCanvas.width = canvas.width;
-          pageCanvas.height = sH;
-          const ctx = pageCanvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-            ctx.drawImage(canvas, 0, sY, canvas.width, sH, 0, 0, canvas.width, sH);
-
-            const sliceData = pageCanvas.toDataURL('image/png');
-            const sliceRenderedHeight = (sH * usableWidth) / canvas.width;
-            pdf.addImage(sliceData, 'PNG', margin, margin, usableWidth, sliceRenderedHeight);
-          }
+        if (renderedHeight > usableHeight) {
+          const scaledWidth = (usableHeight * canvas.width) / canvas.height;
+          const leftOffset = margin + ((usableWidth - scaledWidth) / 2);
+          pdf.addImage(imgData, 'PNG', leftOffset, margin, scaledWidth, usableHeight);
+        } else {
+          pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, renderedHeight);
         }
       }
 
       pdf.save(`Packwell_${isCorrugation ? 'Corrugation' : 'Dispatch'}_Plan_${dateStr}.pdf`);
-      showToast('📄 Multi-Page PDF Downloaded! WhatsApp par send karein.');
+      showToast('📄 Vertical A4 PDF Downloaded! WhatsApp par send karein.');
     } catch (e) {
       console.error(e);
       showToast('❌ PDF export failed.');
     } finally {
       setIsCapturing(false);
     }
+  };
+
+  // Helper to calculate cumulative customer start index for Page 2
+  const getStartingCustomerIndex = (pIdx: number): number => {
+    if (isCorrugation || pIdx === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < pIdx; i++) {
+      sum += (dispatchPagination.pages[i] || []).length;
+    }
+    return sum;
   };
 
   return (
@@ -318,7 +357,7 @@ export default function PlanningWhatsappModal({
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl max-h-[94vh] flex flex-col shadow-2xl overflow-hidden text-slate-100">
         
-        {/* 1. Modal Top Bar */}
+        {/* Top Header */}
         <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400">
@@ -326,13 +365,18 @@ export default function PlanningWhatsappModal({
             </div>
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
-                WhatsApp Share Center
+                WhatsApp & PDF Export Center
                 <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Exact Screen Boxes
+                  Vertical A4 Format
                 </span>
-                {needsPaging && (
+                {pagesCount > 1 && (
                   <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    2 Pages
+                    {pagesCount} Pages (Customer Intact)
+                  </span>
+                )}
+                {isCompact && (
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    Auto-Adjusted 1 Page
                   </span>
                 )}
               </h2>
@@ -350,57 +394,51 @@ export default function PlanningWhatsappModal({
           </button>
         </div>
 
-        {/* 2. Page View Selector Tabs (Crucial for 2-Page Crystal Clear WhatsApp Sharing) */}
-        {needsPaging && (
+        {/* Page Switcher Tabs */}
+        {pagesCount > 1 && (
           <div className="px-5 py-2.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
-              <button
-                onClick={() => setActiveTab('page-1')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'page-1'
-                    ? 'bg-emerald-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Part 1 (Page 1)</span>
-              </button>
+              {Array.from({ length: pagesCount }).map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setActivePageIndex(idx);
+                    setShowAllPagesView(false);
+                  }}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                    !showAllPagesView && activePageIndex === idx
+                      ? 'bg-emerald-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Part {idx + 1} (Page {idx + 1})</span>
+                </button>
+              ))}
 
               <button
-                onClick={() => setActiveTab('page-2')}
+                onClick={() => setShowAllPagesView(true)}
                 className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'page-2'
-                    ? 'bg-emerald-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Part 2 (Page 2)</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('full')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-                  activeTab === 'full'
+                  showAllPagesView
                     ? 'bg-blue-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                 }`}
               >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Full Sheet (Single)</span>
+                <Eye className="w-3.5 h-3.5" />
+                <span>View Both Pages</span>
               </button>
             </div>
 
             <div className="text-[11px] text-amber-300/90 bg-amber-950/40 border border-amber-800/50 px-3 py-1 rounded-lg flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <span>
-                <strong>Best WhatsApp View:</strong> Part 1 copy karein fir Part 2 copy karein (Mobile par ekdum crystal-clear bada aayega).
+                <strong>Customer Intact Rule:</strong> Ek customer ke items aadhe is page par aur aadhe dusre page par nahi split honge.
               </span>
             </div>
           </div>
         )}
 
-        {/* 3. Action Buttons Toolbar */}
+        {/* Action Toolbar */}
         <div className="px-5 py-3 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -412,18 +450,18 @@ export default function PlanningWhatsappModal({
               <span>
                 {copiedImage 
                   ? 'Copied to Clipboard!' 
-                  : `Copy ${activeTab === 'page-1' ? 'Part 1' : activeTab === 'page-2' ? 'Part 2' : 'Image'} (Ctrl+V in WhatsApp)`}
+                  : `Copy ${pagesCount > 1 ? `Part ${activePageIndex + 1}` : ''} Image (Ctrl+V in WhatsApp)`}
               </span>
             </button>
 
             <button
               onClick={handleDownloadPdf}
               disabled={isCapturing}
-              title="Download Multi-Page PDF to send directly in WhatsApp"
+              title="Download Vertical A4 PDF to send directly in WhatsApp"
               className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>Download PDF (Multi-Page)</span>
+              <span>Download PDF (Vertical A4)</span>
             </button>
 
             <button
@@ -448,262 +486,330 @@ export default function PlanningWhatsappModal({
           </div>
 
           <span className="text-xs text-slate-400 hidden sm:inline italic">
-            Copy karne ke baad WhatsApp me bas <strong>Ctrl + V</strong> dabayein!
+            Copy button dabayein aur WhatsApp Web par <strong>Ctrl + V</strong> karein!
           </span>
         </div>
 
-        {/* 4. Scrollable Preview Area */}
-        <div className="flex-1 overflow-auto p-6 bg-slate-950 flex justify-center">
-          {/* THE CARD RENDERED FOR HTML2CANVAS */}
-          <div 
-            ref={cardRef}
-            className="bg-white text-slate-900 w-[960px] p-6 rounded-xl border-2 border-slate-900 shadow-2xl flex flex-col font-sans"
-            style={{ minWidth: '960px' }}
-          >
-            {/* Brand Header */}
-            <div className="border-b-2 border-slate-900 pb-3 mb-4 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-blue-900 text-white flex items-center justify-center font-black text-sm">
-                    PI
-                  </div>
-                  <div>
-                    <h1 className="text-xl font-black text-blue-950 tracking-tight leading-none">
-                      PACKWELL INDIA
-                    </h1>
-                    <span className="text-[10px] font-bold tracking-widest uppercase text-slate-500">
-                      Corrugated Packaging Manufacturer
+        {/* Scrollable Preview Area */}
+        <div className="flex-1 overflow-auto p-6 bg-slate-950 flex flex-col items-center gap-8">
+          {Array.from({ length: pagesCount }).map((_, pIdx) => {
+            const isVisible = showAllPagesView || activePageIndex === pIdx;
+            const startCustIdx = getStartingCustomerIndex(pIdx);
+
+            const pageDispatchGroups = dispatchPagination.pages[pIdx] || [];
+            const pageCorrugationRows = corrugationPagination.pages[pIdx] || [];
+
+            const pageItemsCount = isCorrugation
+              ? pageCorrugationRows.length
+              : pageDispatchGroups.reduce((acc, g) => acc + (g.items || []).filter(i => i.jobName || i.qty).length, 0);
+
+            const pageBoxQty = isCorrugation
+              ? pageCorrugationRows.reduce((sum, r) => sum + (Number(r.boxQty) || 0), 0)
+              : pageDispatchGroups.reduce((acc, g) => {
+                  return acc + (g.items || []).reduce((itemSum, item) => itemSum + (Number(item.qty) || 0), 0);
+                }, 0);
+
+            const pagePlyQty = isCorrugation
+              ? pageCorrugationRows.reduce((sum, r) => sum + (Number(r.nosOfPly) || 0), 0)
+              : 0;
+
+            return (
+              <div
+                key={pIdx}
+                className={isVisible ? 'block' : 'hidden'}
+                style={{ width: '820px', minWidth: '820px' }}
+              >
+                {pagesCount > 1 && (
+                  <div className="text-xs font-bold text-slate-400 mb-2 flex items-center justify-between px-1">
+                    <span className="uppercase tracking-wider">
+                      PAGE {pIdx + 1} OF {pagesCount} (PORTRAIT A4)
+                    </span>
+                    <span className="text-emerald-400">
+                      {isCorrugation 
+                        ? `${pageCorrugationRows.length} Jobs` 
+                        : `${pageDispatchGroups.length} Customer Parties • ${pageItemsCount} Items`}
                     </span>
                   </div>
-                </div>
-              </div>
-
-              <div className="text-right flex items-center gap-3">
-                {needsPaging && activeTab !== 'full' && (
-                  <span className="text-xs font-black px-2.5 py-1 bg-blue-100 text-blue-950 rounded border border-blue-900 uppercase">
-                    {activeTab === 'page-1' ? 'PAGE 1 OF 2' : 'PAGE 2 OF 2'}
-                  </span>
                 )}
-                <span className="text-sm font-black px-3 py-1 bg-amber-400 text-slate-950 rounded-md border border-slate-900 inline-block uppercase tracking-wider">
-                  {isCorrugation ? 'CORRUGATION PLANNING' : 'DISPATCH PLANNING'}
-                </span>
-                <div className="text-xs font-bold text-slate-700">
-                  DATE: <span className="text-blue-900 text-sm font-black">{formattedDateStr}</span>
-                </div>
-              </div>
-            </div>
 
-            {/* Top Metric Badges */}
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              <div className="bg-blue-50 border border-blue-200 p-2.5 rounded-lg flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-blue-700">
-                    {isCorrugation ? 'Planned Jobs' : 'Parties on Sheet'}
-                  </span>
-                  <span className="text-lg font-black text-blue-950 block">
-                    {isCorrugation 
-                      ? displayedCorrugationRows.length
-                      : displayedDispatchGroups.length}
-                    {needsPaging && activeTab !== 'full' && (
-                      <span className="text-xs font-semibold text-slate-500 ml-1">
-                        (Total: {isCorrugation ? activeCorrugationRows.length : activeDispatchGroups.length})
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <Factory className="w-5 h-5 text-blue-600" />
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-amber-800">
-                    {isCorrugation ? 'Total Nos of Ply' : 'Total Items'}
-                  </span>
-                  <span className="text-lg font-black text-amber-950 block">
-                    {isCorrugation 
-                      ? displayedPlyQty.toLocaleString()
-                      : displayedDispatchGroups.reduce((acc, g) => acc + (g.items || []).filter(i => i.jobName || i.qty).length, 0)}
-                  </span>
-                </div>
-                <Box className="w-5 h-5 text-amber-600" />
-              </div>
-
-              <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-emerald-800">
-                    {activeTab === 'full' ? 'Grand Box Quantity' : 'Page Box Quantity'}
-                  </span>
-                  <span className="text-lg font-black text-emerald-950 block">
-                    {displayedBoxQty.toLocaleString()}
-                    {needsPaging && activeTab !== 'full' && (
-                      <span className="text-xs font-semibold text-slate-500 ml-1">
-                        / {totalBoxQty.toLocaleString()}
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <Truck className="w-5 h-5 text-emerald-600" />
-              </div>
-            </div>
-
-            {/* Table Content */}
-            {isCorrugation ? (
-              /* Corrugation Table */
-              <table className="w-full border-collapse border border-slate-900 text-[11px]">
-                <thead>
-                  <tr className="bg-amber-300 text-slate-950 font-black uppercase text-[10px] text-center border-b-2 border-slate-900">
-                    <th className="border border-slate-900 px-2 py-1.5 w-10">S.No</th>
-                    <th className="border border-slate-900 px-2.5 py-1.5 text-left w-48">Customer Name</th>
-                    <th className="border border-slate-900 px-2.5 py-1.5 text-left">Job Name</th>
-                    <th className="border border-slate-900 px-2 py-1.5 w-16">Reel Size</th>
-                    <th className="border border-slate-900 px-2 py-1.5 w-16">Cut Size</th>
-                    <th className="border border-slate-900 px-1 py-1.5 w-12">UPS</th>
-                    <th className="border border-slate-900 px-1 py-1.5 w-12">Flute</th>
-                    <th className="border border-slate-900 px-2 py-1.5 w-20 text-right">Nos of Ply</th>
-                    <th className="border border-slate-900 px-2 py-1.5 w-20 text-right bg-amber-400">Box Qty</th>
-                    <th className="border border-slate-900 px-2 py-1.5 w-32 text-left">Remarks</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayedCorrugationRows.map((row, idx) => {
-                    const rowNumber = activeTab === 'page-2' ? splitIndex + idx + 1 : idx + 1;
-                    return (
-                      <tr 
-                        key={row.id || idx}
-                        className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}
-                      >
-                        <td className="border border-slate-900 px-2 py-1 text-center font-bold text-slate-800">
-                          {rowNumber}
-                        </td>
-                        <td className="border border-slate-900 px-2.5 py-1 font-bold text-blue-900">
-                          {row.customerName || '-'}
-                        </td>
-                        <td className="border border-slate-900 px-2.5 py-1 font-extrabold text-slate-900">
-                          {row.jobName || '-'}
-                        </td>
-                        <td className="border border-slate-900 px-2 py-1 text-center font-bold font-mono">
-                          {row.reelSize || '-'}
-                        </td>
-                        <td className="border border-slate-900 px-2 py-1 text-center font-bold font-mono">
-                          {row.cutSize || '-'}
-                        </td>
-                        <td className="border border-slate-900 px-1 py-1 text-center font-bold">
-                          {row.ups || '-'}
-                        </td>
-                        <td className="border border-slate-900 px-1 py-1 text-center font-black text-blue-800">
-                          {row.fluteType || '-'}
-                        </td>
-                        <td className="border border-slate-900 px-2 py-1 text-right font-black font-mono text-slate-900">
-                          {(Number(row.nosOfPly) || 0).toLocaleString()}
-                        </td>
-                        <td className="border border-slate-900 px-2 py-1 text-right font-black font-mono text-emerald-900 bg-amber-100">
-                          {(Number(row.boxQty) || 0).toLocaleString()}
-                        </td>
-                        <td className="border border-slate-900 px-2 py-1 text-slate-700 italic">
-                          {row.remarks || '-'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-slate-200 border-t-2 border-slate-900 font-black text-[11px]">
-                    <td colSpan={7} className="border border-slate-900 px-3 py-1.5 text-right uppercase">
-                      {activeTab === 'full' ? 'GRAND TOTAL:' : 'PAGE SUB-TOTAL:'}
-                    </td>
-                    <td className="border border-slate-900 px-2 py-1.5 text-right font-mono text-blue-950 font-black">
-                      {displayedPlyQty.toLocaleString()}
-                    </td>
-                    <td className="border border-slate-900 px-2 py-1.5 text-right font-mono text-emerald-950 font-black bg-amber-300">
-                      {displayedBoxQty.toLocaleString()}
-                    </td>
-                    <td className="border border-slate-900 px-2 py-1.5"></td>
-                  </tr>
-                </tfoot>
-              </table>
-            ) : (
-              /* Dispatch Planning Groups Table */
-              <div className="space-y-3.5">
-                {displayedDispatchGroups.map((grp, gIdx) => {
-                  const groupNumber = activeTab === 'page-2' ? splitIndex + gIdx + 1 : gIdx + 1;
-                  const groupTotal = (grp.items || []).reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
-
-                  return (
-                    <div key={grp.id || gIdx} className="border-2 border-slate-900 rounded-lg overflow-hidden">
-                      <div className="bg-slate-900 text-white px-3.5 py-2 flex justify-between items-center text-xs font-black">
-                        <div className="flex items-center gap-2">
-                          <span className="w-5 h-5 rounded-full bg-amber-400 text-slate-950 text-[11px] font-black flex items-center justify-center">
-                            {groupNumber}
-                          </span>
-                          <span className="text-sm tracking-wide">{grp.customerName || 'PARTY'}</span>
-                        </div>
-                        <div className="flex items-center gap-4 text-xs font-bold">
-                          <span className="text-amber-300">
-                            Party Total: <strong className="text-white text-sm font-black font-mono">{groupTotal.toLocaleString()}</strong> Boxes
-                          </span>
-                          <span className="text-[10px] text-slate-400 font-normal">
-                            Date: {grp.dispatchDate || formattedDateStr}
-                          </span>
+                {/* THE ACTUAL VERTICAL A4 CARD RENDERED FOR HTML2CANVAS */}
+                <div
+                  ref={(el) => { pageRefs.current[pIdx] = el; }}
+                  className={`bg-white text-slate-900 w-[820px] min-h-[1140px] p-6 rounded-xl border-2 border-slate-900 shadow-2xl flex flex-col justify-between font-sans ${
+                    isCompact ? 'text-[10px]' : 'text-[11px]'
+                  }`}
+                  style={{ minWidth: '820px', minHeight: '1140px' }}
+                >
+                  {/* Top Content */}
+                  <div>
+                    {/* Brand Header */}
+                    <div className="border-b-2 border-slate-900 pb-3 mb-3 flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-blue-900 text-white flex items-center justify-center font-black text-sm">
+                            PI
+                          </div>
+                          <div>
+                            <h1 className="text-xl font-black text-blue-950 tracking-tight leading-none">
+                              PACKWELL INDIA
+                            </h1>
+                            <span className="text-[10px] font-bold tracking-widest uppercase text-slate-500">
+                              Corrugated Packaging Manufacturer
+                            </span>
+                          </div>
                         </div>
                       </div>
 
-                      <table className="w-full border-collapse text-[11px]">
+                      <div className="text-right flex items-center gap-2.5">
+                        {pagesCount > 1 && (
+                          <span className="text-xs font-black px-2 py-1 bg-blue-100 text-blue-950 rounded border border-blue-900 uppercase">
+                            PAGE {pIdx + 1} OF {pagesCount}
+                          </span>
+                        )}
+                        <span className="text-sm font-black px-3 py-1 bg-amber-400 text-slate-950 rounded-md border border-slate-900 inline-block uppercase tracking-wider">
+                          {isCorrugation ? 'CORRUGATION PLANNING' : 'DISPATCH PLANNING'}
+                        </span>
+                        <div className="text-xs font-bold text-slate-700">
+                          DATE: <span className="text-blue-900 text-sm font-black">{formattedDateStr}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Metric Badges */}
+                    <div className="grid grid-cols-3 gap-2.5 mb-3">
+                      <div className="bg-blue-50 border border-blue-200 p-2 rounded-lg flex items-center justify-between">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-blue-700">
+                            {isCorrugation ? 'Planned Jobs on Page' : 'Parties on Page'}
+                          </span>
+                          <span className="text-base font-black text-blue-950 block">
+                            {isCorrugation ? pageCorrugationRows.length : pageDispatchGroups.length}
+                            {pagesCount > 1 && (
+                              <span className="text-[10px] font-semibold text-slate-500 ml-1">
+                                (Total: {isCorrugation ? corrugationRows.filter(r => r.customerName || r.jobName).length : dispatchGroups.length})
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <Factory className="w-4 h-4 text-blue-600" />
+                      </div>
+
+                      <div className="bg-amber-50 border border-amber-200 p-2 rounded-lg flex items-center justify-between">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-amber-800">
+                            {isCorrugation ? 'Nos of Ply on Page' : 'Items on Page'}
+                          </span>
+                          <span className="text-base font-black text-amber-950 block">
+                            {isCorrugation ? pagePlyQty.toLocaleString() : pageItemsCount}
+                          </span>
+                        </div>
+                        <Box className="w-4 h-4 text-amber-600" />
+                      </div>
+
+                      <div className="bg-emerald-50 border border-emerald-200 p-2 rounded-lg flex items-center justify-between">
+                        <div>
+                          <span className="text-[9px] font-bold uppercase text-emerald-800">
+                            {pagesCount > 1 ? `Page ${pIdx + 1} Box Qty` : 'Total Box Quantity'}
+                          </span>
+                          <span className="text-base font-black text-emerald-950 block">
+                            {pageBoxQty.toLocaleString()}
+                            {pagesCount > 1 && (
+                              <span className="text-[10px] font-semibold text-slate-500 ml-1">
+                                / {totalBoxQty.toLocaleString()}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <Truck className="w-4 h-4 text-emerald-600" />
+                      </div>
+                    </div>
+
+                    {/* Table / Customer Groups */}
+                    {isCorrugation ? (
+                      /* Corrugation Table in Portrait */
+                      <table className="w-full border-collapse border border-slate-900 text-[10px]">
                         <thead>
-                          <tr className="bg-slate-100 font-bold border-b border-slate-900 text-[10px] text-slate-800">
-                            <th className="border-r border-slate-900 px-2 py-1 w-10 text-center">#</th>
-                            <th className="border-r border-slate-900 px-3 py-1 text-left">Job / Item Name</th>
-                            <th className="border-r border-slate-900 px-3 py-1 w-32 text-right bg-amber-100 font-black">
-                              Dispatch Qty
-                            </th>
-                            <th className="px-3 py-1 text-left">Remarks</th>
+                          <tr className="bg-amber-300 text-slate-950 font-black uppercase text-[9px] text-center border-b-2 border-slate-900">
+                            <th className="border border-slate-900 px-1.5 py-1 w-8">#</th>
+                            <th className="border border-slate-900 px-2 py-1 text-left w-40">Customer Name</th>
+                            <th className="border border-slate-900 px-2 py-1 text-left">Job Name</th>
+                            <th className="border border-slate-900 px-1 py-1 w-14">Reel</th>
+                            <th className="border border-slate-900 px-1 py-1 w-14">Cut</th>
+                            <th className="border border-slate-900 px-1 py-1 w-10">UPS</th>
+                            <th className="border border-slate-900 px-1 py-1 w-10">Flute</th>
+                            <th className="border border-slate-900 px-1.5 py-1 w-16 text-right">Nos Ply</th>
+                            <th className="border border-slate-900 px-1.5 py-1 w-16 text-right bg-amber-400">Box Qty</th>
+                            <th className="border border-slate-900 px-1.5 py-1 w-24 text-left">Remarks</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {(grp.items || [])
-                            .filter(i => i.jobName || i.qty)
-                            .map((item, iIdx) => (
-                              <tr key={item.id || iIdx} className={iIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                                <td className="border-r border-t border-slate-300 px-2 py-1 text-center font-bold">
-                                  {iIdx + 1}
+                          {pageCorrugationRows.map((row, rIdx) => {
+                            const globalIdx = (pIdx * 18) + rIdx + 1;
+                            return (
+                              <tr 
+                                key={row.id || rIdx}
+                                className={rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}
+                              >
+                                <td className="border border-slate-900 px-1 py-0.5 text-center font-bold text-slate-800">
+                                  {globalIdx}
                                 </td>
-                                <td className="border-r border-t border-slate-300 px-3 py-1 font-bold text-slate-900">
-                                  {item.jobName || '-'}
+                                <td className="border border-slate-900 px-2 py-0.5 font-bold text-blue-900 truncate max-w-[150px]">
+                                  {row.customerName || '-'}
                                 </td>
-                                <td className="border-r border-t border-slate-300 px-3 py-1 text-right font-black font-mono text-emerald-950 bg-amber-50">
-                                  {(Number(item.qty) || 0).toLocaleString()}
+                                <td className="border border-slate-900 px-2 py-0.5 font-extrabold text-slate-900 truncate max-w-[180px]">
+                                  {row.jobName || '-'}
                                 </td>
-                                <td className="border-t border-slate-300 px-3 py-1 text-slate-600 italic">
-                                  {(item as any).remarks || '-'}
+                                <td className="border border-slate-900 px-1 py-0.5 text-center font-bold font-mono">
+                                  {row.reelSize || '-'}
+                                </td>
+                                <td className="border border-slate-900 px-1 py-0.5 text-center font-bold font-mono">
+                                  {row.cutSize || '-'}
+                                </td>
+                                <td className="border border-slate-900 px-1 py-0.5 text-center font-bold">
+                                  {row.ups || '-'}
+                                </td>
+                                <td className="border border-slate-900 px-1 py-0.5 text-center font-black text-blue-800">
+                                  {row.fluteType || '-'}
+                                </td>
+                                <td className="border border-slate-900 px-1.5 py-0.5 text-right font-black font-mono text-slate-900">
+                                  {(Number(row.nosOfPly) || 0).toLocaleString()}
+                                </td>
+                                <td className="border border-slate-900 px-1.5 py-0.5 text-right font-black font-mono text-emerald-900 bg-amber-100">
+                                  {(Number(row.boxQty) || 0).toLocaleString()}
+                                </td>
+                                <td className="border border-slate-900 px-1.5 py-0.5 text-slate-700 italic truncate max-w-[100px]">
+                                  {row.remarks || '-'}
                                 </td>
                               </tr>
-                            ))}
+                            );
+                          })}
                         </tbody>
+                        <tfoot>
+                          <tr className="bg-slate-200 border-t-2 border-slate-900 font-black text-[10px]">
+                            <td colSpan={7} className="border border-slate-900 px-2 py-1 text-right uppercase">
+                              {pagesCount > 1 ? `PAGE ${pIdx + 1} SUB-TOTAL:` : 'GRAND TOTAL:'}
+                            </td>
+                            <td className="border border-slate-900 px-1.5 py-1 text-right font-mono text-blue-950 font-black">
+                              {pagePlyQty.toLocaleString()}
+                            </td>
+                            <td className="border border-slate-900 px-1.5 py-1 text-right font-mono text-emerald-950 font-black bg-amber-300">
+                              {pageBoxQty.toLocaleString()}
+                            </td>
+                            <td className="border border-slate-900 px-1.5 py-1"></td>
+                          </tr>
+                        </tfoot>
                       </table>
-                    </div>
-                  );
-                })}
+                    ) : (
+                      /* Dispatch Planning - Intact Customer Groups */
+                      <div className={isCompact ? 'space-y-2' : 'space-y-2.5'}>
+                        {pageDispatchGroups.map((grp, gIdx) => {
+                          const customerNumber = startCustIdx + gIdx + 1;
+                          const partyItems = (grp.items || []).filter(i => (i.jobName && i.jobName.trim().length > 0) || i.qty);
+                          const partyTotal = partyItems.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
 
-                {/* Dispatch Bottom Total */}
-                <div className="bg-slate-100 border-2 border-slate-900 rounded-lg p-2.5 flex items-center justify-between font-black text-xs text-slate-900">
-                  <span className="uppercase tracking-wider">
-                    {activeTab === 'full' ? 'Grand Total Dispatch Boxes:' : `Part ${activeTab === 'page-1' ? '1' : '2'} Dispatch Boxes:`}
-                  </span>
-                  <span className="text-base font-black font-mono text-emerald-950 px-3 py-0.5 rounded bg-amber-300 border border-slate-900">
-                    {displayedBoxQty.toLocaleString()} Boxes
-                  </span>
+                          return (
+                            <div 
+                              key={grp.id || gIdx} 
+                              className="border-2 border-slate-900 rounded-lg overflow-hidden shadow-2xs"
+                            >
+                              {/* Party Header Bar */}
+                              <div className={`bg-slate-900 text-white flex justify-between items-center font-black ${
+                                isCompact ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'
+                              }`}>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-4 h-4 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black flex items-center justify-center shrink-0">
+                                    {customerNumber}
+                                  </span>
+                                  <span className="tracking-wide uppercase font-black text-white">
+                                    {grp.customerName || 'CUSTOMER PARTY'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 text-[11px] font-bold">
+                                  <span className="text-amber-300">
+                                    Total: <strong className="text-white font-black font-mono">{partyTotal.toLocaleString()}</strong> Boxes
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 font-normal">
+                                    {grp.dispatchDate || formattedDateStr}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Party Items Table */}
+                              <table className="w-full border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-100 font-bold border-b border-slate-900 text-[9px] text-slate-800">
+                                    <th className="border-r border-slate-900 px-2 py-0.5 w-8 text-center">#</th>
+                                    <th className="border-r border-slate-900 px-2.5 py-0.5 text-left">Job / Item Name</th>
+                                    <th className="border-r border-slate-900 px-2.5 py-0.5 w-28 text-right bg-amber-100 font-black">
+                                      Dispatch Qty
+                                    </th>
+                                    <th className="px-2.5 py-0.5 w-44 text-left">Remarks</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {partyItems.map((item, iIdx) => (
+                                    <tr 
+                                      key={item.id || iIdx} 
+                                      className={iIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'}
+                                    >
+                                      <td className="border-r border-t border-slate-300 px-2 py-1 text-center font-bold text-slate-700 text-[10px]">
+                                        {iIdx + 1}
+                                      </td>
+                                      <td className="border-r border-t border-slate-300 px-2.5 py-1 font-bold text-slate-900 text-[11px]">
+                                        {item.jobName || '-'}
+                                      </td>
+                                      <td className="border-r border-t border-slate-300 px-2.5 py-1 text-right font-black font-mono text-emerald-950 bg-amber-50 text-[11px]">
+                                        {(Number(item.qty) || 0).toLocaleString()}
+                                      </td>
+                                      <td className="border-t border-slate-300 px-2.5 py-1 text-slate-600 italic text-[10px]">
+                                        {(item as any).remarks || '-'}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bottom Footer & Page Totals */}
+                  <div className="mt-4 pt-2">
+                    {/* Page Subtotal / Grand Total Banner */}
+                    <div className="bg-slate-100 border-2 border-slate-900 rounded-lg p-2 flex items-center justify-between font-black text-xs text-slate-900 mb-2">
+                      <span className="uppercase tracking-wider">
+                        {pagesCount > 1 ? `PAGE ${pIdx + 1} TOTAL BOXES:` : 'GRAND TOTAL DISPATCH BOXES:'}
+                      </span>
+                      <span className="text-sm font-black font-mono text-emerald-950 px-2.5 py-0.5 rounded bg-amber-300 border border-slate-900">
+                        {pageBoxQty.toLocaleString()} Boxes
+                      </span>
+                    </div>
+
+                    {pagesCount > 1 && pIdx === pagesCount - 1 && (
+                      <div className="bg-slate-900 text-white rounded-lg p-2 flex items-center justify-between font-black text-xs mb-2">
+                        <span className="uppercase tracking-wider text-amber-300">
+                          GRAND TOTAL (ALL PAGES):
+                        </span>
+                        <span className="text-sm font-black font-mono text-white px-2.5 py-0.5 rounded bg-emerald-600">
+                          {totalBoxQty.toLocaleString()} Boxes
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Footer Credits */}
+                    <div className="border-t border-slate-400 pt-1.5 flex items-center justify-between text-[9px] text-slate-500 font-medium">
+                      <span>Packwell ERP Daily Production Planning • Vertical A4 Customer-Intact Card</span>
+                      <span>
+                        Page {pIdx + 1} of {pagesCount} • Generated: {new Date().toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
-
-            {/* Footer */}
-            <div className="mt-4 pt-2 border-t border-slate-400 flex items-center justify-between text-[10px] text-slate-500 font-medium">
-              <span>Packwell ERP Daily Planning System • High-Resolution Dispatch Card</span>
-              <span>
-                {needsPaging && activeTab !== 'full' ? `Showing ${activeTab === 'page-1' ? 'Page 1' : 'Page 2'} of 2 • ` : ''}
-                Generated: {new Date().toLocaleString('en-IN')}
-              </span>
-            </div>
-          </div>
+            );
+          })}
         </div>
       </div>
     </div>
