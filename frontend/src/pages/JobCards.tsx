@@ -16,6 +16,7 @@ import html2canvas from 'html2canvas';
 import IssueJobCardModal from './job-cards/IssueJobCardModal';
 import ReelAllocationWizard from './job-cards/ReelAllocationWizard';
 import ExportButtons from '../components/ExportButtons';
+import { calculateLayerWeight } from '../lib/corrugationUtils';
 
 export const isJobCardAllocationComplete = (jc: any) => {
   if (!jc || !jc.productSnapshot || !jc.productSnapshot.layers) return false;
@@ -733,17 +734,18 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
     const noOfPaper = Math.ceil(orderQtyVal / ups);
     let totalWeight = 0;
     
-    const layers = (activeProductData.layers || []).map((layer: any) => {
+    const layers = (activeProductData.layers || []).map((layer: any, idx: number) => {
       let gsm = Number(layer.gsm) || 0;
       let layerWeight = 0;
       if (gsm > 0 && activeProductData.reelSize > 0 && activeProductData.cutSize > 0) {
-        let eff_gsm = gsm;
-        const lName = (layer.layerName || '').toLowerCase().trim();
-        if (lName.includes('flute') || ['p2', 'p4', 'p6'].includes(lName)) {
-          eff_gsm = gsm * 1.4;
-        }
-        layerWeight = (activeProductData.reelSize * activeProductData.cutSize * eff_gsm) / 3100 / 500 * noOfPaper;
-        layerWeight = Math.round(layerWeight * 100) / 100;
+        layerWeight = calculateLayerWeight(
+          activeProductData.reelSize,
+          activeProductData.cutSize,
+          gsm,
+          noOfPaper,
+          layer,
+          idx
+        );
         totalWeight += layerWeight;
       }
       const cleanLayer = { ...layer };
@@ -752,7 +754,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
         delete cleanLayer.allocatedReelWeight;
         delete cleanLayer.allocatedReels;
       }
-      return { ...cleanLayer, calculatedWeight: layerWeight };
+      return { ...cleanLayer, calculatedWeight: layerWeight, requiredWeight: layerWeight };
     });
     
     totalWeight = Math.round(totalWeight * 100) / 100;

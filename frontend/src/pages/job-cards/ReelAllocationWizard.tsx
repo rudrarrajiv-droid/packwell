@@ -4,6 +4,8 @@ import { getReels } from '../../lib/supabase/reelService';
 import { Zap, CircleDashed, CheckCircle2, AlertTriangle, Search, X, Plus, Trash2, ShieldAlert } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { isJobCardAllocationComplete } from '../JobCards';
+import { getConcurrentPartnerIndices, getLayerStandDescription } from '../../lib/corrugatorPairing';
+import { calculateLayerWeight } from '../../lib/corrugationUtils';
 
 interface ReelAllocationWizardProps {
   jobCard: any;
@@ -52,7 +54,7 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
   const selfReservedWeights = useMemo(() => {
     const reserved: Record<string, number> = {};
     // Only PENDING job cards hold active reservations in the backend
-    if (jobCard && jobCard.status === 'PENDING' && jobCard.productSnapshot?.layers) {
+    if (jobCard && ['PENDING', 'PENDING APPROVAL', 'IN_PROCESS'].includes(jobCard.status) && jobCard.productSnapshot?.layers) {
       jobCard.productSnapshot.layers.forEach((layer: any) => {
         if (layer.allocatedReels && Array.isArray(layer.allocatedReels)) {
           layer.allocatedReels.forEach((allocReel: any) => {
@@ -78,18 +80,20 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
       let gsm = Number(layer.gsm) || 0;
       let reqWeight = 0;
       if (gsm > 0 && snapshot.reelSize > 0 && snapshot.cutSize > 0) {
-        let eff_gsm = gsm;
-        const lName = (layer.layerName || '').toLowerCase().trim();
-        if (lName.includes('flute') || ['p2', 'p4', 'p6'].includes(lName)) {
-          eff_gsm = gsm * 1.4;
-        }
-        reqWeight = (snapshot.reelSize * snapshot.cutSize * eff_gsm) / 3100 / 500 * noOfPaper;
-        reqWeight = Math.round(reqWeight * 100) / 100;
+        reqWeight = calculateLayerWeight(
+          snapshot.reelSize,
+          snapshot.cutSize,
+          gsm,
+          noOfPaper,
+          layer,
+          idx
+        );
       }
       return {
         ...layer,
         originalIndex: idx,
         requiredWeight: reqWeight,
+        calculatedWeight: reqWeight,
         reqSize: snapshot.reelSize
       };
     }).filter((l: any) => l.requiredWeight > 0);
@@ -117,17 +121,16 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
       const reqGSM = Number(layer.gsm);
       const reqType = (layer.paperType || '').toLowerCase();
 
-      // Machine Concurrency Rule (Layer 1 (P2) cannot share physical reel with Layer 0 (Top))
+      // Machine Concurrency Rule: Paired corrugator stands cannot share a physical reel
+      const totalLayers = jobCard?.productSnapshot?.layers?.length || layerRequirements.length || 0;
+      const partnerIndices = getConcurrentPartnerIndices(layer.originalIndex, totalLayers);
       const restrictedReelIds = new Set<string>();
-      const lName = (layer.layerName || '').toLowerCase().trim();
-      if (layer.originalIndex === 1 || lName.includes('p2')) {
-         const prevAlloc = initialAllocations.find(a => a.layerIndex === 0);
-         if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
-      }
-      if (layer.originalIndex === 3 || lName.includes('p4')) {
-         const prevAlloc = initialAllocations.find(a => a.layerIndex === 2);
-         if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
-      }
+      partnerIndices.forEach(pIdx => {
+        const partnerAlloc = initialAllocations.find(a => a.layerIndex === pIdx);
+        if (partnerAlloc) {
+          partnerAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
+        }
+      });
 
       // Define match passes: First Exact, then Replacements
       let matchPasses = [{ bf: reqBF, gsm: reqGSM }];
@@ -413,22 +416,23 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
 
     const uiReserved: Record<string, number> = {};
     allocations.forEach(a => {
-      a.reels.forEach((r: any) => {
-        uiReserved[r.reelId] = (uiReserved[r.reelId] || 0) + r.allocatedWeight;
-      });
+      if (a.layerIndex !== manualLayerIndex) {
+        a.reels.forEach((r: any) => {
+          uiReserved[r.reelId] = (uiReserved[r.reelId] || 0) + r.allocatedWeight;
+        });
+      }
     });
 
     // Machine Concurrency Restriction for Manual Allocation
+    const totalLayers = jobCard?.productSnapshot?.layers?.length || layerRequirements.length || 0;
+    const partnerIndices = getConcurrentPartnerIndices(manualLayerIndex, totalLayers);
     const restrictedReelIds = new Set<string>();
-    const lName = (reqLayer.layerName || '').toLowerCase().trim();
-    if (manualLayerIndex === 1 || lName.includes('p2')) {
-       const prevAlloc = allocations.find(a => a.layerIndex === 0);
-       if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
-    }
-    if (manualLayerIndex === 3 || lName.includes('p4')) {
-       const prevAlloc = allocations.find(a => a.layerIndex === 2);
-       if (prevAlloc) prevAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
-    }
+    partnerIndices.forEach(pIdx => {
+      const partnerAlloc = allocations.find(a => a.layerIndex === pIdx);
+      if (partnerAlloc) {
+        partnerAlloc.reels.forEach((r: any) => restrictedReelIds.add(r.reelId));
+      }
+    });
 
     let results = rawReels
       .map(r => {
@@ -436,9 +440,10 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
         return { ...r, availableAllocationWeight: avail };
       })
       .filter(r => {
+         // STRICT Corrugator Rule: Under NO circumstances can a reel be mounted on two concurrent stands
+         if (restrictedReelIds.has(r.id)) return false;
          // Hide zero balance reels from manual search unless explicitly searching by reel number
          if (manualSearch.reelNumber && String(r.reelNumber).toLowerCase().includes(manualSearch.reelNumber.toLowerCase())) return true;
-         if (restrictedReelIds.has(r.id)) return false; // Prevent concurrent machine selection
          return r.availableAllocationWeight > 0;
       })
       .map(r => {
@@ -563,7 +568,12 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
                 <div key={layer.originalIndex} className={cn("p-4 rounded-lg border shadow-sm bg-white", isComplete ? "border-green-300" : "border-red-300")}>
                   <div className="flex justify-between items-center mb-4 pb-3 border-b border-gray-100">
                     <div>
-                      <h3 className="font-bold text-lg">{layer.layerName} Requirements</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-bold text-lg">{layer.layerName} Requirements</h3>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                          {getLayerStandDescription(layer.originalIndex, layerRequirements.length)}
+                        </span>
+                      </div>
                       <p className="text-sm text-muted-foreground uppercase tracking-wider font-semibold">
                         {layer.paperType} | Size: {layer.reqSize}" | BF: {layer.bf} | GSM: {layer.gsm}
                       </p>

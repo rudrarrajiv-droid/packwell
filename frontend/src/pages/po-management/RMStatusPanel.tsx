@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProducts } from '../../lib/supabase/productService';
 import { getReels } from '../../lib/supabase/reelService';
+import { calculateLayerWeight } from '../../lib/corrugationUtils';
+import { getConcurrentPartnerIndices, getLayerStandDescription } from '../../lib/corrugatorPairing';
 import { PackageSearch, CheckCircle2, AlertTriangle, ShoppingCart, Package2 } from 'lucide-react';
 
 interface Props {
@@ -25,18 +27,17 @@ function calcLayerWeight(
   gsm: number,
   layerName: string,
   qty: number,
-  ups: number
+  ups: number,
+  layerIndex?: number
 ): number {
   const noOfPaper = Math.ceil(qty / (ups > 0 ? ups : 1));
-  let effGsm = gsm;
-  const lName = (layerName || '').toLowerCase().trim();
-  if (lName.includes('flute') || ['p2', 'p4', 'p6'].includes(lName)) effGsm = gsm * 1.4;
-  const w = (reelSize * cutSize * effGsm) / 3100 / 500 * noOfPaper;
-  return Math.round(w * 100) / 100;
+  return calculateLayerWeight(reelSize, cutSize, gsm, noOfPaper, { layerName }, layerIndex);
 }
 
 type LayerStatus = {
   layerName: string;
+  standDescription?: string;
+  note?: string;
   paperType: string;
   bf: string;
   gsm: number;
@@ -71,17 +72,27 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
     const ups = Number(product.ups) > 0 ? Number(product.ups) : 1;
     const reelSize = Number(product.reelSize) || 0;
     const cutSize = Number(product.cutSize) || 0;
+    const totalLayers = product.layers.length;
 
-    return product.layers.map((layer: any) => {
+    // Track virtual available balance sequentially across layers
+    const virtualReels = reels.map((r: any) => ({
+      ...r,
+      virtualBalance: Math.max(0, (Number(r.currentBalance) || 0) - (Number(r.activeReservedWeight) || 0))
+    }));
+
+    const allocatedReelIdsByLayer: Record<number, Set<string>> = {};
+
+    return product.layers.map((layer: any, idx: number) => {
       const gsm = Number(layer.gsm) || 0;
       const bf = String(layer.bf || '').trim();
       const paperType = normalizePaperType(layer.paperType || '');
       const layerName = layer.layerName || '';
+      const standDescription = getLayerStandDescription(idx, totalLayers);
 
       // No spec → cannot check
       if (!reelSize || !cutSize || !gsm) {
         return {
-          layerName, paperType, bf, gsm, reelSize,
+          layerName, standDescription, paperType, bf, gsm, reelSize,
           requiredKg: 0, availableKg: 0,
           matchedExact: false, matchedFallback: false,
           shortKg: 0, isOrdered: false, status: 'NO_SPEC' as const,
@@ -90,55 +101,95 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
 
       const requiredKg = calcLayerWeight(reelSize, cutSize, gsm, layerName, orderQty, ups);
 
-      // Find matching reels
-      let matchedReels = reels.filter((r: any) => {
+      // Concurrent corrugator stand rule: cannot share reel with paired stand
+      const partnerIndices = getConcurrentPartnerIndices(idx, totalLayers);
+      const restrictedReelIds = new Set<string>();
+      partnerIndices.forEach(pIdx => {
+        const partnerSet = allocatedReelIdsByLayer[pIdx];
+        if (partnerSet) {
+          partnerSet.forEach(id => restrictedReelIds.add(id));
+        }
+      });
+
+      // Find candidate reels (Exact size first)
+      let candidateReels = virtualReels.filter((r: any) => {
+        if (r.virtualBalance <= 0) return false;
+        const rId = r.id || r.firestore_document_id;
+        if (restrictedReelIds.has(rId)) return false;
+
         const rSize = Number(r.reelSize) || 0;
         const rGsm = String(r.gsm || '').trim();
         const rBf = String(r.bf || '').trim();
         const rPaperType = normalizePaperType(r.paperType || '');
 
-        const gsmMatch = rGsm === String(gsm);
+        const gsmMatch = rGsm === String(gsm) || 
+          (gsm === 220 && rGsm === '230') || (gsm === 230 && rGsm === '220') ||
+          (gsm === 100 && rGsm === '120') || (gsm === 120 && rGsm === '100');
         const bfMatch = !bf || rBf === bf;
         const ptMatch = !paperType || rPaperType === paperType;
         const sizeMatch = rSize === reelSize;
 
-        return gsmMatch && bfMatch && ptMatch && sizeMatch && Math.max(0, (Number(r.currentBalance) || 0) - (Number(r.activeReservedWeight) || 0)) > 0;
+        return gsmMatch && bfMatch && ptMatch && sizeMatch;
       });
 
-      let matchedExact = matchedReels.length > 0;
+      let matchedExact = candidateReels.length > 0;
       let matchedFallback = false;
 
-      // Fallback: +1 inch on reel size
-      if (!matchedExact) {
-        matchedReels = reels.filter((r: any) => {
+      // Fallback: +1 inch on reel size if not enough exact weight
+      const exactAvail = candidateReels.reduce((sum: number, r: any) => sum + r.virtualBalance, 0);
+      if (exactAvail < requiredKg) {
+        const fallbackCandidates = virtualReels.filter((r: any) => {
+          if (r.virtualBalance <= 0) return false;
+          const rId = r.id || r.firestore_document_id;
+          if (restrictedReelIds.has(rId)) return false;
+
           const rSize = Number(r.reelSize) || 0;
           const rGsm = String(r.gsm || '').trim();
           const rBf = String(r.bf || '').trim();
           const rPaperType = normalizePaperType(r.paperType || '');
 
-          const gsmMatch = rGsm === String(gsm);
+          const gsmMatch = rGsm === String(gsm) || 
+            (gsm === 220 && rGsm === '230') || (gsm === 230 && rGsm === '220') ||
+            (gsm === 100 && rGsm === '120') || (gsm === 120 && rGsm === '100');
           const bfMatch = !bf || rBf === bf;
           const ptMatch = !paperType || rPaperType === paperType;
-          const sizeMatch = rSize >= reelSize && rSize <= reelSize + 1;
+          const sizeMatch = rSize > reelSize && rSize <= reelSize + 1;
 
-          return gsmMatch && bfMatch && ptMatch && sizeMatch && Math.max(0, (Number(r.currentBalance) || 0) - (Number(r.activeReservedWeight) || 0)) > 0;
+          return gsmMatch && bfMatch && ptMatch && sizeMatch;
         });
-        matchedFallback = matchedReels.length > 0;
+
+        if (fallbackCandidates.length > 0) {
+          candidateReels = [...candidateReels, ...fallbackCandidates];
+          matchedFallback = true;
+        }
       }
 
-      const availableKg = matchedReels.reduce((sum: number, r: any) => sum + Math.max(0, (Number(r.currentBalance) || 0) - (Number(r.activeReservedWeight) || 0)), 0);
+      const availableKg = candidateReels.reduce((sum: number, r: any) => sum + r.virtualBalance, 0);
       const shortKg = Math.max(0, requiredKg - availableKg);
 
-      // Check if material is "ordered" — reels exist with isOrdered flag or status = 'ORDERED'
-      const isOrdered = matchedReels.some((r: any) => r.isOrdered || r.status === 'ORDERED');
+      // Simulate sequential consumption so subsequent layers and paired stands reflect real availability
+      let remainingToConsume = requiredKg;
+      allocatedReelIdsByLayer[idx] = new Set<string>();
+
+      for (const cand of candidateReels) {
+        if (remainingToConsume <= 0) break;
+        const take = Math.min(remainingToConsume, cand.virtualBalance);
+        cand.virtualBalance -= take;
+        remainingToConsume -= take;
+        const rId = cand.id || cand.firestore_document_id;
+        if (rId) allocatedReelIdsByLayer[idx].add(rId);
+      }
+
+      // Check if material is "ordered"
+      const isOrdered = candidateReels.some((r: any) => r.isOrdered || r.status === 'ORDERED');
 
       let status: LayerStatus['status'];
-      if (shortKg === 0) status = 'OK';
+      if (shortKg <= 0.1) status = 'OK';
       else if (isOrdered) status = 'ORDERED';
       else status = 'SHORT';
 
       return {
-        layerName, paperType, bf, gsm, reelSize,
+        layerName, standDescription, paperType, bf, gsm, reelSize,
         requiredKg, availableKg: Math.round(availableKg * 100) / 100,
         matchedExact, matchedFallback,
         shortKg: Math.round(shortKg * 100) / 100,
@@ -190,7 +241,12 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
             layer.status === 'ORDERED' ? 'bg-blue-50/70' :
             'bg-gray-50/60'
           }`}>
-            <span className="font-bold text-foreground min-w-[80px]">{layer.layerName}</span>
+            <div className="flex items-center gap-1.5 min-w-[170px]">
+              <span className="font-bold text-foreground">{layer.layerName}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                {layer.standDescription}
+              </span>
+            </div>
             <span className="text-muted-foreground">
               {layer.paperType && <span className="font-semibold text-foreground">{layer.paperType} </span>}
               {layer.reelSize}"/{layer.gsm}GSM

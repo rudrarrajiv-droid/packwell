@@ -528,6 +528,12 @@ export const updateJobCard = async (
   user: string = 'System',
   options?: UpdateJobCardOptions
 ): Promise<boolean> => {
+  // If status or allocations are changing, use transactional RPC to maintain reel reservations correctly
+  if (updates.status !== undefined || updates.productSnapshot !== undefined) {
+    await executeJobCardTransaction(id, updates, null, user);
+    return true;
+  }
+
   const existing = await getRawJobCardRow(id);
   const { updatePayload } = buildJobCardUpdatePayload(existing, updates, user, options);
 

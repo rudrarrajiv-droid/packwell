@@ -1,10 +1,27 @@
 import React from 'react';
+import { calculateLayerWeight } from '../../lib/corrugationUtils';
 
 export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
   if (!jobCard) return null;
   const product = jobCard.productSnapshot;
   const loggedInUser = jobCard.createdBy || 'System';
   const roundWeight = (w: any) => Math.round(Number(w) || 0);
+
+  const getLayerWeight = (layer: any, idx: number) => {
+    const reelSize = Number(product?.reelSize || product?.reel_size || 0);
+    const cutSize = Number(product?.cutSize || product?.cut_size || 0);
+    const ups = Number(product?.ups || 1) || 1;
+    const noOfPaper = Math.ceil(Number(jobCard.orderQty || 0) / ups);
+    const gsm = Number(layer.gsm) || 0;
+    if (reelSize > 0 && cutSize > 0 && gsm > 0 && noOfPaper > 0) {
+      return calculateLayerWeight(reelSize, cutSize, gsm, noOfPaper, layer, idx);
+    }
+    return Number(layer.calculatedWeight || layer.weight || layer.requiredWeight || 0);
+  };
+
+  const totalCalculatedPaperWeight = (product?.layers || []).reduce((acc: number, layer: any, idx: number) => {
+    return acc + getLayerWeight(layer, idx);
+  }, 0);
 
   return (
     <div id="job-card-print-area" className="print-view-container w-[210mm] h-[297mm] print:h-[100vh] print:max-h-[100vh] overflow-hidden flex flex-col mx-auto bg-white text-black p-[5mm] sm:p-[10mm] text-[12px] font-sans leading-snug box-border relative">
@@ -222,7 +239,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
                   <td className="border border-black p-1 font-semibold text-center align-middle">
                     {getReelSpecCell('gsm', origGSM)}
                   </td>
-                  <td className="border border-black p-1 font-bold text-center align-middle">{roundWeight(layer.calculatedWeight || layer.weight || layer.requiredWeight)} Kg</td>
+                  <td className="border border-black p-1 font-bold text-center align-middle">{roundWeight(getLayerWeight(layer, idx))} Kg</td>
                   <td className="border border-black p-1 text-center align-middle whitespace-pre-line break-words">
                     {hasArray ? (
                       <div className="flex flex-col gap-1">
@@ -255,7 +272,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
                   <td className="border border-black p-1 text-center align-middle font-bold text-[10px]">
                     {(() => {
                       if (!hasArray && !hasLegacy) return '';
-                      const reqW = layer.calculatedWeight || layer.weight || layer.requiredWeight || 0;
+                      const reqW = getLayerWeight(layer, idx);
                       let allocW = 0;
                       if (hasArray) {
                         allocW = layer.allocatedReels.reduce((sum: number, r: any) => sum + (Number(r.allocatedWeight) || 0), 0);
@@ -283,7 +300,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
             })}
             <tr className="bg-gray-100 font-bold">
               <td colSpan={5} className="border border-black p-1 text-right align-middle">Total Paper Weight:</td>
-              <td className="border border-black p-1 text-center align-middle">{roundWeight(jobCard.totalWeight)} Kg</td>
+              <td className="border border-black p-1 text-center align-middle">{roundWeight(totalCalculatedPaperWeight || jobCard.totalWeight)} Kg</td>
               <td className="border border-black p-1 text-center align-middle">
                 {(() => {
                   const totalAllocatedWeight = (product?.layers || []).reduce((acc: number, layer: any) => {

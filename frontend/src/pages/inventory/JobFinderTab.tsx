@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProducts } from '../../lib/supabase/productService';
+import { calculateLayerWeight, getEffectiveGsm } from '../../lib/corrugationUtils';
 import { getReels } from '../../lib/supabase/reelService';
 import { Search, CheckCircle2, AlertTriangle, Package2, Layers, Weight, Calculator } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -14,13 +15,9 @@ function normalizePaperType(raw: string): string {
   return s;
 }
 
-function calcLayerWeight(reelSize: number, cutSize: number, gsm: number, layerName: string, qty: number, ups: number): number {
+function calcLayerWeight(reelSize: number, cutSize: number, gsm: number, layerName: string, qty: number, ups: number, layerIndex?: number): number {
   const noOfPaper = Math.ceil(qty / (ups > 0 ? ups : 1));
-  let effGsm = gsm;
-  const lName = (layerName || '').toLowerCase().trim();
-  if (lName.includes('flute') || ['p2', 'p4', 'p6'].includes(lName)) effGsm = gsm * 1.4;
-  const w = (reelSize * cutSize * effGsm) / 3100 / 500 * noOfPaper;
-  return Math.round(w * 100) / 100;
+  return calculateLayerWeight(reelSize, cutSize, gsm, noOfPaper, { layerName }, layerIndex);
 }
 
 export default function JobFinderTab() {
@@ -133,9 +130,7 @@ export default function JobFinderTab() {
 
         let maxBoxes = 0;
         if (gsm > 0 && reelSize > 0 && cutSize > 0 && availableKg > 0) {
-          let effGsm = gsm;
-          const lName = (layer.layerName || '').toLowerCase().trim();
-          if (lName.includes('flute') || ['p2', 'p4', 'p6'].includes(lName)) effGsm = gsm * 1.4;
+          const effGsm = getEffectiveGsm(gsm, layer, layerIndex);
           // weight per box = (reelSize * cutSize * effGsm) / 3100 / 500 / ups
           const weightPerBox = (reelSize * cutSize * effGsm) / 3100 / 500 / ups;
           maxBoxes = weightPerBox > 0 ? Math.floor(availableKg / weightPerBox) : 0;
