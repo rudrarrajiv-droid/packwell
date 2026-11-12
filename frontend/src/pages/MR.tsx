@@ -410,20 +410,10 @@ export default function MR() {
     if (!report?.id) return;
     setIsSaving(true);
     try {
-      // Ensure auto-mapped values are populated if not manually overridden
+      // Save only manual entries/overrides.
+      // Auto-calculated categories (Freight Outward, Salary & Wages, Consumable Goods, LPG Cylinder)
+      // stay live so new entries added later in the month reflect automatically in P&L.
       const dataToSave = { ...manualData };
-      if ((dataToSave['EXP:Freight Outward Charges'] === undefined || dataToSave['EXP:Freight Outward Charges'] === 0) && autoFreightOutward > 0) {
-        dataToSave['EXP:Freight Outward Charges'] = autoFreightOutward;
-      }
-      if ((dataToSave['EXP:Salary with Director Remuneration'] === undefined || dataToSave['EXP:Salary with Director Remuneration'] === 0) && autoSalaryWages > 0) {
-        dataToSave['EXP:Salary with Director Remuneration'] = autoSalaryWages;
-      }
-      if ((dataToSave['EXP:Consumable Goods (Excl. Gas)'] === undefined || dataToSave['EXP:Consumable Goods (Excl. Gas)'] === 0) && autoConsumableGoods > 0) {
-        dataToSave['EXP:Consumable Goods (Excl. Gas)'] = autoConsumableGoods;
-      }
-      if ((dataToSave['EXP:LPG Cylinder'] === undefined || dataToSave['EXP:LPG Cylinder'] === 0) && autoLpgCylinder > 0) {
-        dataToSave['EXP:LPG Cylinder'] = autoLpgCylinder;
-      }
 
       await saveBatchMonthlyExpenses(report.id, dataToSave, user?.name || 'System');
       refetchReport();
