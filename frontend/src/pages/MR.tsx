@@ -408,7 +408,24 @@ export default function MR() {
     setManualData(prev => {
       const next = { ...prev };
       delete next[`EXP:${exp}`];
+      delete next[`EXP_MANUAL:${exp}`];
       delete next[`CUSTOM_EXP:${exp}`];
+      return next;
+    });
+  };
+
+  const handleToggleManualExpense = (exp: string, enableManual: boolean, currentEffectiveVal: number) => {
+    setManualData(prev => {
+      const next = { ...prev };
+      if (enableManual) {
+        next[`EXP_MANUAL:${exp}`] = 1;
+        if (next[`EXP:${exp}`] === undefined) {
+          next[`EXP:${exp}`] = currentEffectiveVal;
+        }
+      } else {
+        next[`EXP_MANUAL:${exp}`] = 0;
+        delete next[`EXP:${exp}`];
+      }
       return next;
     });
   };
@@ -617,12 +634,8 @@ export default function MR() {
   const grandDiffWOGST = netSaleWithoutGST - gTotalPurchaseWOGST;
   const grandDiffWGST = netSaleWithGST - gTotalPurchaseWGST;
 
-  // Helper to resolve effective expense amount (mapped to Freight Sheet, Salary Sheet, RM Consumable, and Cash Ledger if not overridden)
-  const getEffectiveExpenseValue = (cat: string): number => {
-    const manualVal = manualData[`EXP:${cat}`];
-    if (manualVal !== undefined && manualVal !== 0) {
-      return manualVal;
-    }
+  // Helper to resolve live auto-calculated expense value
+  const getAutoExpenseValue = (cat: string): number => {
     if (cat === "Freight Outward Charges") {
       if (currentMonth >= '2026-10' && cashLedgerExpenseTotals[cat] !== undefined && cashLedgerExpenseTotals[cat] > 0) {
         return cashLedgerExpenseTotals[cat];
@@ -642,6 +655,20 @@ export default function MR() {
     if (currentMonth >= '2026-10' && cashLedgerExpenseTotals[cat] !== undefined && cashLedgerExpenseTotals[cat] > 0) {
       return cashLedgerExpenseTotals[cat];
     }
+    return 0;
+  };
+
+  // Helper to resolve effective expense amount (uses saved manual figure if Manual is ticked, otherwise live Auto)
+  const getEffectiveExpenseValue = (cat: string): number => {
+    const isManualLocked = manualData[`EXP_MANUAL:${cat}`] === 1;
+    const manualVal = manualData[`EXP:${cat}`];
+    if (isManualLocked) {
+      return manualVal || 0;
+    }
+    const autoVal = getAutoExpenseValue(cat);
+    if (autoVal > 0) {
+      return autoVal;
+    }
     return manualVal || 0;
   };
 
@@ -653,8 +680,8 @@ export default function MR() {
       const amt = getEffectiveExpenseValue(exp);
       // 1. Strictly show if amount > 0 (from Cash Ledger, Freight, Salary, RM, or manual)
       if (amt !== undefined && amt > 0) return true;
-      // 2. Or if user explicitly clicked 'Add Expense' in this session to enter a value
-      if (sessionAddedExpenses.includes(exp)) return true;
+      // 2. Or if user explicitly clicked 'Add Expense' in this session or locked Manual mode
+      if (sessionAddedExpenses.includes(exp) || manualData[`EXP_MANUAL:${exp}`] === 1) return true;
       // 3. Otherwise HIDE completely! (Expenses with 0 remain hidden)
       return false;
     });
@@ -1911,174 +1938,140 @@ export default function MR() {
                       const isFreightOutward = exp === "Freight Outward Charges";
                       const isSalaryWages = exp === "Salary with Director Remuneration";
                       const isConsumableGoods = exp === "Consumable Goods (Excl. Gas)" || exp === "Consumable Goods";
+                      const isLpg = exp === "LPG Cylinder";
                       const effectiveVal = getEffectiveExpenseValue(exp);
-                    
-                    const cashLedgerVal = currentMonth >= '2026-10' ? (cashLedgerExpenseTotals[exp] || 0) : 0;
-                    const isFreightFromCashLedger = isFreightOutward && cashLedgerVal > 0;
-                    const isUsingAutoFreight = isFreightOutward && !isFreightFromCashLedger && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoFreightOutward > 0;
-                    const isUsingAutoSalary = isSalaryWages && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoSalaryWages > 0;
-                    const isUsingAutoConsumable = isConsumableGoods && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoConsumableGoods > 0;
-                    const isUsingCashLedger = (!isFreightOutward || isFreightFromCashLedger) && !isSalaryWages && !isConsumableGoods && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && cashLedgerVal > 0;
+                      const autoVal = getAutoExpenseValue(exp);
+                      const cashLedgerVal = currentMonth >= '2026-10' ? (cashLedgerExpenseTotals[exp] || 0) : 0;
+                      const isManualLocked = manualData[`EXP_MANUAL:${exp}`] === 1;
+                      const hasAutoSource = autoVal > 0;
+                      const isAutoMapped = !isManualLocked && hasAutoSource;
 
-                    const isAutoMapped = isUsingAutoFreight || isUsingAutoSalary || isUsingAutoConsumable || isUsingCashLedger;
+                      const isFreightFromCashLedger = isFreightOutward && cashLedgerVal > 0;
+                      const autoSourceLabel = isFreightFromCashLedger
+                        ? `Cash Ledger (₹ ${formatINR(autoVal)})`
+                        : isFreightOutward
+                        ? `Freight Sheet (₹ ${formatINR(autoVal)})`
+                        : isSalaryWages
+                        ? `Salary & Wages (₹ ${formatINR(autoVal)})`
+                        : isConsumableGoods
+                        ? `Raw Material (₹ ${formatINR(autoVal)})`
+                        : isLpg
+                        ? `Raw Material LPG (₹ ${formatINR(autoVal)})`
+                        : `Cash Ledger (₹ ${formatINR(autoVal)})`;
 
-                    // Compute input display value
-                    const hasManualCustomVal = manualData[`EXP:${exp}`] !== undefined && manualData[`EXP:${exp}`] !== 0;
-                    const displayInputValue = hasManualCustomVal 
-                      ? manualData[`EXP:${exp}`] 
-                      : (effectiveVal > 0 ? effectiveVal : (manualData[`EXP:${exp}`] !== undefined && manualData[`EXP:${exp}`] !== 0 ? manualData[`EXP:${exp}`] : ''));
+                      // Compute input display value
+                      const displayInputValue = isManualLocked
+                        ? (manualData[`EXP:${exp}`] !== undefined ? manualData[`EXP:${exp}`] : '')
+                        : (effectiveVal > 0 ? effectiveVal : (manualData[`EXP:${exp}`] !== undefined && manualData[`EXP:${exp}`] !== 0 ? manualData[`EXP:${exp}`] : ''));
 
-                    return (
-                      <div key={exp} className={`flex items-center justify-between p-2.5 rounded-xl border transition group print:p-1 print:bg-white print:border-slate-200 ${
-                        isAutoMapped 
-                          ? 'bg-emerald-50/50 border-emerald-200/80 hover:bg-emerald-50' 
-                          : 'bg-slate-50/80 hover:bg-slate-100 border border-slate-200/70'
-                      }`}>
-                        <div className="flex items-center gap-1.5 pr-2 min-w-0">
-                          {!isFreightOutward && !isSalaryWages && !isConsumableGoods && (
-                            <button
-                              onClick={() => handleRemoveExpense(exp)}
-                              className="text-slate-300 hover:text-rose-600 transition opacity-0 group-hover:opacity-100 print:hidden"
-                              title="Remove expense from view"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 min-w-0">
+                      return (
+                        <div key={exp} className={`flex items-center justify-between p-2.5 rounded-xl border transition group print:p-1 print:bg-white print:border-slate-200 ${
+                          isAutoMapped 
+                            ? 'bg-emerald-50/50 border-emerald-200/80 hover:bg-emerald-50' 
+                            : isManualLocked
+                            ? 'bg-amber-50/50 border-amber-300/80 hover:bg-amber-50/70'
+                            : 'bg-slate-50/80 hover:bg-slate-100 border border-slate-200/70'
+                        }`}>
+                          <div className="flex items-center gap-1.5 pr-2 min-w-0">
+                            {!isFreightOutward && !isSalaryWages && !isConsumableGoods && (
                               <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedExpenseForLedger(exp);
-                                  setShowCashLedgerModal(true);
-                                }}
-                                className="text-left text-xs font-bold text-slate-800 hover:text-rose-600 transition truncate block print:text-[9px] hover:underline cursor-pointer group-hover:text-rose-600"
-                                title={`Click to view date-wise expense details for "${exp}"`}
+                                onClick={() => handleRemoveExpense(exp)}
+                                className="text-slate-300 hover:text-rose-600 transition opacity-0 group-hover:opacity-100 print:hidden"
+                                title="Remove expense from view"
                               >
-                                {exp}
+                                <X className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedExpenseForLedger(exp);
-                                  setShowCashLedgerModal(true);
-                                }}
-                                className="text-slate-400 hover:text-rose-600 transition p-1 rounded hover:bg-rose-50 print:hidden shrink-0 cursor-pointer"
-                                title={`"${exp}" का कैश लेजर और तारीख वार विवरण देखें`}
-                              >
-                                <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
-                              </button>
+                            )}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedExpenseForLedger(exp);
+                                    setShowCashLedgerModal(true);
+                                  }}
+                                  className="text-left text-xs font-bold text-slate-800 hover:text-rose-600 transition truncate block print:text-[9px] hover:underline cursor-pointer group-hover:text-rose-600"
+                                  title={`Click to view date-wise expense details for "${exp}"`}
+                                >
+                                  {exp}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedExpenseForLedger(exp);
+                                    setShowCashLedgerModal(true);
+                                  }}
+                                  className="text-slate-400 hover:text-rose-600 transition p-1 rounded hover:bg-rose-50 print:hidden shrink-0 cursor-pointer"
+                                  title={`"${exp}" का कैश लेजर और तारीख वार विवरण देखें`}
+                                >
+                                  <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
+                                </button>
+                              </div>
+
+                              {/* Auto / Manual Toggle & Status Badge */}
+                              <div className="flex flex-wrap items-center gap-2 mt-0.5 print:hidden">
+                                {hasAutoSource && (
+                                  <label
+                                    className="inline-flex items-center gap-1 cursor-pointer select-none text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs"
+                                    title="Tick karein agar aap is expense me manual figure dalna chahte hain"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isManualLocked}
+                                      onChange={(e) => handleToggleManualExpense(exp, e.target.checked, effectiveVal)}
+                                      className="w-3 h-3 accent-rose-600 rounded cursor-pointer"
+                                    />
+                                    <span>Manual</span>
+                                  </label>
+                                )}
+
+                                {isAutoMapped && (
+                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
+                                    {isFreightOutward && !isFreightFromCashLedger ? (
+                                      <Truck className="w-2.5 h-2.5" />
+                                    ) : isSalaryWages ? (
+                                      <Users className="w-2.5 h-2.5" />
+                                    ) : isConsumableGoods || isLpg ? (
+                                      <Box className="w-2.5 h-2.5" />
+                                    ) : (
+                                      <Wallet className="w-2.5 h-2.5" />
+                                    )}
+                                    Auto: {autoSourceLabel}
+                                  </span>
+                                )}
+
+                                {isManualLocked && (
+                                  <span className="text-[10px] text-amber-800 font-bold flex items-center gap-1 bg-amber-100 px-1.5 py-0.2 rounded border border-amber-300">
+                                    Manual Saved {hasAutoSource ? `(Auto: ₹ ${formatINR(autoVal)})` : ''}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            
-                            {/* Auto Badges & Reset Actions */}
-                            {isFreightOutward && (
-                              <div className="flex items-center gap-2 mt-0.5 print:hidden">
-                                {isFreightFromCashLedger ? (
-                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
-                                    <Wallet className="w-2.5 h-2.5" /> Mapped from Cash Ledger (₹ {formatINR(cashLedgerVal)})
-                                  </span>
-                                ) : isUsingAutoFreight ? (
-                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
-                                    <Truck className="w-2.5 h-2.5" /> Mapped from Freight Sheet (₹ {formatINR(autoFreightOutward)})
-                                  </span>
-                                ) : (
-                                  <button
-                                    onClick={() => handleManualChange(`EXP:${exp}`, String(autoFreightOutward))}
-                                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline"
-                                    title="Reset to live Freight Sheet value"
-                                  >
-                                    <RotateCcw className="w-2.5 h-2.5" /> Reset to Freight Sheet (₹ {formatINR(autoFreightOutward)})
-                                  </button>
-                                )}
-                              </div>
-                            )}
-
-                            {isSalaryWages && (
-                              <div className="flex items-center gap-2 mt-0.5 print:hidden">
-                                {isUsingAutoSalary ? (
-                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
-                                    <Users className="w-2.5 h-2.5" /> Mapped from Salary &amp; Wages (₹ {formatINR(autoSalaryWages)})
-                                  </span>
-                                ) : (
-                                  <button
-                                    onClick={() => handleManualChange(`EXP:${exp}`, String(autoSalaryWages))}
-                                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline"
-                                    title="Reset to live Salary Sheet value"
-                                  >
-                                    <RotateCcw className="w-2.5 h-2.5" /> Reset to Salary Sheet (₹ {formatINR(autoSalaryWages)})
-                                  </button>
-                                )}
-                              </div>
-                            )}
-
-                            {isConsumableGoods && (
-                              <div className="flex items-center gap-2 mt-0.5 print:hidden">
-                                {isUsingAutoConsumable ? (
-                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
-                                    <Box className="w-2.5 h-2.5" /> Mapped from Raw Material (₹ {formatINR(autoConsumableGoods)})
-                                  </span>
-                                ) : (
-                                  <button
-                                    onClick={() => handleManualChange(`EXP:${exp}`, String(autoConsumableGoods))}
-                                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline"
-                                    title="Reset to live Raw Material Outward value"
-                                  >
-                                    <RotateCcw className="w-2.5 h-2.5" /> Reset to Raw Material Outward (₹ {formatINR(autoConsumableGoods)})
-                                  </button>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Cash Ledger Auto Mapped Badge */}
-                            {cashLedgerVal > 0 && !isFreightOutward && !isSalaryWages && !isConsumableGoods && (
-                              <div className="flex items-center gap-2 mt-0.5 print:hidden">
-                                {isUsingCashLedger ? (
-                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
-                                    <Wallet className="w-2.5 h-2.5" /> Mapped from Cash Ledger (₹ {formatINR(cashLedgerVal)})
-                                  </span>
-                                ) : (
-                                  <button
-                                    onClick={() => handleManualChange(`EXP:${exp}`, String(cashLedgerVal))}
-                                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline"
-                                    title="Reset to live Cash Ledger value"
-                                  >
-                                    <RotateCcw className="w-2.5 h-2.5" /> Reset to Cash Ledger (₹ {formatINR(cashLedgerVal)})
-                                  </button>
-                                )}
-                              </div>
-                            )}
+                          </div>
+                          <div className="w-28 shrink-0 flex items-center justify-end">
+                            <span className="hidden print:inline font-bold text-slate-900 print:text-[9px]">₹ {formatINR(effectiveVal)}</span>
+                            <div className="flex items-center print:hidden">
+                              <span className="text-xs font-bold text-slate-400 mr-1">₹</span>
+                              <input
+                                type="number"
+                                readOnly={hasAutoSource && !isManualLocked}
+                                placeholder={hasAutoSource ? String(autoVal) : "0"}
+                                value={displayInputValue}
+                                onChange={(e) => handleManualChange(`EXP:${exp}`, e.target.value)}
+                                title={hasAutoSource && !isManualLocked ? 'Manual figure dalne ke liye "Manual" checkbox par tick karein' : 'Enter manual amount'}
+                                className={`w-full text-right rounded-lg px-2.5 py-1 text-xs font-black focus:outline-none ${
+                                  isAutoMapped 
+                                    ? 'bg-emerald-50 border border-emerald-300 text-emerald-900 cursor-not-allowed' 
+                                    : isManualLocked
+                                    ? 'bg-white border-2 border-amber-400 text-slate-900 focus:border-rose-500'
+                                    : 'bg-white border border-slate-300 text-slate-900 focus:border-rose-500'
+                                }`}
+                              />
+                            </div>
                           </div>
                         </div>
-                        <div className="w-28 shrink-0 flex items-center justify-end">
-                          <span className="hidden print:inline font-bold text-slate-900 print:text-[9px]">₹ {formatINR(effectiveVal)}</span>
-                          <div className="flex items-center print:hidden">
-                            <span className="text-xs font-bold text-slate-400 mr-1">₹</span>
-                            <input
-                              type="number"
-                              placeholder={
-                                isFreightOutward 
-                                  ? String(autoFreightOutward) 
-                                  : isSalaryWages 
-                                  ? String(autoSalaryWages) 
-                                  : isConsumableGoods
-                                  ? String(autoConsumableGoods)
-                                  : cashLedgerVal > 0
-                                  ? String(cashLedgerVal)
-                                  : "0"
-                              }
-                              value={displayInputValue}
-                              onChange={(e) => handleManualChange(`EXP:${exp}`, e.target.value)}
-                              className={`w-full text-right rounded-lg px-2.5 py-1 text-xs font-black text-slate-900 focus:outline-none ${
-                                isAutoMapped 
-                                  ? 'bg-emerald-50 border border-emerald-300 focus:border-emerald-500 text-emerald-900' 
-                                  : 'bg-white border border-slate-300 focus:border-rose-500'
-                              }`}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
+                      );
+                    })
                 )}
                 </div>
               </div>
