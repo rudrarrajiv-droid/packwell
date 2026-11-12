@@ -127,6 +127,40 @@ export const getOpeningBalance = async (
   }, 0);
 };
 
+// Calculate Closing Balance (Opening + Cr - Dr) up to the end of a specific month (defaults to CASH mode only)
+export const getCashClosingBalanceForMonth = async (
+  month: string,
+  paymentMode: 'CASH' | 'BANK' | 'ALL' = 'CASH'
+): Promise<number> => {
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return 0;
+
+  const [y, m] = month.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const end = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+  let query = supabase
+    .from('cash_ledger')
+    .select('dr, cr')
+    .eq('is_archived', false)
+    .lte('date', end);
+
+  if (paymentMode && paymentMode !== 'ALL') {
+    query = query.eq('payment_mode', paymentMode);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('Error calculating cash ledger closing balance:', error);
+    return 0;
+  }
+
+  return (data || []).reduce((acc, row) => {
+    const cr = Number(row.cr) || 0;
+    const dr = Number(row.dr) || 0;
+    return acc + (cr - dr);
+  }, 0);
+};
+
 export const batchCreateCashLedgerEntries = async (
   entries: Omit<CashLedgerEntry, 'id' | 'createdAt' | 'updatedAt'>[],
   user: string

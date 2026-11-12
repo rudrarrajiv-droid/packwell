@@ -130,7 +130,7 @@ export default function CashLedgerModal({
   const [selectedMonth, setSelectedMonth] = useState(initialMonth);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [paymentModeFilter, setPaymentModeFilter] = useState<'ALL' | 'CASH' | 'BANK'>('ALL');
+  const [paymentModeFilter, setPaymentModeFilter] = useState<'ALL' | 'CASH' | 'BANK'>('CASH');
   const [selectedExpenseFilter, setSelectedExpenseFilter] = useState<string>(initialExpenseFilter || 'ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -139,8 +139,10 @@ export default function CashLedgerModal({
     if (isOpen) {
       if (initialExpenseFilter) {
         setSelectedExpenseFilter(initialExpenseFilter);
+        setPaymentModeFilter('ALL');
       } else {
         setSelectedExpenseFilter('ALL');
+        setPaymentModeFilter('CASH');
       }
       if (defaultMonth) {
         setSelectedMonth(defaultMonth);

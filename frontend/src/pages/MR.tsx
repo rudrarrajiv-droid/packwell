@@ -18,7 +18,7 @@ import { exportMRToPDF, exportMRToExcel, previewMRPDF } from '../lib/mrExportUti
 import PaperPurchaseDetailsModal from './PaperPurchaseDetailsModal';
 import TotalPaperPurchaseModal from './TotalPaperPurchaseModal';
 import CashLedgerModal from './CashLedgerModal';
-import { getMonthlyExpenseAggregates, getExpenseCategories } from '../lib/supabase/cashLedgerService';
+import { getMonthlyExpenseAggregates, getExpenseCategories, getCashClosingBalanceForMonth } from '../lib/supabase/cashLedgerService';
 
 const DEFAULT_EXPENSE_CATEGORIES = [
   "Engineer Food and Lodge Expense",
@@ -179,6 +179,13 @@ export default function MR() {
   const { data: cashLedgerExpenseTotals = {}, refetch: refetchCashLedgerTotals } = useQuery({
     queryKey: ['cashLedgerMonthlyAggregates', currentMonth],
     queryFn: () => getMonthlyExpenseAggregates(currentMonth),
+    enabled: isValidMonth
+  });
+
+  // Query actual CASH-only Closing Balance up to end of active month
+  const { data: cashClosingBalance = 0, refetch: refetchCashClosingBalance } = useQuery({
+    queryKey: ['cashLedgerClosingBalance', currentMonth, 'CASH'],
+    queryFn: () => getCashClosingBalanceForMonth(currentMonth, 'CASH'),
     enabled: isValidMonth
   });
 
@@ -1804,11 +1811,15 @@ export default function MR() {
                   >
                     <Wallet className="w-3.5 h-3.5" />
                     Cash Ledger
-                    {totalCashLedgerMonth > 0 && (
-                      <span className="bg-emerald-900/60 text-emerald-200 text-[10px] px-1.5 py-0.2 rounded-full border border-emerald-400/40">
-                        ₹ {formatINR(totalCashLedgerMonth)}
-                      </span>
-                    )}
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full border font-black ${
+                      cashClosingBalance < 0
+                        ? 'bg-rose-900/80 text-rose-100 border-rose-300/60'
+                        : 'bg-emerald-900/60 text-emerald-200 border-emerald-400/40'
+                    }`}>
+                      {cashClosingBalance < 0
+                        ? `(-) ₹ ${formatINR(Math.abs(cashClosingBalance))}`
+                        : `₹ ${formatINR(cashClosingBalance)}`}
+                    </span>
                   </button>
 
                   <div className="relative" ref={expenseDropdownRef}>
@@ -2130,6 +2141,7 @@ export default function MR() {
         standardExpenses={DEFAULT_EXPENSE_CATEGORIES}
         onEntriesSaved={() => {
           refetchCashLedgerTotals();
+          refetchCashClosingBalance();
           refetchReport();
           refetchDbCategories();
         }}
