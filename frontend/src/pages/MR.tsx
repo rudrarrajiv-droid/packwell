@@ -617,6 +617,9 @@ export default function MR() {
       return manualVal;
     }
     if (cat === "Freight Outward Charges") {
+      if (currentMonth >= '2026-10' && cashLedgerExpenseTotals[cat] !== undefined && cashLedgerExpenseTotals[cat] > 0) {
+        return cashLedgerExpenseTotals[cat];
+      }
       return autoFreightOutward;
     }
     if (cat === "Salary with Director Remuneration") {
@@ -1899,12 +1902,12 @@ export default function MR() {
                       const isConsumableGoods = exp === "Consumable Goods (Excl. Gas)" || exp === "Consumable Goods";
                       const effectiveVal = getEffectiveExpenseValue(exp);
                     
-                    const isUsingAutoFreight = isFreightOutward && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoFreightOutward > 0;
+                    const cashLedgerVal = currentMonth >= '2026-10' ? (cashLedgerExpenseTotals[exp] || 0) : 0;
+                    const isFreightFromCashLedger = isFreightOutward && cashLedgerVal > 0;
+                    const isUsingAutoFreight = isFreightOutward && !isFreightFromCashLedger && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoFreightOutward > 0;
                     const isUsingAutoSalary = isSalaryWages && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoSalaryWages > 0;
                     const isUsingAutoConsumable = isConsumableGoods && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && autoConsumableGoods > 0;
-                    
-                    const cashLedgerVal = currentMonth >= '2026-10' ? (cashLedgerExpenseTotals[exp] || 0) : 0;
-                    const isUsingCashLedger = !isFreightOutward && !isSalaryWages && !isConsumableGoods && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && cashLedgerVal > 0;
+                    const isUsingCashLedger = (!isFreightOutward || isFreightFromCashLedger) && !isSalaryWages && !isConsumableGoods && (manualData[`EXP:${exp}`] === undefined || manualData[`EXP:${exp}`] === 0) && cashLedgerVal > 0;
 
                     const isAutoMapped = isUsingAutoFreight || isUsingAutoSalary || isUsingAutoConsumable || isUsingCashLedger;
 
@@ -1959,7 +1962,11 @@ export default function MR() {
                             {/* Auto Badges & Reset Actions */}
                             {isFreightOutward && (
                               <div className="flex items-center gap-2 mt-0.5 print:hidden">
-                                {isUsingAutoFreight ? (
+                                {isFreightFromCashLedger ? (
+                                  <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
+                                    <Wallet className="w-2.5 h-2.5" /> Mapped from Cash Ledger (₹ {formatINR(cashLedgerVal)})
+                                  </span>
+                                ) : isUsingAutoFreight ? (
                                   <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 bg-emerald-100/80 px-1.5 py-0.2 rounded">
                                     <Truck className="w-2.5 h-2.5" /> Mapped from Freight Sheet (₹ {formatINR(autoFreightOutward)})
                                   </span>
