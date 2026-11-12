@@ -18,6 +18,7 @@ import { exportMRToPDF, exportMRToExcel, previewMRPDF } from '../lib/mrExportUti
 import PaperPurchaseDetailsModal from './PaperPurchaseDetailsModal';
 import TotalPaperPurchaseModal from './TotalPaperPurchaseModal';
 import CashLedgerModal from './CashLedgerModal';
+import ConsumableBreakdownModal, { type RmBreakdownItem } from './ConsumableBreakdownModal';
 import { getMonthlyExpenseAggregates, getExpenseCategories, getCashClosingBalanceForMonth } from '../lib/supabase/cashLedgerService';
 
 const DEFAULT_EXPENSE_CATEGORIES = [
@@ -153,6 +154,7 @@ export default function MR() {
   const [showTotalPurchaseModal, setShowTotalPurchaseModal] = useState(false);
   const [showCashLedgerModal, setShowCashLedgerModal] = useState(false);
   const [selectedExpenseForLedger, setSelectedExpenseForLedger] = useState<string | undefined>(undefined);
+  const [rmBreakdownModalType, setRmBreakdownModalType] = useState<'CONSUMABLE' | 'LPG' | null>(null);
 
   // Queries
   const { data: reels = [] } = useQuery({ queryKey: ['reels'], queryFn: getReels });
@@ -251,11 +253,11 @@ export default function MR() {
   }, [monthAttendance]);
 
   // 3. AUTO-CALCULATE CONSUMABLE GOODS & LPG DIRECTLY FROM RAW MATERIAL OUTWARD VALUES
-  const { autoConsumableGoods, autoLpgCylinder } = useMemo(() => {
-    const rmMap = new Map<string, { rate: number; name: string }>();
+  const { autoConsumableGoods, autoLpgCylinder, consumableBreakdownItems, lpgBreakdownItems } = useMemo(() => {
+    const rmMap = new Map<string, { rate: number; name: string; unit: string }>();
     rmList.forEach(rm => {
       if (rm.id) {
-        rmMap.set(rm.id, { rate: Number(rm.rate) || 0, name: rm.name || '' });
+        rmMap.set(rm.id, { rate: Number(rm.rate) || 0, name: rm.name || '', unit: rm.unit || '' });
       }
     });
 
@@ -277,24 +279,44 @@ export default function MR() {
 
     let consumableSum = 0;
     let lpgSum = 0;
+    const consumableItems: RmBreakdownItem[] = [];
+    const lpgItems: RmBreakdownItem[] = [];
 
     monthlyOutTxns.forEach(t => {
       const rmInfo = t.rawMaterialId ? rmMap.get(t.rawMaterialId) : null;
       const itemRate = t.rate || (rmInfo ? rmInfo.rate : 0) || 0;
       const amt = (t.amount !== undefined && t.amount > 0) ? t.amount : (t.quantity * itemRate);
       
-      const itemName = (rmInfo ? rmInfo.name : '').toLowerCase();
+      const rawName = rmInfo ? rmInfo.name : 'Unknown Material';
+      const itemName = rawName.toLowerCase();
+      const breakdownRow: RmBreakdownItem = {
+        id: t.id || '',
+        date: t.date || (t.createdAt ? t.createdAt.slice(0, 10) : ''),
+        materialName: rawName,
+        unit: rmInfo?.unit || '',
+        type: t.type,
+        quantity: Number(t.quantity) || 0,
+        rate: Number(itemRate) || 0,
+        amount: Number(amt) || 0,
+        referenceNo: t.referenceNo,
+        remarks: t.remarks,
+        performedBy: t.performedBy,
+      };
       
       if (itemName.includes('lpg gas 33kg') || itemName.includes('lpg cylinder')) {
         lpgSum += amt;
+        lpgItems.push(breakdownRow);
       } else {
         consumableSum += amt;
+        consumableItems.push(breakdownRow);
       }
     });
 
     return {
       autoConsumableGoods: Math.round(consumableSum),
-      autoLpgCylinder: Math.round(lpgSum)
+      autoLpgCylinder: Math.round(lpgSum),
+      consumableBreakdownItems: consumableItems,
+      lpgBreakdownItems: lpgItems,
     };
   }, [rmList, rmTransactions, currentMonth]);
 
@@ -1987,22 +2009,34 @@ export default function MR() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setSelectedExpenseForLedger(exp);
-                                    setShowCashLedgerModal(true);
+                                    if (isConsumableGoods && autoConsumableGoods > 0) {
+                                      setRmBreakdownModalType('CONSUMABLE');
+                                    } else if (isLpg && autoLpgCylinder > 0) {
+                                      setRmBreakdownModalType('LPG');
+                                    } else {
+                                      setSelectedExpenseForLedger(exp);
+                                      setShowCashLedgerModal(true);
+                                    }
                                   }}
                                   className="text-left text-xs font-bold text-slate-800 hover:text-rose-600 transition truncate block print:text-[9px] hover:underline cursor-pointer group-hover:text-rose-600"
-                                  title={`Click to view date-wise expense details for "${exp}"`}
+                                  title={`Click to view details for "${exp}"`}
                                 >
                                   {exp}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setSelectedExpenseForLedger(exp);
-                                    setShowCashLedgerModal(true);
+                                    if (isConsumableGoods && autoConsumableGoods > 0) {
+                                      setRmBreakdownModalType('CONSUMABLE');
+                                    } else if (isLpg && autoLpgCylinder > 0) {
+                                      setRmBreakdownModalType('LPG');
+                                    } else {
+                                      setSelectedExpenseForLedger(exp);
+                                      setShowCashLedgerModal(true);
+                                    }
                                   }}
                                   className="text-slate-400 hover:text-rose-600 transition p-1 rounded hover:bg-rose-50 print:hidden shrink-0 cursor-pointer"
-                                  title={`"${exp}" का कैश लेजर और तारीख वार विवरण देखें`}
+                                  title={`"${exp}" का विवरण देखें`}
                                 >
                                   <ArrowUpRight className="w-3.5 h-3.5 text-rose-500" />
                                 </button>
@@ -2137,6 +2171,26 @@ export default function MR() {
           refetchCashClosingBalance();
           refetchReport();
           refetchDbCategories();
+        }}
+      />
+
+      <ConsumableBreakdownModal
+        isOpen={rmBreakdownModalType !== null}
+        onClose={() => setRmBreakdownModalType(null)}
+        title={rmBreakdownModalType === 'LPG' ? 'LPG Cylinder' : 'Consumable Goods (Excl. Gas)'}
+        month={currentMonth}
+        items={rmBreakdownModalType === 'LPG' ? lpgBreakdownItems : consumableBreakdownItems}
+        totalAmount={rmBreakdownModalType === 'LPG' ? autoLpgCylinder : autoConsumableGoods}
+        cashLedgerAmount={
+          rmBreakdownModalType === 'LPG'
+            ? (cashLedgerExpenseTotals['LPG Cylinder'] || 0)
+            : (cashLedgerExpenseTotals['Consumable Goods (Excl. Gas)'] || cashLedgerExpenseTotals['Consumable Goods'] || 0)
+        }
+        onOpenCashLedger={() => {
+          const targetExp = rmBreakdownModalType === 'LPG' ? 'LPG Cylinder' : 'Consumable Goods (Excl. Gas)';
+          setRmBreakdownModalType(null);
+          setSelectedExpenseForLedger(targetExp);
+          setShowCashLedgerModal(true);
         }}
       />
     </div>
