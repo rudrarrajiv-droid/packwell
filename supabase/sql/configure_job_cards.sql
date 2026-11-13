@@ -78,10 +78,12 @@ begin
 
     v_old_state := coalesce(v_existing.raw_data, '{}'::jsonb);
     v_final_state := v_old_state || coalesce(p_new_payload, '{}'::jsonb);
-    v_is_old_active := coalesce(v_old_state ->> 'status', '') = 'PENDING';
+    v_is_old_active := coalesce(v_old_state ->> 'status', '') in ('PENDING', 'PENDING APPROVAL', 'IN_PROCESS')
+                       and coalesce((v_old_state ->> 'isArchived')::boolean, false) = false;
   end if;
 
-  v_is_new_active := coalesce(v_final_state ->> 'status', '') = 'PENDING';
+  v_is_new_active := coalesce(v_final_state ->> 'status', '') in ('PENDING', 'PENDING APPROVAL', 'IN_PROCESS')
+                     and coalesce((v_final_state ->> 'isArchived')::boolean, false) = false;
 
   for v_delta in
     with old_allocations as (
@@ -142,7 +144,7 @@ begin
     v_current_reserved := coalesce(v_reel.active_reserved_weight, 0);
     v_new_reserved := v_current_reserved + v_delta.delta;
 
-    if v_new_reserved > coalesce(v_reel.current_balance, 0) + 0.1 then
+    if v_delta.delta > 0.001 and v_new_reserved > coalesce(v_reel.current_balance, 0) + 0.1 then
       raise exception 'Insufficient available weight for Reel %. Available: % Kg, Requested Extra: % Kg.%s%s',
         coalesce(v_reel.reel_number, v_delta.reel_number),
         coalesce(v_reel.current_balance, 0) - v_current_reserved,
