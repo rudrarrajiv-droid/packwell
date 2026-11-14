@@ -480,6 +480,7 @@ export default function MR() {
       "Semi Kraft": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
       "Virgin Kraft": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
       "Chennai": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
+      "Others": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
     };
 
     const reelMap = new Map<string, { type: string; rate: number }>();
@@ -488,6 +489,9 @@ export default function MR() {
       const pt = (r.paperType || '').toLowerCase();
       if (pt.includes('virgin') || pt.includes('vk')) type = "Virgin Kraft";
       else if (pt.includes('chennai') || pt.includes('duplex')) type = "Chennai";
+      else if (pt.includes('other')) type = "Others";
+      else if (pt.includes('sk') || pt.includes('semi')) type = "Semi Kraft";
+      else if (pt.trim() !== '') type = "Others";
       reelMap.set(r.id!, { type, rate: r.rate || 0 });
     });
 
@@ -495,7 +499,7 @@ export default function MR() {
 
     reelTxns.forEach(txn => {
       const reelInfo = reelMap.get(txn.reelId);
-      const type = reelInfo?.type || "Semi Kraft";
+      const type = (reelInfo?.type && stats[reelInfo.type]) ? reelInfo.type : "Semi Kraft";
       const rate = reelInfo?.rate || 0;
       const date = txn.date;
       const qty = Number(txn.quantity) || 0;
@@ -1607,6 +1611,10 @@ export default function MR() {
                       <td className="px-2 py-1 text-indigo-950">Raw Material Inventory: Duplex Paper</td>
                       <td className="px-2 py-1 text-right font-black text-indigo-950">₹ {formatINR(paperStats['Chennai']?.cloAmt || 0)}</td>
                     </tr>
+                    <tr className="bg-indigo-50/70 font-semibold">
+                      <td className="px-2 py-1 text-indigo-950">Raw Material Inventory: Others Paper</td>
+                      <td className="px-2 py-1 text-right font-black text-indigo-950">₹ {formatINR(paperStats['Others']?.cloAmt || 0)}</td>
+                    </tr>
                     <tr>
                       <td className="px-2 py-1 text-slate-700">Other Raw Materials & Consumables</td>
                       <td className="px-2 py-1 text-right font-bold text-slate-900">₹ {formatINR(rmStockValue)}</td>
@@ -1651,9 +1659,13 @@ export default function MR() {
                   <span className="text-indigo-900 font-semibold">Raw Material Inventory: Virgin Kraft Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Virgin Kraft']?.cloAmt || 0)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mb-1 rounded-b">
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3">
                   <span className="text-indigo-900 font-semibold">Raw Material Inventory: Duplex Paper</span>
                   <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Chennai']?.cloAmt || 0)}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-100 bg-indigo-50/40 px-3 mb-1 rounded-b">
+                  <span className="text-indigo-900 font-semibold">Raw Material Inventory: Others Paper</span>
+                  <span className="font-black text-indigo-900">₹ {formatINR(paperStats['Others']?.cloAmt || 0)}</span>
                 </div>
                 <div className="flex justify-between items-center py-1.5 px-3">
                   <span className="text-slate-600 font-medium">Other Raw Materials & Consumables</span>

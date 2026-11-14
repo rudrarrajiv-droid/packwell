@@ -69,6 +69,9 @@ export default function TotalPaperPurchaseModal({
         const pt = (reel.paperType || '').toLowerCase();
         if (pt.includes('virgin') || pt.includes('vk')) mappedType = "Virgin Kraft";
         else if (pt.includes('chennai') || pt.includes('duplex')) mappedType = "Chennai";
+        else if (pt.includes('other')) mappedType = "Others";
+        else if (pt.includes('semi') || pt.includes('sk')) mappedType = "Semi Kraft";
+        else if (pt.trim() !== '') mappedType = "Others";
 
         // Extract just the YYYY-MM-DD from date if it has time
         const rawDate = txn.date;

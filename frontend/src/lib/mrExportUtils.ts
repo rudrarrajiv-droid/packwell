@@ -251,6 +251,7 @@ export const buildMRPDFDoc = (params: MRExportParams): jsPDF => {
   const semiKraftStock = params.paperStats['Semi Kraft']?.cloAmt || 0;
   const virginKraftStock = params.paperStats['Virgin Kraft']?.cloAmt || 0;
   const duplexStock = params.paperStats['Chennai']?.cloAmt || 0;
+  const othersStock = params.paperStats['Others']?.cloAmt || 0;
 
   const stockRows = [
     ['Finished Goods Inventory (Closing)', fmt(params.fgStockValue)],
@@ -259,6 +260,7 @@ export const buildMRPDFDoc = (params: MRExportParams): jsPDF => {
     ['Raw Material: Semi Kraft Paper', fmt(semiKraftStock)],
     ['Raw Material: Virgin Kraft Paper', fmt(virginKraftStock)],
     ['Raw Material: Duplex Paper', fmt(duplexStock)],
+    ['Raw Material: Others Paper', fmt(othersStock)],
     ['Other Raw Materials & Consumables', fmt(params.rmStockValue)]
   ];
 
@@ -574,6 +576,7 @@ export const exportMRToExcel = (params: MRExportParams) => {
   const semiKraftStock = params.paperStats['Semi Kraft']?.cloAmt || 0;
   const virginKraftStock = params.paperStats['Virgin Kraft']?.cloAmt || 0;
   const duplexStock = params.paperStats['Chennai']?.cloAmt || 0;
+  const othersStock = params.paperStats['Others']?.cloAmt || 0;
 
   data.push(['INVENTORY ASSET VALUATION', 'AMOUNT (Rs)']);
   data.push(['Finished Goods Inventory (Closing)', params.fgStockValue]);
@@ -582,6 +585,7 @@ export const exportMRToExcel = (params: MRExportParams) => {
   data.push(['Raw Material: Semi Kraft Paper', semiKraftStock]);
   data.push(['Raw Material: Virgin Kraft Paper', virginKraftStock]);
   data.push(['Raw Material: Duplex Paper', duplexStock]);
+  data.push(['Raw Material: Others Paper', othersStock]);
   data.push(['Other Raw Materials & Consumables', params.rmStockValue]);
   data.push(['GRAND TOTAL STOCK', params.grandTotalStock]);
 
