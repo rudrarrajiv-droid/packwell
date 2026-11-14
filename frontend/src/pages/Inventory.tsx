@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer } from 'lucide-react';
+import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer, Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInwardDate, type Reel } from '../lib/supabase/reelService';
+import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInwardDate, deleteReel, deleteMultipleReels, type Reel } from '../lib/supabase/reelService';
 import BulkInwardModal from './inventory/BulkInwardModal';
 import OutwardModal from './inventory/OutwardModal';
 import ReelHistoryModal from './inventory/ReelHistoryModal';
@@ -273,6 +273,94 @@ export default function Inventory() {
     });
     return { purchasedTotalWeight: Math.round(tw), purchasedTotalValue: Math.round(tv) };
   }, [purchasedReelsForDate]);
+
+  // Unconsumed reels for the selected date
+  const unconsumedReelsForDate = useMemo(() => {
+    return purchasedReelsForDate.filter(reel => {
+      const consumed = Math.max(0, (Number(reel.weight) || 0) - (Number(reel.currentBalance) || 0));
+      const isReserved = (Number(reel.activeReservedWeight) || 0) > 0.1 || !!reel.reservedForJC;
+      return consumed <= 0.1 && !isReserved;
+    });
+  }, [purchasedReelsForDate]);
+
+  // Selected reel IDs for batch operations
+  const [selectedPurchaseReelIds, setSelectedPurchaseReelIds] = useState<string[]>([]);
+  const [isDeletingReels, setIsDeletingReels] = useState(false);
+  const [reelDeleteConfirm, setReelDeleteConfirm] = useState<{
+    isOpen: boolean;
+    reels: any[];
+    title: string;
+    skippedConsumedCount: number;
+  } | null>(null);
+
+  const toggleSelectPurchaseReel = (id: string) => {
+    setSelectedPurchaseReelIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllPurchasedReels = () => {
+    if (selectedPurchaseReelIds.length === unconsumedReelsForDate.length) {
+      setSelectedPurchaseReelIds([]);
+    } else {
+      setSelectedPurchaseReelIds(unconsumedReelsForDate.map(r => r.id));
+    }
+  };
+
+  const promptDeleteSingleReel = (reel: any) => {
+    setReelDeleteConfirm({
+      isOpen: true,
+      reels: [reel],
+      title: `Delete Reel ${reel.reelNumber}`,
+      skippedConsumedCount: 0,
+    });
+  };
+
+  const promptDeleteSelectedReels = () => {
+    const selectedReels = purchasedReelsForDate.filter(r => selectedPurchaseReelIds.includes(r.id));
+    if (selectedReels.length === 0) return;
+    setReelDeleteConfirm({
+      isOpen: true,
+      reels: selectedReels,
+      title: `Delete Selected Reels (${selectedReels.length})`,
+      skippedConsumedCount: 0,
+    });
+  };
+
+  const promptDeleteAllForDate = () => {
+    const unconsumed = unconsumedReelsForDate;
+    const skipped = purchasedReelsForDate.length - unconsumed.length;
+    if (unconsumed.length === 0) {
+      alert("All reels on this date have already been consumed or reserved in production and cannot be deleted.");
+      return;
+    }
+    setReelDeleteConfirm({
+      isOpen: true,
+      reels: unconsumed,
+      title: `Delete All Purchases for ${new Date(reportDate).toLocaleDateString('en-IN')}`,
+      skippedConsumedCount: skipped,
+    });
+  };
+
+  const executeDeleteReels = async () => {
+    if (!reelDeleteConfirm || reelDeleteConfirm.reels.length === 0) return;
+    try {
+      setIsDeletingReels(true);
+      const idsToDelete = reelDeleteConfirm.reels.map(r => r.id);
+      const { successCount, errors } = await deleteMultipleReels(idsToDelete, user?.name || 'System');
+      
+      if (errors.length > 0) {
+        alert(`Deleted ${successCount} reel(s). Some failed:\n${errors.join('\n')}`);
+      }
+      setSelectedPurchaseReelIds([]);
+      setReelDeleteConfirm(null);
+      await Promise.all([refetch(), refetchTx()]);
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete reels');
+    } finally {
+      setIsDeletingReels(false);
+    }
+  };
 
   const monthlySummaryData = useMemo(() => {
     if (activeTab !== 'MONTHLY_SUMMARY') return null;
@@ -647,6 +735,40 @@ export default function Inventory() {
                   </button>
                 )}
 
+                {hasRole('ADMIN') && activeTab === 'PURCHASE_REPORT' && purchaseViewMode === 'DETAIL' && selectedPurchaseReelIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={promptDeleteSelectedReels}
+                    disabled={isDeletingReels}
+                    className="bg-red-600 text-white px-3 py-2 flex items-center text-sm font-semibold rounded-md shadow-sm hover:bg-red-700 transition-colors animate-in fade-in"
+                  >
+                    <Trash2 className="w-4 h-4 mr-1.5" />
+                    Delete Selected ({selectedPurchaseReelIds.length})
+                  </button>
+                )}
+
+                {hasRole('ADMIN') && activeTab === 'PURCHASE_REPORT' && selectedPurchaseReelIds.length === 0 && purchasedReelsForDate.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={promptDeleteAllForDate}
+                    disabled={isDeletingReels || unconsumedReelsForDate.length === 0}
+                    className={cn(
+                      "px-3 py-2 flex items-center text-sm font-semibold rounded-md border transition-colors",
+                      unconsumedReelsForDate.length === 0
+                        ? "bg-muted text-muted-foreground border-border cursor-not-allowed opacity-50"
+                        : "bg-red-50 text-red-700 hover:bg-red-600 hover:text-white border-red-200"
+                    )}
+                    title={
+                      unconsumedReelsForDate.length === 0
+                        ? "All reels on this date have been consumed in production"
+                        : "Delete all unconsumed reels on this date"
+                    }
+                  >
+                    <Trash2 className="w-4 h-4 mr-1.5" />
+                    Delete All for Date
+                  </button>
+                )}
+
                 {activeTab === 'PURCHASE_REPORT' && (
                   <div className="flex bg-secondary/80 p-0.5 rounded-lg border border-border">
                     <button
@@ -866,6 +988,21 @@ export default function Inventory() {
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-muted-foreground uppercase bg-secondary/50 border-b border-border sticky top-0 z-10">
                 <tr>
+                  {hasRole('ADMIN') && (
+                    <th className="w-10 px-4 py-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={
+                          unconsumedReelsForDate.length > 0 &&
+                          selectedPurchaseReelIds.length === unconsumedReelsForDate.length
+                        }
+                        onChange={toggleSelectAllPurchasedReels}
+                        disabled={unconsumedReelsForDate.length === 0}
+                        className="rounded border-input text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                        title="Select/Deselect all unconsumed reels on this date"
+                      />
+                    </th>
+                  )}
                   <th className="px-6 py-3 font-medium">Reel No</th>
                   <th className="px-6 py-3 font-medium">Specs (Type/Size/BF/GSM)</th>
                   <th className="px-6 py-3 font-medium">Supplier</th>
@@ -880,8 +1017,32 @@ export default function Inventory() {
               <tbody className="divide-y divide-border">
                 {purchasedReelsForDate.map((reel: any) => {
                   const consumed = Math.max(0, (Number(reel.weight) || 0) - (Number(reel.currentBalance) || 0));
+                  const isConsumed = consumed > 0.1;
+                  const isReserved = (Number(reel.activeReservedWeight) || 0) > 0.1 || !!reel.reservedForJC;
+
                   return (
-                    <tr key={reel.id} className="hover:bg-muted/50 transition-colors group">
+                    <tr key={reel.id} className={cn("hover:bg-muted/50 transition-colors group", selectedPurchaseReelIds.includes(reel.id) && "bg-red-50/40")}>
+                      {hasRole('ADMIN') && (
+                        <td className="w-10 px-4 py-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedPurchaseReelIds.includes(reel.id)}
+                            disabled={isConsumed || isReserved}
+                            onChange={() => toggleSelectPurchaseReel(reel.id)}
+                            className={cn(
+                              "rounded border-input text-primary focus:ring-primary h-4 w-4",
+                              (isConsumed || isReserved) ? "opacity-25 cursor-not-allowed" : "cursor-pointer"
+                            )}
+                            title={
+                              isConsumed
+                                ? `Cannot delete: Already consumed (${Math.round(consumed)} Kg)`
+                                : isReserved
+                                ? "Cannot delete: Reserved for Job Card"
+                                : "Select for batch deletion"
+                            }
+                          />
+                        </td>
+                      )}
                       <td className="px-6 py-4 font-mono font-bold text-foreground">
                         <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
                           {reel.reelNumber}
@@ -906,22 +1067,47 @@ export default function Inventory() {
                         {reel.inwardDate ? new Date(reel.inwardDate).toLocaleDateString('en-IN') : '-'}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setEditingReel(reel)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground border border-primary/20 transition-all shadow-sm"
-                          title="Edit purchased reel specifications, weight, date or supplier"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                          Edit
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditingReel(reel)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground border border-primary/20 transition-all shadow-sm"
+                            title="Edit purchased reel specifications, weight, date or supplier"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            Edit
+                          </button>
+                          {hasRole('ADMIN') && (
+                            <button
+                              type="button"
+                              onClick={() => promptDeleteSingleReel(reel)}
+                              disabled={isConsumed || isReserved || isDeletingReels}
+                              className={cn(
+                                "inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-md border transition-all shadow-sm",
+                                isConsumed || isReserved
+                                  ? "bg-muted text-muted-foreground border-border cursor-not-allowed opacity-40"
+                                  : "bg-red-50 text-red-700 hover:bg-red-600 hover:text-white border-red-200"
+                              )}
+                              title={
+                                isConsumed
+                                  ? `Cannot delete: Consumed (${Math.round(consumed)} Kg)`
+                                  : isReserved
+                                  ? "Cannot delete: Reserved for Job Card"
+                                  : "Delete this reel from inventory"
+                              }
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
                 {purchasedReelsForDate.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-6 py-12 text-center text-muted-foreground">
+                    <td colSpan={hasRole('ADMIN') ? 10 : 9} className="px-6 py-12 text-center text-muted-foreground">
                       <Package className="w-12 h-12 mx-auto text-muted mb-3" />
                       <p>No purchased reels found for {new Date(reportDate).toLocaleDateString('en-IN')}.</p>
                     </td>
@@ -931,7 +1117,7 @@ export default function Inventory() {
               {purchasedReelsForDate.length > 0 && (
                 <tfoot className="bg-secondary/80 font-bold border-t-2 border-border sticky bottom-0">
                   <tr>
-                    <td colSpan={4} className="px-6 py-3.5 text-right text-foreground uppercase tracking-wider text-xs">Total for Date:</td>
+                    <td colSpan={hasRole('ADMIN') ? 5 : 4} className="px-6 py-3.5 text-right text-foreground uppercase tracking-wider text-xs">Total for Date:</td>
                     <td className="px-6 py-3.5 text-blue-700 text-base">{purchasedTotalWeight.toLocaleString()} Kg</td>
                     <td colSpan={2} className="px-6 py-3.5 text-green-700 text-base">₹{Math.round(purchasedTotalValue).toLocaleString()}</td>
                     <td colSpan={2} className="px-6 py-3.5 text-right text-muted-foreground text-xs">{purchasedReelsForDate.length} Reels</td>
@@ -1164,6 +1350,86 @@ export default function Inventory() {
           handleViewHistory(reel);
         }}
       />
+
+      {/* Delete Reel Confirmation Modal */}
+      {reelDeleteConfirm?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-card w-full max-w-lg rounded-xl border border-border shadow-2xl p-6 overflow-hidden flex flex-col">
+            <div className="flex items-center gap-3 text-red-600 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-foreground">{reelDeleteConfirm.title}</h3>
+                <p className="text-xs text-muted-foreground">Confirm permanent deletion from inventory</p>
+              </div>
+            </div>
+
+            <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-800 dark:text-red-300 text-xs p-3 rounded-lg mb-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+              <div>
+                <strong>Warning:</strong> This will delete {reelDeleteConfirm.reels.length} reel(s) and remove their inward purchase records permanently.
+              </div>
+            </div>
+
+            {reelDeleteConfirm.skippedConsumedCount > 0 && (
+              <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-300 text-xs p-3 rounded-lg mb-3">
+                ⚠️ <strong>Note:</strong> {reelDeleteConfirm.skippedConsumedCount} reel(s) on this date are already consumed in production and will <strong>NOT</strong> be deleted.
+              </div>
+            )}
+
+            <div className="bg-secondary/40 border border-border rounded-lg p-3 text-xs space-y-1.5 mb-5 max-h-48 overflow-y-auto">
+              <div className="flex justify-between font-bold text-foreground pb-1 border-b border-border">
+                <span>Reel No</span>
+                <span>Specs</span>
+                <span>Weight</span>
+              </div>
+              {reelDeleteConfirm.reels.map((r: any) => (
+                <div key={r.id} className="flex justify-between text-muted-foreground py-0.5">
+                  <span className="font-mono font-semibold text-foreground">{r.reelNumber}</span>
+                  <span>{r.paperType} {r.reelSize}" {r.gsm} GSM</span>
+                  <span className="font-bold text-foreground">{Math.round(r.weight)} Kg</span>
+                </div>
+              ))}
+              <div className="pt-2 border-t border-border flex justify-between font-black text-sm text-foreground">
+                <span>Total Weight:</span>
+                <span className="text-red-600">
+                  {reelDeleteConfirm.reels.reduce((sum: number, r: any) => sum + (Number(r.weight) || 0), 0).toLocaleString()} Kg
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setReelDeleteConfirm(null)}
+                disabled={isDeletingReels}
+                className="px-4 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDeleteReels}
+                disabled={isDeletingReels}
+                className="px-4 py-2 text-sm font-bold rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                {isDeletingReels ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Yes, Delete {reelDeleteConfirm.reels.length} Reel{reelDeleteConfirm.reels.length > 1 ? 's' : ''}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     <PrintableReelAudit reels={reels} />
     </>

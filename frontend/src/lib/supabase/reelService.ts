@@ -753,6 +753,88 @@ export const unfreezeReel = async (reelId: string, user: string = 'System'): Pro
   return true;
 };
 
+export const deleteReel = async (reelId: string, user: string = 'System'): Promise<boolean> => {
+  const existing = await getRawReelRow(reelId);
+  const weight = Number(existing.weight ?? existing.raw_data?.weight) || 0;
+  const currentBalance = Number(existing.current_balance ?? existing.raw_data?.currentBalance) || 0;
+  const consumed = Math.max(0, weight - currentBalance);
+  const activeReserved = Number(existing.active_reserved_weight ?? existing.raw_data?.activeReservedWeight) || 0;
+  const reservedForJc = existing.reserved_for_jc || existing.raw_data?.reservedForJC;
+
+  if (consumed > 0.1) {
+    throw new Error(`Cannot delete reel ${existing.reel_number}: It has already been consumed (${consumed.toFixed(1)} Kg) in production.`);
+  }
+
+  if (activeReserved > 0.1 || reservedForJc) {
+    throw new Error(`Cannot delete reel ${existing.reel_number}: It is currently reserved for a Job Card.`);
+  }
+
+  const now = new Date().toISOString();
+
+  // 1. Soft delete the reel
+  const { error: reelError } = await supabase
+    .from('reels')
+    .update({
+      is_archived: true,
+      updated_at: now,
+      updated_by: user,
+      raw_data: {
+        ...(existing.raw_data || {}),
+        isArchived: true,
+        deletedAt: now,
+        deletedBy: user,
+      }
+    })
+    .eq('firestore_document_id', reelId);
+
+  if (reelError) {
+    console.error('Error archiving reel:', reelError);
+    throw reelError;
+  }
+
+  // 2. Soft delete transactions for this reel
+  const { error: txError } = await supabase
+    .from('reel_transactions')
+    .update({
+      is_archived: true,
+      updated_at: now,
+      updated_by: user,
+    })
+    .eq('reel_id', reelId);
+
+  if (txError) {
+    console.error('Error archiving reel transactions:', txError);
+  }
+
+  await logActivity({
+    user,
+    action: 'Deleted Reel',
+    entity: 'reels',
+    referenceId: reelId,
+  });
+
+  return true;
+};
+
+export const deleteMultipleReels = async (
+  reelIds: string[],
+  user: string = 'System'
+): Promise<{ successCount: number; errors: string[] }> => {
+  let successCount = 0;
+  const errors: string[] = [];
+
+  for (const id of reelIds) {
+    try {
+      await deleteReel(id, user);
+      successCount++;
+    } catch (err: any) {
+      errors.push(err.message || `Failed to delete reel ${id}`);
+    }
+  }
+
+  return { successCount, errors };
+};
+
 export interface UpdatePurchasedReelInput {
   reelId: string;
   reelNumber: string;
