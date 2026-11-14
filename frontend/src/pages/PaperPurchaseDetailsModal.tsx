@@ -52,6 +52,8 @@ export default function PaperPurchaseDetailsModal({
 
     return reelTxns.filter(txn => {
       if (txn.type !== 'INWARD') return false;
+      const isAuditTxn = (txn.notes || '').toLowerCase().includes('audit');
+      if (isAuditTxn) return false;
       const date = txn.date;
       if (date < monthStart || date >= monthEnd) return false;
       

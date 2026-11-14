@@ -56,6 +56,8 @@ export default function TotalPaperPurchaseModal({
     const purchases = reelTxns
       .filter(txn => {
         if (txn.type !== 'INWARD') return false;
+        const isAuditTxn = (txn.notes || '').toLowerCase().includes('audit');
+        if (isAuditTxn) return false;
         const date = txn.date;
         if (!date || date < monthStart || date >= monthEnd) return false;
         return reelMap.has(txn.reelId);

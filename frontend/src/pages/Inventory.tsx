@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer, Trash2, AlertTriangle } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer, Trash2, AlertTriangle, Save, CheckSquare, CheckCircle2, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInwardDate, deleteReel, deleteMultipleReels, type Reel } from '../lib/supabase/reelService';
+import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInwardDate, deleteReel, deleteMultipleReels, updateMultipleReelsRate, type Reel } from '../lib/supabase/reelService';
 import BulkInwardModal from './inventory/BulkInwardModal';
 import OutwardModal from './inventory/OutwardModal';
 import ReelHistoryModal from './inventory/ReelHistoryModal';
@@ -19,6 +19,7 @@ import { ClipboardCheck } from 'lucide-react';
 
 export default function Inventory() {
   const { user, hasRole } = useAuth();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'EMPTY' | 'ISSUED_REPORT' | 'PURCHASE_REPORT' | 'MONTHLY_SUMMARY' | 'JOB_FINDER' | 'REVERSE_CALC'>('ACTIVE');
   const [isBulkInwardOpen, setIsBulkInwardOpen] = useState(false);
   const [isOutwardOpen, setIsOutwardOpen] = useState(false);
@@ -69,9 +70,16 @@ export default function Inventory() {
 
   const sortedAndFilteredReels = useMemo(() => {
     let result = reels.filter(r => {
-      const matchesSearch = (r.reelNumber?.toLowerCase() || '').includes(search.toLowerCase()) ||
-        (r.paperType?.toLowerCase() || '').includes(search.toLowerCase()) ||
-        (r.bf?.toLowerCase() || '').includes(search.toLowerCase());
+      const searchLower = search.toLowerCase();
+      const matchesSearch = 
+        (r.reelNumber?.toLowerCase() || '').includes(searchLower) ||
+        (r.paperType?.toLowerCase() || '').includes(searchLower) ||
+        (r.bf?.toLowerCase() || '').includes(searchLower) ||
+        (r.gsm?.toString() || '').includes(searchLower) ||
+        (r.reelSize?.toString() || '').includes(searchLower) ||
+        (r.supplierName?.toLowerCase() || '').includes(searchLower) ||
+        (r.supplier?.toLowerCase() || '').includes(searchLower) ||
+        (r.manufacturerName?.toLowerCase() || '').includes(searchLower);
         
       if (!matchesSearch) return false;
       
@@ -254,25 +262,45 @@ export default function Inventory() {
   const purchasedReelsForDate = useMemo(() => {
     if (activeTab !== 'PURCHASE_REPORT') return [];
 
-    const inTxs = transactions.filter(tx => tx.type === 'INWARD' && tx.date && tx.date.startsWith(reportDate));
+    const inTxs = transactions.filter(tx => {
+      if (tx.type !== 'INWARD') return false;
+      const isAudit = (tx.notes || '').toLowerCase().includes('audit');
+      if (isAudit) return false;
+      return tx.date && tx.date.startsWith(reportDate);
+    });
     const txReelIds = new Set(inTxs.map(tx => tx.reelId));
 
-    const matched = reels.filter(r => txReelIds.has(r.id) || (r.inwardDate && r.inwardDate.startsWith(reportDate)));
+    const matched = reels.filter(r => {
+      if (txReelIds.has(r.id)) return true;
+      if (r.inwardDate && r.inwardDate.startsWith(reportDate)) {
+        const rTxs = transactions.filter(tx => tx.reelId === r.id);
+        const hasAuditOnly = rTxs.length > 0 && rTxs.every(tx => (tx.notes || '').toLowerCase().includes('audit'));
+        return !hasAuditOnly;
+      }
+      return false;
+    });
 
     return matched.sort((a, b) => (a.reelNumber || '').localeCompare(b.reelNumber || '', undefined, { numeric: true }));
   }, [transactions, reels, reportDate, activeTab]);
+
+  // Bulk Rate Changes State (in-memory until Save button clicked)
+  const [pendingRateChanges, setPendingRateChanges] = useState<Record<string, number>>({});
+  const [bulkRateInput, setBulkRateInput] = useState('');
+  const [isRateConfirmModalOpen, setIsRateConfirmModalOpen] = useState(false);
+  const [isSavingRates, setIsSavingRates] = useState(false);
+  const [rateUpdateSuccess, setRateUpdateSuccess] = useState('');
 
   const { purchasedTotalWeight, purchasedTotalValue } = useMemo(() => {
     let tw = 0;
     let tv = 0;
     purchasedReelsForDate.forEach(r => {
       const w = Number(r.weight) || 0;
-      const rate = Number(r.rate) || 0;
+      const effectiveRate = pendingRateChanges[r.id] !== undefined ? pendingRateChanges[r.id] : (Number(r.rate) || 0);
       tw += w;
-      tv += w * rate;
+      tv += w * effectiveRate;
     });
     return { purchasedTotalWeight: Math.round(tw), purchasedTotalValue: Math.round(tv) };
-  }, [purchasedReelsForDate]);
+  }, [purchasedReelsForDate, pendingRateChanges]);
 
   // Unconsumed reels for the selected date
   const unconsumedReelsForDate = useMemo(() => {
@@ -285,6 +313,7 @@ export default function Inventory() {
 
   // Selected reel IDs for batch operations
   const [selectedPurchaseReelIds, setSelectedPurchaseReelIds] = useState<string[]>([]);
+  const [selectedActiveReelIds, setSelectedActiveReelIds] = useState<string[]>([]);
   const [isDeletingReels, setIsDeletingReels] = useState(false);
   const [reelDeleteConfirm, setReelDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -293,6 +322,9 @@ export default function Inventory() {
     skippedConsumedCount: number;
   } | null>(null);
 
+  const currentSelectedIds = activeTab === 'PURCHASE_REPORT' ? selectedPurchaseReelIds : selectedActiveReelIds;
+  const pendingCount = Object.keys(pendingRateChanges).length;
+
   const toggleSelectPurchaseReel = (id: string) => {
     setSelectedPurchaseReelIds(prev => 
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
@@ -300,10 +332,78 @@ export default function Inventory() {
   };
 
   const toggleSelectAllPurchasedReels = () => {
-    if (selectedPurchaseReelIds.length === unconsumedReelsForDate.length) {
+    if (selectedPurchaseReelIds.length === purchasedReelsForDate.length) {
       setSelectedPurchaseReelIds([]);
     } else {
-      setSelectedPurchaseReelIds(unconsumedReelsForDate.map(r => r.id));
+      setSelectedPurchaseReelIds(purchasedReelsForDate.map(r => r.id));
+    }
+  };
+
+  const toggleSelectActiveReel = (id: string) => {
+    setSelectedActiveReelIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllActiveReels = () => {
+    if (selectedActiveReelIds.length === sortedAndFilteredReels.length) {
+      setSelectedActiveReelIds([]);
+    } else {
+      setSelectedActiveReelIds(sortedAndFilteredReels.map(r => r.id));
+    }
+  };
+
+  const handleApplyBulkRate = () => {
+    const rateVal = parseFloat(bulkRateInput);
+    if (isNaN(rateVal) || rateVal <= 0) {
+      alert("Please enter a valid rate (greater than 0).");
+      return;
+    }
+    if (currentSelectedIds.length === 0) {
+      alert("Please select at least one reel using the checkboxes first.");
+      return;
+    }
+
+    setPendingRateChanges(prev => {
+      const next = { ...prev };
+      currentSelectedIds.forEach(id => {
+        next[id] = rateVal;
+      });
+      return next;
+    });
+
+    setRateUpdateSuccess(`Applied ₹${rateVal.toFixed(2)} to ${currentSelectedIds.length} reel(s). Click "Save Rates" to commit to database.`);
+    setTimeout(() => setRateUpdateSuccess(''), 5000);
+  };
+
+  const handleDiscardBulkRates = () => {
+    if (confirm("Are you sure you want to discard all unsaved rate changes?")) {
+      setPendingRateChanges({});
+    }
+  };
+
+  const handleConfirmSaveBulkRates = async () => {
+    const ids = Object.keys(pendingRateChanges);
+    if (ids.length === 0) return;
+    try {
+      setIsSavingRates(true);
+      const updates = ids.map(id => ({ id, rate: pendingRateChanges[id] }));
+      await updateMultipleReelsRate(updates, user?.name || 'System');
+      await queryClient.invalidateQueries({ queryKey: ['reels'] });
+      await queryClient.invalidateQueries({ queryKey: ['reelTransactions'] });
+      await refetch();
+      await refetchTx();
+
+      setPendingRateChanges({});
+      setSelectedActiveReelIds([]);
+      setSelectedPurchaseReelIds([]);
+      setIsRateConfirmModalOpen(false);
+      alert(`Successfully saved updated rates for ${updates.length} reel(s)!`);
+    } catch (err: any) {
+      console.error('Failed to save bulk rates:', err);
+      alert(err.message || 'Failed to save rate updates.');
+    } finally {
+      setIsSavingRates(false);
     }
   };
 
@@ -319,11 +419,17 @@ export default function Inventory() {
   const promptDeleteSelectedReels = () => {
     const selectedReels = purchasedReelsForDate.filter(r => selectedPurchaseReelIds.includes(r.id));
     if (selectedReels.length === 0) return;
+    const unconsumedSelected = selectedReels.filter(r => unconsumedReelsForDate.some(u => u.id === r.id));
+    const skipped = selectedReels.length - unconsumedSelected.length;
+    if (unconsumedSelected.length === 0) {
+      alert("All selected reels have already been consumed or reserved and cannot be deleted.");
+      return;
+    }
     setReelDeleteConfirm({
       isOpen: true,
-      reels: selectedReels,
-      title: `Delete Selected Reels (${selectedReels.length})`,
-      skippedConsumedCount: 0,
+      reels: unconsumedSelected,
+      title: `Delete Selected Reels (${unconsumedSelected.length})`,
+      skippedConsumedCount: skipped,
     });
   };
 
@@ -399,6 +505,8 @@ export default function Inventory() {
       const outReelIds = new Set<string>();
 
       dayTxs.forEach(tx => {
+        const isAudit = (tx.notes || '').toLowerCase().includes('audit');
+        if (isAudit) return;
         if (tx.type === 'INWARD') {
           inReelIds.add(tx.reelId);
           inWeight += Number(tx.quantity) || 0;
@@ -818,6 +926,79 @@ export default function Inventory() {
           )}
         </div>
 
+        {/* BULK RATE UPDATE BAR */}
+        {hasRole('ADMIN') && (activeTab === 'ACTIVE' || activeTab === 'PURCHASE_REPORT') && (currentSelectedIds.length > 0 || pendingCount > 0) && (
+          <div className="mx-4 my-2.5 bg-gradient-to-r from-blue-50 via-indigo-50 to-emerald-50 dark:from-slate-900 dark:via-indigo-950/40 dark:to-slate-900 border border-blue-200 dark:border-blue-900/50 rounded-lg p-3 flex items-center justify-between flex-wrap gap-3 shadow-sm animate-in fade-in">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900 dark:text-blue-300 bg-blue-100/70 dark:bg-blue-900/60 px-2.5 py-1 rounded-md border border-blue-200 dark:border-blue-800">
+                <CheckSquare className="w-3.5 h-3.5 text-blue-600" />
+                <span>{currentSelectedIds.length} Reel(s) Selected</span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-bold text-foreground">Set Rate:</label>
+                <div className="relative w-28">
+                  <span className="absolute left-2.5 top-1.5 text-xs text-muted-foreground font-bold">₹</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={bulkRateInput}
+                    onChange={(e) => setBulkRateInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleApplyBulkRate();
+                      }
+                    }}
+                    placeholder="0.00"
+                    className="w-full pl-6 pr-2 py-1 text-xs font-bold rounded-md border border-input bg-background focus:ring-2 focus:ring-primary focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleApplyBulkRate}
+                  disabled={currentSelectedIds.length === 0 || !bulkRateInput}
+                  className="bg-primary text-primary-foreground px-3 py-1 rounded-md text-xs font-bold hover:bg-primary/90 disabled:opacity-50 transition-all shadow-xs"
+                >
+                  Apply to Selected
+                </button>
+              </div>
+
+              {rateUpdateSuccess && (
+                <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200 animate-in fade-in">
+                  ✓ {rateUpdateSuccess}
+                </span>
+              )}
+            </div>
+
+            {pendingCount > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-950/80 px-2.5 py-1 rounded-md border border-emerald-300 dark:border-emerald-800 animate-pulse">
+                  ⚡ {pendingCount} Pending Update(s) (Not Saved Yet)
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsRateConfirmModalOpen(true)}
+                  disabled={isSavingRates}
+                  className="bg-emerald-600 text-white px-3.5 py-1 rounded-md text-xs font-bold hover:bg-emerald-700 shadow-sm flex items-center gap-1.5 transition-all"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  Save Rates ({pendingCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDiscardBulkRates}
+                  disabled={isSavingRates}
+                  className="bg-secondary text-secondary-foreground hover:bg-destructive hover:text-destructive-foreground px-2.5 py-1 rounded-md text-xs font-semibold border border-border transition-all"
+                >
+                  Discard
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex-1 overflow-auto">
           {(loadingReels || ((activeTab === 'ISSUED_REPORT' || activeTab === 'PURCHASE_REPORT' || activeTab === 'MONTHLY_SUMMARY') && loadingTx)) ? (
             <div className="p-8 text-center text-muted-foreground">Loading...</div>
@@ -993,13 +1174,13 @@ export default function Inventory() {
                       <input
                         type="checkbox"
                         checked={
-                          unconsumedReelsForDate.length > 0 &&
-                          selectedPurchaseReelIds.length === unconsumedReelsForDate.length
+                          purchasedReelsForDate.length > 0 &&
+                          selectedPurchaseReelIds.length === purchasedReelsForDate.length
                         }
                         onChange={toggleSelectAllPurchasedReels}
-                        disabled={unconsumedReelsForDate.length === 0}
+                        disabled={purchasedReelsForDate.length === 0}
                         className="rounded border-input text-primary focus:ring-primary h-4 w-4 cursor-pointer"
-                        title="Select/Deselect all unconsumed reels on this date"
+                        title="Select/Deselect all reels on this date"
                       />
                     </th>
                   )}
@@ -1021,25 +1202,15 @@ export default function Inventory() {
                   const isReserved = (Number(reel.activeReservedWeight) || 0) > 0.1 || !!reel.reservedForJC;
 
                   return (
-                    <tr key={reel.id} className={cn("hover:bg-muted/50 transition-colors group", selectedPurchaseReelIds.includes(reel.id) && "bg-red-50/40")}>
+                    <tr key={reel.id} className={cn("hover:bg-muted/50 transition-colors group", selectedPurchaseReelIds.includes(reel.id) && "bg-blue-50/40 dark:bg-blue-950/20")}>
                       {hasRole('ADMIN') && (
                         <td className="w-10 px-4 py-4 text-center">
                           <input
                             type="checkbox"
                             checked={selectedPurchaseReelIds.includes(reel.id)}
-                            disabled={isConsumed || isReserved}
                             onChange={() => toggleSelectPurchaseReel(reel.id)}
-                            className={cn(
-                              "rounded border-input text-primary focus:ring-primary h-4 w-4",
-                              (isConsumed || isReserved) ? "opacity-25 cursor-not-allowed" : "cursor-pointer"
-                            )}
-                            title={
-                              isConsumed
-                                ? `Cannot delete: Already consumed (${Math.round(consumed)} Kg)`
-                                : isReserved
-                                ? "Cannot delete: Reserved for Job Card"
-                                : "Select for batch deletion"
-                            }
+                            className="rounded border-input text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                            title="Select for bulk rate update or deletion"
                           />
                         </td>
                       )}
@@ -1058,7 +1229,17 @@ export default function Inventory() {
                         )}
                       </td>
                       <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
-                        {reel.rate ? `₹${Number(reel.rate).toFixed(2)}` : '-'}
+                        {pendingRateChanges[reel.id] !== undefined ? (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="line-through text-xs text-muted-foreground">₹{Number(reel.rate || 0).toFixed(2)}</span>
+                            <span className="text-emerald-700 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 shadow-sm animate-pulse">
+                              ₹{Number(pendingRateChanges[reel.id]).toFixed(2)}
+                            </span>
+                            <span className="text-[10px] uppercase font-bold text-emerald-600 bg-emerald-100 dark:bg-emerald-900/60 px-1 py-0.2 rounded">Modified</span>
+                          </div>
+                        ) : (
+                          reel.rate ? `₹${Number(reel.rate).toFixed(2)}` : '-'
+                        )}
                       </td>
                       <td className="px-6 py-4 text-blue-600 font-bold">{Math.round(reel.weight)} Kg</td>
                       <td className="px-6 py-4 text-red-600">{consumed > 0 ? `${Math.round(consumed)} Kg` : '-'}</td>
@@ -1169,6 +1350,21 @@ export default function Inventory() {
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-muted-foreground uppercase bg-secondary/50 border-b border-border sticky top-0 z-10">
                 <tr>
+                  {hasRole('ADMIN') && (
+                    <th className="w-10 px-4 py-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={
+                          sortedAndFilteredReels.length > 0 &&
+                          selectedActiveReelIds.length === sortedAndFilteredReels.length
+                        }
+                        onChange={toggleSelectAllActiveReels}
+                        disabled={sortedAndFilteredReels.length === 0}
+                        className="rounded border-input text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                        title="Select/Deselect all visible reels"
+                      />
+                    </th>
+                  )}
                   <th className="px-6 py-3 font-medium">Reel No</th>
                   <th className="px-6 py-3 font-medium">Specs (Type/Size/BF/GSM)</th>
                   <th className="px-6 py-3 font-medium">Supplier</th>
@@ -1187,9 +1383,20 @@ export default function Inventory() {
                   return (
                     <tr 
                       key={reel.id} 
-                      className="hover:bg-muted/50 transition-colors cursor-pointer group"
+                      className={cn("hover:bg-muted/50 transition-colors cursor-pointer group", selectedActiveReelIds.includes(reel.id) && "bg-blue-50/40 dark:bg-blue-950/20")}
                       onClick={() => handleViewHistory(reel)}
                     >
+                      {hasRole('ADMIN') && (
+                        <td className="w-10 px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedActiveReelIds.includes(reel.id)}
+                            onChange={() => toggleSelectActiveReel(reel.id)}
+                            className="rounded border-input text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                            title="Select for bulk rate update"
+                          />
+                        </td>
+                      )}
                       <td className="px-6 py-4 font-bold text-blue-600 group-hover:text-blue-800 flex items-center gap-1.5">
                         <History className="w-3.5 h-3.5 text-blue-400 group-hover:text-blue-600" />
                         {reel.reelNumber}
@@ -1203,8 +1410,18 @@ export default function Inventory() {
                           <div className="text-xs">Mfr: {reel.manufacturerName}</div>
                         )}
                       </td>
-                      <td className="px-6 py-4 font-semibold text-gray-700">
-                        {reel.rate ? `₹${Number(reel.rate).toFixed(3)}` : '-'}
+                      <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">
+                        {pendingRateChanges[reel.id] !== undefined ? (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="line-through text-xs text-muted-foreground">₹{Number(reel.rate || 0).toFixed(2)}</span>
+                            <span className="text-emerald-700 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 shadow-sm animate-pulse">
+                              ₹{Number(pendingRateChanges[reel.id]).toFixed(2)}
+                            </span>
+                            <span className="text-[10px] uppercase font-bold text-emerald-600 bg-emerald-100 dark:bg-emerald-900/60 px-1 py-0.2 rounded">Modified</span>
+                          </div>
+                        ) : (
+                          reel.rate ? `₹${Number(reel.rate).toFixed(2)}` : '-'
+                        )}
                       </td>
                       <td className="px-6 py-4 text-blue-600">{Math.round(reel.weight)} Kg</td>
                       <td className="px-6 py-4 text-red-600">{consumed > 0 ? `${Math.round(consumed)} Kg` : '-'}</td>
@@ -1228,7 +1445,7 @@ export default function Inventory() {
                 })}
                 {sortedAndFilteredReels.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-6 py-12 text-center text-muted-foreground">
+                    <td colSpan={hasRole('ADMIN') ? 10 : 9} className="px-6 py-12 text-center text-muted-foreground">
                       <Package className="w-12 h-12 mx-auto text-muted mb-3" />
                       <p>No {activeTab === 'EMPTY' ? 'empty' : 'active'} reels found.</p>
                     </td>
@@ -1426,6 +1643,97 @@ export default function Inventory() {
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Rate Confirmation Modal */}
+      {isRateConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-card w-full max-w-2xl rounded-xl shadow-2xl border border-border flex flex-col max-h-[85vh] overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-border bg-emerald-50 dark:bg-emerald-950/40">
+              <div>
+                <h3 className="text-lg font-bold text-emerald-900 dark:text-emerald-100 flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  Confirm Bulk Rate Update
+                </h3>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">
+                  Review the rate updates below. Clicking "Confirm & Save" will permanently update these reels in the database.
+                </p>
+              </div>
+              <button 
+                onClick={() => setIsRateConfirmModalOpen(false)}
+                className="p-1.5 rounded-md hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 flex-1 overflow-y-auto">
+              <div className="border border-border rounded-lg overflow-hidden">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-muted text-muted-foreground uppercase text-[10px] font-bold">
+                    <tr>
+                      <th className="px-3 py-2">Reel No</th>
+                      <th className="px-3 py-2">Supplier</th>
+                      <th className="px-3 py-2">Specs</th>
+                      <th className="px-3 py-2 text-right">Old Rate</th>
+                      <th className="px-3 py-2 text-right text-emerald-600">New Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {Object.keys(pendingRateChanges).map(id => {
+                      const reel = reels.find(r => r.id === id);
+                      if (!reel) return null;
+                      const oldRate = Number(reel.rate) || 0;
+                      const newRate = pendingRateChanges[id];
+                      return (
+                        <tr key={id} className="hover:bg-muted/40">
+                          <td className="px-3 py-2 font-mono font-bold text-foreground">{reel.reelNumber}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{reel.supplierName || '-'}</td>
+                          <td className="px-3 py-2">{reel.paperType} | {reel.reelSize}" | {reel.gsm} GSM</td>
+                          <td className="px-3 py-2 text-right font-medium text-muted-foreground">₹{oldRate.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-bold text-emerald-600">₹{newRate.toFixed(2)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-border flex items-center justify-between bg-muted/20">
+              <span className="text-xs text-muted-foreground">
+                Total: <strong className="text-foreground">{Object.keys(pendingRateChanges).length}</strong> reel(s)
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsRateConfirmModalOpen(false)}
+                  disabled={isSavingRates}
+                  className="px-4 py-2 text-xs font-semibold rounded-md border border-input hover:bg-secondary transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSaveBulkRates}
+                  disabled={isSavingRates}
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50"
+                >
+                  {isSavingRates ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Saving to Database...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      Confirm & Save to Database
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -1059,4 +1059,60 @@ export const updatePurchasedReel = async (
   });
 
   return true;
-};
+};
+
+export const updateMultipleReelsRate = async (
+  updates: { id: string; rate: number }[],
+  user: string = 'System'
+): Promise<{ success: boolean; updatedCount: number }> => {
+  if (updates.length === 0) return { success: true, updatedCount: 0 };
+  const now = new Date().toISOString();
+
+  const batchSize = 20;
+  for (let i = 0; i < updates.length; i += batchSize) {
+    const chunk = updates.slice(i, i + batchSize);
+    await Promise.all(
+      chunk.map(async ({ id, rate }) => {
+        const { data: existing } = await supabase
+          .from('reels')
+          .select('raw_data')
+          .eq('firestore_document_id', id)
+          .maybeSingle();
+
+        const existingRaw = existing?.raw_data || {};
+        const updatedRaw = {
+          ...existingRaw,
+          rate,
+          updatedBy: user,
+          updatedAt: now,
+        };
+
+        const { error } = await supabase
+          .from('reels')
+          .update({
+            rate,
+            updated_by: user,
+            updated_at: now,
+            raw_data: updatedRaw,
+          })
+          .eq('firestore_document_id', id);
+
+        if (error) {
+          console.error(`Error updating rate for reel ${id}:`, error);
+          throw error;
+        }
+      })
+    );
+  }
+
+  await logActivity({
+    user,
+    action: 'Bulk Rate Update',
+    entity: 'reels',
+    count: updates.length,
+    details: `Updated rate for ${updates.length} reel(s)`,
+  });
+
+  return { success: true, updatedCount: updates.length };
+};
+

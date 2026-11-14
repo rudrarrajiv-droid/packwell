@@ -500,13 +500,13 @@ export default function MR() {
 
   // --- AUTOMATIC CALCULATIONS & MAPPINGS ---
 
-  // 1. PAPER INVENTORY (Opening, Purchase, Consumption, Closing)
+  // 1. PAPER INVENTORY (Opening, Purchase, Audit Adjustment, Consumption, Closing)
   const paperStats = useMemo(() => {
-    const stats: Record<string, { opnQty: number; opnAmt: number; purQty: number; purAmt: number; conQty: number; conAmt: number; cloQty: number; cloAmt: number }> = {
-      "Semi Kraft": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
-      "Virgin Kraft": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
-      "Chennai": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
-      "Others": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
+    const stats: Record<string, { opnQty: number; opnAmt: number; purQty: number; purAmt: number; adjQty: number; adjAmt: number; conQty: number; conAmt: number; cloQty: number; cloAmt: number }> = {
+      "Semi Kraft": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, adjQty: 0, adjAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
+      "Virgin Kraft": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, adjQty: 0, adjAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
+      "Chennai": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, adjQty: 0, adjAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
+      "Others": { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, adjQty: 0, adjAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 },
     };
 
     const reelMap = new Map<string, { type: string; rate: number }>();
@@ -525,11 +525,15 @@ export default function MR() {
 
     reelTxns.forEach(txn => {
       const reelInfo = reelMap.get(txn.reelId);
-      const type = (reelInfo?.type && stats[reelInfo.type]) ? reelInfo.type : "Semi Kraft";
-      const rate = reelInfo?.rate || 0;
+      if (!reelInfo) return; // Skip transactions belonging to deleted or archived reels
+
+      const type = (reelInfo.type && stats[reelInfo.type]) ? reelInfo.type : "Semi Kraft";
+      const rate = reelInfo.rate || 0;
       const date = txn.date;
       const qty = Number(txn.quantity) || 0;
       const amt = qty * rate;
+
+      const isAuditTxn = (txn.notes || '').toLowerCase().includes('audit');
 
       if (date < monthStart) {
         if (txn.type === 'INWARD') {
@@ -540,12 +544,24 @@ export default function MR() {
           stats[type].opnAmt -= amt;
         }
       } else if (date >= monthStart && date < monthEnd) {
-        if (txn.type === 'INWARD') {
-          stats[type].purQty += qty;
-          stats[type].purAmt += amt;
-        } else if (txn.type === 'OUTWARD' || txn.type === 'ALLOCATION') {
-          stats[type].conQty += qty;
-          stats[type].conAmt += amt;
+        if (isAuditTxn) {
+          // Physical Stock Audit adjustments are tracked separately and excluded from supplier purchases
+          if (txn.type === 'INWARD') {
+            stats[type].adjQty += qty;
+            stats[type].adjAmt += amt;
+          } else if (txn.type === 'OUTWARD') {
+            stats[type].adjQty -= qty;
+            stats[type].adjAmt -= amt;
+          }
+        } else {
+          // Genuine supplier purchase
+          if (txn.type === 'INWARD') {
+            stats[type].purQty += qty;
+            stats[type].purAmt += amt;
+          } else if (txn.type === 'OUTWARD' || txn.type === 'ALLOCATION') {
+            stats[type].conQty += qty;
+            stats[type].conAmt += amt;
+          }
         }
       }
     });
@@ -555,6 +571,8 @@ export default function MR() {
       const manualOpnAmt = manualData[`PAPER:${type}:OPN_AMT`];
       const manualPurQty = manualData[`PAPER:${type}:PUR_QTY`];
       const manualPurAmt = manualData[`PAPER:${type}:PUR_AMT`];
+      const manualAdjQty = manualData[`PAPER:${type}:ADJ_QTY`];
+      const manualAdjAmt = manualData[`PAPER:${type}:ADJ_AMT`];
       const manualConQty = manualData[`PAPER:${type}:CON_QTY`];
       const manualConAmt = manualData[`PAPER:${type}:CON_AMT`];
 
@@ -562,11 +580,13 @@ export default function MR() {
       if (manualOpnAmt !== undefined) stats[type].opnAmt = manualOpnAmt;
       if (manualPurQty !== undefined) stats[type].purQty = manualPurQty;
       if (manualPurAmt !== undefined) stats[type].purAmt = manualPurAmt;
+      if (manualAdjQty !== undefined) stats[type].adjQty = manualAdjQty;
+      if (manualAdjAmt !== undefined) stats[type].adjAmt = manualAdjAmt;
       if (manualConQty !== undefined) stats[type].conQty = manualConQty;
       if (manualConAmt !== undefined) stats[type].conAmt = manualConAmt;
 
-      stats[type].cloQty = stats[type].opnQty + stats[type].purQty - stats[type].conQty;
-      stats[type].cloAmt = stats[type].opnAmt + stats[type].purAmt - stats[type].conAmt;
+      stats[type].cloQty = stats[type].opnQty + stats[type].purQty + stats[type].adjQty - stats[type].conQty;
+      stats[type].cloAmt = stats[type].opnAmt + stats[type].purAmt + stats[type].adjAmt - stats[type].conAmt;
     });
 
     return stats;
@@ -578,11 +598,13 @@ export default function MR() {
       opnAmt: acc.opnAmt + curr.opnAmt,
       purQty: acc.purQty + curr.purQty,
       purAmt: acc.purAmt + curr.purAmt,
+      adjQty: acc.adjQty + curr.adjQty,
+      adjAmt: acc.adjAmt + curr.adjAmt,
       conQty: acc.conQty + curr.conQty,
       conAmt: acc.conAmt + curr.conAmt,
       cloQty: acc.cloQty + curr.cloQty,
       cloAmt: acc.cloAmt + curr.cloAmt,
-    }), { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 });
+    }), { opnQty: 0, opnAmt: 0, purQty: 0, purAmt: 0, adjQty: 0, adjAmt: 0, conQty: 0, conAmt: 0, cloQty: 0, cloAmt: 0 });
   }, [paperStats]);
 
   const allParties = useMemo(() => {
@@ -1228,9 +1250,10 @@ export default function MR() {
             <table className="w-full text-xs sm:text-sm print:text-[10px]">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 uppercase text-[11px] font-bold tracking-wider print:text-[9px]">
-                  <th className="px-4 py-3 text-left w-40 print:py-1">Paper Type</th>
+                  <th className="px-4 py-3 text-left w-36 print:py-1">Paper Type</th>
                   <th colSpan={2} className="px-3 py-2 text-center bg-slate-100/50 border-x border-slate-200 print:py-1">Opening Stock</th>
                   <th colSpan={2} className="px-3 py-2 text-center border-r border-slate-200 print:py-1">Current Month Purchase</th>
+                  <th colSpan={2} className="px-3 py-2 text-center bg-amber-50/50 text-amber-900 border-r border-slate-200 print:py-1">Audit Adjustment</th>
                   <th colSpan={2} className="px-3 py-2 text-center bg-indigo-50/40 text-indigo-900 border-r border-slate-200 print:py-1">Consumption (Used)</th>
                   <th colSpan={2} className="px-3 py-2 text-center bg-slate-100/50">Closing Balance</th>
                 </tr>
@@ -1240,6 +1263,8 @@ export default function MR() {
                   <th className="px-3 py-1.5 border-r border-slate-200">Amount (₹)</th>
                   <th className="px-3 py-1.5">Qty (kg)</th>
                   <th className="px-3 py-1.5 border-r border-slate-200">Amount (₹)</th>
+                  <th className="px-3 py-1.5 bg-amber-50/30 text-amber-800">Qty (kg)</th>
+                  <th className="px-3 py-1.5 bg-amber-50/30 text-amber-800 border-r border-slate-200 font-bold">Amount (₹)</th>
                   <th className="px-3 py-1.5 bg-indigo-50/30 text-indigo-800">Qty (kg)</th>
                   <th className="px-3 py-1.5 bg-indigo-50/30 text-indigo-800 border-r border-slate-200 font-bold">Amount (₹)</th>
                   <th className="px-3 py-1.5">Qty (kg)</th>
@@ -1263,6 +1288,12 @@ export default function MR() {
                       {formatINR(stats.purQty)}
                     </td>
                     <td className="px-3 py-3 text-right text-slate-700 border-r border-slate-100 font-medium print:py-1">₹ {formatINR(stats.purAmt)}</td>
+                    <td className="px-3 py-3 text-right bg-amber-50/20 text-amber-700 font-semibold print:py-1">
+                      {stats.adjQty === 0 ? '-' : `${stats.adjQty > 0 ? '+' : ''}${formatINR(stats.adjQty)}`}
+                    </td>
+                    <td className="px-3 py-3 text-right bg-amber-50/20 text-amber-900 border-r border-slate-100 font-bold print:py-1">
+                      {stats.adjAmt === 0 ? '-' : `${stats.adjAmt > 0 ? '+₹ ' : '-₹ '}${formatINR(Math.abs(stats.adjAmt))}`}
+                    </td>
                     <td className="px-3 py-3 text-right text-indigo-700 font-semibold bg-indigo-50/20 print:py-1">{formatINR(stats.conQty)}</td>
                     <td className="px-3 py-3 text-right text-indigo-900 font-bold bg-indigo-50/20 border-r border-slate-100 print:py-1">₹ {formatINR(stats.conAmt)}</td>
                     <td className="px-3 py-3 text-right text-slate-700 font-semibold print:py-1">{formatINR(stats.cloQty)}</td>
@@ -1283,6 +1314,12 @@ export default function MR() {
                     {formatINR(paperTotals.purQty)}
                   </td>
                   <td className="px-3 py-3 text-right text-white border-r border-slate-800 print:text-slate-900 print:py-1">₹ {formatINR(paperTotals.purAmt)}</td>
+                  <td className="px-3 py-3 text-right text-amber-300 font-bold print:text-slate-900 print:py-1">
+                    {paperTotals.adjQty === 0 ? '-' : `${paperTotals.adjQty > 0 ? '+' : ''}${formatINR(paperTotals.adjQty)}`}
+                  </td>
+                  <td className="px-3 py-3 text-right text-amber-200 border-r border-slate-800 font-bold print:text-slate-900 print:py-1">
+                    {paperTotals.adjAmt === 0 ? '-' : `${paperTotals.adjAmt > 0 ? '+₹ ' : '-₹ '}${formatINR(Math.abs(paperTotals.adjAmt))}`}
+                  </td>
                   <td className="px-3 py-3 text-right text-indigo-300 print:text-slate-900 print:py-1">{formatINR(paperTotals.conQty)}</td>
                   <td className="px-3 py-3 text-right text-indigo-200 border-r border-slate-800 font-black print:text-slate-900 print:py-1">₹ {formatINR(paperTotals.conAmt)}</td>
                   <td className="px-3 py-3 text-right text-slate-300 print:text-slate-900 print:py-1">{formatINR(paperTotals.cloQty)}</td>
