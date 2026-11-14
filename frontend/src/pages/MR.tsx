@@ -320,6 +320,32 @@ export default function MR() {
     };
   }, [rmList, rmTransactions, currentMonth]);
 
+  // 3B. AUTO-CALCULATE RAW MATERIAL (CONSUMABLE GOODS) INWARD / PURCHASES FOR CURRENT MONTH
+  const autoRawMaterialPurchase = useMemo(() => {
+    const rmMap = new Map<string, { rate: number; name: string }>();
+    rmList.forEach(rm => {
+      if (rm.id) {
+        rmMap.set(rm.id, { rate: Number(rm.rate) || 0, name: rm.name || '' });
+      }
+    });
+
+    const monthlyInTxns = rmTransactions.filter(t => {
+      const txDate = t.date || t.createdAt;
+      // Filter strictly for IN (inward purchases) for active month
+      return isDateInTargetMonth(txDate, currentMonth) && t.type === 'IN';
+    });
+
+    let totalPurchase = 0;
+    monthlyInTxns.forEach(t => {
+      const rmInfo = t.rawMaterialId ? rmMap.get(t.rawMaterialId) : null;
+      const itemRate = t.rate || (rmInfo ? rmInfo.rate : 0) || 0;
+      const amt = (t.amount !== undefined && t.amount > 0) ? t.amount : (Number(t.quantity) * Number(itemRate));
+      totalPurchase += Number(amt) || 0;
+    });
+
+    return Math.round(totalPurchase);
+  }, [rmList, rmTransactions, currentMonth]);
+
   // Load saved values from database
   useEffect(() => {
     if (report?.expenses) {
@@ -611,11 +637,37 @@ export default function MR() {
   const netSaleWithoutGST = (totalPartySaleWOGST + tallyDataWOGST) - creditNoteWOGST;
   const netSaleWithGST = (totalPartySaleWGST + tallyDataWGST) - creditNoteWGST;
 
-  const kraftPurchaseWOGST = manualData['PURCHASE:KRAFT_PAPER:WOGST'] || 0;
-  const kraftPurchaseWGST = manualData['PURCHASE:KRAFT_PAPER:WGST'] || 0;
+  // 1. Kraft Paper Purchase:
+  // Auto Without GST comes from Paper Inventory & Consumption Reconciliation (paperTotals.purAmt)
+  // Auto With GST = Without GST + 18% GST
+  const autoKraftPurchaseWOGST = paperTotals.purAmt;
+  const autoKraftPurchaseWGST = Math.round(autoKraftPurchaseWOGST * 1.18);
+
+  const kraftPurchaseWOGST = manualData['PURCHASE:KRAFT_PAPER:WOGST'] !== undefined
+    ? Number(manualData['PURCHASE:KRAFT_PAPER:WOGST'])
+    : autoKraftPurchaseWOGST;
+
+  const kraftPurchaseWGST = manualData['PURCHASE:KRAFT_PAPER:WGST'] !== undefined
+    ? Number(manualData['PURCHASE:KRAFT_PAPER:WGST'])
+    : (manualData['PURCHASE:KRAFT_PAPER:WOGST'] !== undefined
+        ? Math.round(Number(manualData['PURCHASE:KRAFT_PAPER:WOGST']) * 1.18)
+        : autoKraftPurchaseWGST);
   
-  const consumablePurchaseWOGST = manualData['PURCHASE:CONSUMABLES:WOGST'] || 0;
-  const consumablePurchaseWGST = manualData['PURCHASE:CONSUMABLES:WGST'] || 0;
+  // 2. Other Consumable Goods Purchase:
+  // Auto Without GST comes from Raw Material inward transactions
+  // Auto With GST = Without GST + 18% GST
+  const autoConsumablePurchaseWOGST = autoRawMaterialPurchase;
+  const autoConsumablePurchaseWGST = Math.round(autoConsumablePurchaseWOGST * 1.18);
+
+  const consumablePurchaseWOGST = manualData['PURCHASE:CONSUMABLES:WOGST'] !== undefined
+    ? Number(manualData['PURCHASE:CONSUMABLES:WOGST'])
+    : autoConsumablePurchaseWOGST;
+
+  const consumablePurchaseWGST = manualData['PURCHASE:CONSUMABLES:WGST'] !== undefined
+    ? Number(manualData['PURCHASE:CONSUMABLES:WGST'])
+    : (manualData['PURCHASE:CONSUMABLES:WOGST'] !== undefined
+        ? Math.round(Number(manualData['PURCHASE:CONSUMABLES:WOGST']) * 1.18)
+        : autoConsumablePurchaseWGST);
 
   const legacyCurrentMonthPurchaseWOGST = manualData['PURCHASE:CURRENT_MONTH:WOGST'] || 0;
   const legacyCurrentMonthPurchaseWGST = manualData['PURCHASE:CURRENT_MONTH:WGST'] || 0;
@@ -1486,7 +1538,14 @@ export default function MR() {
                 
                 {/* Kraft Paper */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60">
-                  <span className="block font-bold text-slate-700 mb-2 uppercase tracking-wide text-[10px]">Kraft Paper Purchase</span>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="block font-bold text-slate-700 uppercase tracking-wide text-[10px]">Kraft Paper Purchase</span>
+                    {autoKraftPurchaseWOGST > 0 && (
+                      <span className="text-[10px] text-indigo-600 font-semibold bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                        Auto (Paper Recon): ₹ {formatINR(autoKraftPurchaseWOGST)}
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-semibold text-slate-500 mb-1">W/O GST</label>
@@ -1494,21 +1553,27 @@ export default function MR() {
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
-                          placeholder="0"
-                          value={manualData['PURCHASE:KRAFT_PAPER:WOGST'] !== undefined ? (manualData['PURCHASE:KRAFT_PAPER:WOGST'] || '') : ''}
-                          onChange={(e) => handleManualChange('PURCHASE:KRAFT_PAPER:WOGST', e.target.value)}
+                          placeholder={String(autoKraftPurchaseWOGST)}
+                          value={manualData['PURCHASE:KRAFT_PAPER:WOGST'] !== undefined ? manualData['PURCHASE:KRAFT_PAPER:WOGST'] : (kraftPurchaseWOGST || '')}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            handleManualChange('PURCHASE:KRAFT_PAPER:WOGST', val);
+                            if (val !== '' && !isNaN(Number(val))) {
+                              handleManualChange('PURCHASE:KRAFT_PAPER:WGST', String(Math.round(Number(val) * 1.18)));
+                            }
+                          }}
                           className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                         />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">With GST</label>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">With GST (+18%)</label>
                       <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
-                          placeholder="0"
-                          value={manualData['PURCHASE:KRAFT_PAPER:WGST'] !== undefined ? (manualData['PURCHASE:KRAFT_PAPER:WGST'] || '') : ''}
+                          placeholder={String(autoKraftPurchaseWGST)}
+                          value={manualData['PURCHASE:KRAFT_PAPER:WGST'] !== undefined ? manualData['PURCHASE:KRAFT_PAPER:WGST'] : (kraftPurchaseWGST || '')}
                           onChange={(e) => handleManualChange('PURCHASE:KRAFT_PAPER:WGST', e.target.value)}
                           className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                         />
@@ -1519,7 +1584,14 @@ export default function MR() {
 
                 {/* Consumables */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 mt-2">
-                  <span className="block font-bold text-slate-700 mb-2 uppercase tracking-wide text-[10px]">Other Consumable Goods Purchase</span>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="block font-bold text-slate-700 uppercase tracking-wide text-[10px]">Other Consumable Goods Purchase</span>
+                    {autoConsumablePurchaseWOGST > 0 && (
+                      <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                        Auto (RM Inward): ₹ {formatINR(autoConsumablePurchaseWOGST)}
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-semibold text-slate-500 mb-1">W/O GST</label>
@@ -1527,21 +1599,27 @@ export default function MR() {
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
-                          placeholder="0"
-                          value={manualData['PURCHASE:CONSUMABLES:WOGST'] !== undefined ? (manualData['PURCHASE:CONSUMABLES:WOGST'] || '') : ''}
-                          onChange={(e) => handleManualChange('PURCHASE:CONSUMABLES:WOGST', e.target.value)}
+                          placeholder={String(autoConsumablePurchaseWOGST)}
+                          value={manualData['PURCHASE:CONSUMABLES:WOGST'] !== undefined ? manualData['PURCHASE:CONSUMABLES:WOGST'] : (consumablePurchaseWOGST || '')}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            handleManualChange('PURCHASE:CONSUMABLES:WOGST', val);
+                            if (val !== '' && !isNaN(Number(val))) {
+                              handleManualChange('PURCHASE:CONSUMABLES:WGST', String(Math.round(Number(val) * 1.18)));
+                            }
+                          }}
                           className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                         />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">With GST</label>
+                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">With GST (+18%)</label>
                       <div className="relative">
                         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-medium">₹</span>
                         <input
                           type="number"
-                          placeholder="0"
-                          value={manualData['PURCHASE:CONSUMABLES:WGST'] !== undefined ? (manualData['PURCHASE:CONSUMABLES:WGST'] || '') : ''}
+                          placeholder={String(autoConsumablePurchaseWGST)}
+                          value={manualData['PURCHASE:CONSUMABLES:WGST'] !== undefined ? manualData['PURCHASE:CONSUMABLES:WGST'] : (consumablePurchaseWGST || '')}
                           onChange={(e) => handleManualChange('PURCHASE:CONSUMABLES:WGST', e.target.value)}
                           className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-colors"
                         />
