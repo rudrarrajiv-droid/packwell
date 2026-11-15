@@ -3,10 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { 
   Package, Search, ArrowDownToLine, ArrowUpFromLine, History, 
   Plus, AlertCircle, Loader2, Printer, X, FileSpreadsheet, Scale, Receipt,
-  Sparkles, TrendingUp, DollarSign, Layers
+  Sparkles, TrendingUp, DollarSign, Layers, Calendar
 } from 'lucide-react';
 import ExportButtons from '../components/ExportButtons';
-import { getRawMaterials, createRawMaterial } from '../lib/supabase/rmService';
+import { getRawMaterials, createRawMaterial, getRawMaterialTransactions } from '../lib/supabase/rmService';
 import type { RawMaterial } from '../lib/types/models';
 import { useAuth } from '../contexts/AuthContext';
 import RMInModal from './rm/RMInModal';
@@ -17,10 +17,15 @@ import RMAdjustModal from './rm/RMAdjustModal';
 import RMBulkPurchaseInModal from './rm/RMBulkPurchaseInModal';
 import RMPurchaseRegisterModal from './rm/RMPurchaseRegisterModal';
 import RMAuditModal from './rm/RMAuditModal';
+import RMPurchaseDetailsModal, { isRMDateInMonth, isRMAuditTransaction } from './rm/RMPurchaseDetailsModal';
 
 export default function RM() {
   const { user } = useAuth();
   const [search, setSearch] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   
   // Modals state
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -32,8 +37,10 @@ export default function RM() {
   const [isBulkPurchaseInOpen, setIsBulkPurchaseInOpen] = useState(false);
   const [isPurchaseRegisterOpen, setIsPurchaseRegisterOpen] = useState(false);
   const [isAuditOpen, setIsAuditOpen] = useState(false);
+  const [isPurchaseDetailsOpen, setIsPurchaseDetailsOpen] = useState(false);
   
   const [selectedRM, setSelectedRM] = useState<RawMaterial | null>(null);
+  const [purchaseFilterRM, setPurchaseFilterRM] = useState<RawMaterial | null>(null);
 
   // New RM Form State
   const [newName, setNewName] = useState('');
@@ -47,6 +54,139 @@ export default function RM() {
     queryFn: () => getRawMaterials()
   });
 
+  const { data: rmTransactions = [], refetch: refetchTx } = useQuery({
+    queryKey: ['rawMaterialTransactions'],
+    queryFn: () => getRawMaterialTransactions()
+  });
+
+  const handleRefetchAll = () => {
+    refetch();
+    refetchTx();
+  };
+
+  // Month-wise & Audit-excluded stats for every raw material
+  const rmCalculatedStats = useMemo(() => {
+    const map = new Map<string, {
+      openingQty: number;
+      purInQty: number;
+      purInValue: number;
+      outQty: number;
+      auditAdjQty: number;
+      closingBalance: number;
+    }>();
+
+    // Compute month bounds if a specific month is selected
+    let monthEnd = '9999-12-31';
+    if (selectedMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(selectedMonth)) {
+      const [yStr, mStr] = selectedMonth.split('-');
+      const y = parseInt(yStr, 10);
+      const m = parseInt(mStr, 10);
+      const nextMonth = m === 12 ? 1 : m + 1;
+      const nextYear = m === 12 ? y + 1 : y;
+      monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+    }
+
+    // Group transactions by rawMaterialId
+    const txByRm = new Map<string, typeof rmTransactions>();
+    rmTransactions.forEach(tx => {
+      const list = txByRm.get(tx.rawMaterialId) || [];
+      list.push(tx);
+      txByRm.set(tx.rawMaterialId, list);
+    });
+
+    rmList.forEach(rm => {
+      const txList = txByRm.get(rm.id!) || [];
+
+      if (!selectedMonth) {
+        // ALL TIME view
+        let purInQty = 0;
+        let purInValue = 0;
+        let outQty = 0;
+
+        txList.forEach(tx => {
+          const qty = Number(tx.quantity) || 0;
+          if (isRMAuditTransaction(tx)) return; // Strictly exclude audit from purchase & out
+          if (tx.type === 'IN') {
+            purInQty += qty;
+            const rate = Number(tx.rate) || Number(rm.rate) || 0;
+            const amt = (tx.amount !== undefined && tx.amount > 0) ? Number(tx.amount) : (qty * rate);
+            purInValue += amt;
+          } else if (tx.type === 'OUT') {
+            outQty += qty;
+          }
+        });
+
+        const hasTxs = txList.length > 0;
+        const effectivePurIn = hasTxs ? purInQty : rm.inQty;
+        const effectiveOut = hasTxs ? outQty : rm.outQty;
+        const auditAdj = hasTxs
+          ? rm.closingBalance - (rm.openingQty + effectivePurIn - effectiveOut)
+          : 0;
+
+        map.set(rm.id!, {
+          openingQty: rm.openingQty,
+          purInQty: effectivePurIn,
+          purInValue: hasTxs ? purInValue : (rm.inQty * (rm.rate || 0)),
+          outQty: effectiveOut,
+          auditAdjQty: auditAdj,
+          closingBalance: rm.closingBalance
+        });
+      } else {
+        // SPECIFIC MONTH view
+        let purInQty = 0;
+        let purInValue = 0;
+        let outQty = 0;
+        let auditAdjQty = 0;
+        let netAfterMonth = 0;
+
+        txList.forEach(tx => {
+          const qty = Number(tx.quantity) || 0;
+          const rawDate = tx.date ? String(tx.date).split('T')[0] : '';
+          const isAudit = isRMAuditTransaction(tx);
+
+          // Determine sign (+ for IN/surplus, - for OUT/deficit)
+          let signedQty = 0;
+          if (isAudit) {
+            const ref = (tx.referenceNo || '').toLowerCase();
+            const isDeficit = tx.type === 'OUT' || ref.includes('deficit') || ref.includes('damage') || ref.includes('shortage');
+            signedQty = isDeficit ? -qty : qty;
+          } else {
+            signedQty = tx.type === 'OUT' ? -qty : qty;
+          }
+
+          if (isRMDateInMonth(tx.date || tx.createdAt, selectedMonth)) {
+            if (isAudit) {
+              auditAdjQty += signedQty;
+            } else if (tx.type === 'IN') {
+              purInQty += qty;
+              const rate = Number(tx.rate) || Number(rm.rate) || 0;
+              const amt = (tx.amount !== undefined && tx.amount > 0) ? Number(tx.amount) : (qty * rate);
+              purInValue += amt;
+            } else if (tx.type === 'OUT') {
+              outQty += qty;
+            }
+          } else if (rawDate >= monthEnd) {
+            netAfterMonth += signedQty;
+          }
+        });
+
+        const closingAtEnd = rm.closingBalance - netAfterMonth;
+        const openingAtStart = closingAtEnd - (purInQty - outQty + auditAdjQty);
+
+        map.set(rm.id!, {
+          openingQty: openingAtStart,
+          purInQty,
+          purInValue,
+          outQty,
+          auditAdjQty,
+          closingBalance: closingAtEnd
+        });
+      }
+    });
+
+    return map;
+  }, [rmList, rmTransactions, selectedMonth]);
+
   const filteredRM = useMemo(() => {
     return rmList.filter(item => 
       item.name.toLowerCase().includes(search.toLowerCase())
@@ -54,12 +194,26 @@ export default function RM() {
   }, [rmList, search]);
 
   const totalValue = useMemo(() => {
-    return filteredRM.reduce((acc, curr) => acc + (curr.closingBalance * curr.rate), 0);
-  }, [filteredRM]);
+    return filteredRM.reduce((acc, curr) => {
+      const s = rmCalculatedStats.get(curr.id!);
+      const bal = s ? s.closingBalance : curr.closingBalance;
+      return acc + (bal * curr.rate);
+    }, 0);
+  }, [filteredRM, rmCalculatedStats]);
+
+  const totalPurchaseValue = useMemo(() => {
+    return filteredRM.reduce((acc, curr) => {
+      const s = rmCalculatedStats.get(curr.id!);
+      return acc + (s ? s.purInValue : 0);
+    }, 0);
+  }, [filteredRM, rmCalculatedStats]);
 
   const totalBalanceQty = useMemo(() => {
-    return filteredRM.reduce((acc, curr) => acc + curr.closingBalance, 0);
-  }, [filteredRM]);
+    return filteredRM.reduce((acc, curr) => {
+      const s = rmCalculatedStats.get(curr.id!);
+      return acc + (s ? s.closingBalance : curr.closingBalance);
+    }, 0);
+  }, [filteredRM, rmCalculatedStats]);
 
   const handleCreateRM = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,11 +262,13 @@ export default function RM() {
   const exportMap: Record<string, string> = {
     'name': 'Material Name',
     'openingQty': 'Opening Qty',
-    'inQty': 'Total IN',
+    'purInQty': 'Purchase IN',
+    'purInValue': 'Purchase Value (₹)',
     'outQty': 'Total OUT',
+    'auditAdjQty': 'Audit Adj (±)',
     'closingBalance': 'Balance Stock',
     'rate': 'Rate (₹)',
-    'totalValue': 'Total Value (₹)'
+    'totalValue': 'Stock Value (₹)'
   };
 
   return (
@@ -138,17 +294,49 @@ export default function RM() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Quick Value Badge */}
+          {/* Total Purchase Value Badge (Clickable!) */}
+          <button
+            onClick={() => {
+              setPurchaseFilterRM(null);
+              setIsPurchaseDetailsOpen(true);
+            }}
+            className="px-3.5 py-1.5 bg-green-500/10 hover:bg-green-500/20 rounded-xl border border-green-500/30 flex items-center gap-2 transition-colors cursor-pointer"
+            title="Click to view Supplier-wise & Invoice-wise Purchase Details"
+          >
+            <Receipt className="w-4 h-4 text-green-600" />
+            <div className="text-left">
+              <span className="text-[10px] uppercase font-bold text-green-700/80 block leading-tight">
+                Total Purchase {selectedMonth ? `(${selectedMonth})` : '(All)'}
+              </span>
+              <span className="text-sm font-extrabold text-green-700 underline decoration-dotted">
+                ₹ {totalPurchaseValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+          </button>
+
+          {/* Quick Stock Value Badge */}
           <div className="px-3.5 py-1.5 bg-primary/5 rounded-xl border border-primary/20 flex items-center gap-2">
             <DollarSign className="w-4 h-4 text-primary" />
             <div className="text-left">
-              <span className="text-[10px] uppercase font-bold text-muted-foreground block leading-tight">Total Valuation</span>
+              <span className="text-[10px] uppercase font-bold text-muted-foreground block leading-tight">Stock Valuation</span>
               <span className="text-sm font-extrabold text-primary">₹ {totalValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
             </div>
           </div>
 
           <ExportButtons 
-            data={filteredRM.map(rm => ({...rm, totalValue: rm.closingBalance * rm.rate}))} 
+            data={filteredRM.map(rm => {
+              const s = rmCalculatedStats.get(rm.id!) || { openingQty: rm.openingQty, purInQty: rm.inQty, purInValue: 0, outQty: rm.outQty, auditAdjQty: 0, closingBalance: rm.closingBalance };
+              return {
+                ...rm,
+                openingQty: s.openingQty,
+                purInQty: s.purInQty,
+                purInValue: s.purInValue,
+                outQty: s.outQty,
+                auditAdjQty: s.auditAdjQty,
+                closingBalance: s.closingBalance,
+                totalValue: s.closingBalance * rm.rate
+              };
+            })} 
             filenamePrefix="Raw_Material_Inventory" 
             title="Raw Material Inventory Report" 
             columnMap={exportMap} 
@@ -222,22 +410,45 @@ export default function RM() {
       <div className="flex-1 overflow-auto p-6">
         <div className="bg-background rounded-2xl shadow-sm border border-border flex flex-col h-full overflow-hidden">
           
-          {/* Search Bar & Table Filters */}
+          {/* Search Bar & Month Filter */}
           <div className="p-4 border-b border-border bg-card flex flex-wrap items-center justify-between gap-4">
-            <div className="relative max-w-md w-full">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search raw materials by name..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-secondary/50 border border-border rounded-xl text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium"
-              />
+            <div className="flex flex-wrap items-center gap-3 flex-1">
+              <div className="relative max-w-md w-full">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search raw materials by name..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 bg-secondary/50 border border-border rounded-xl text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium"
+                />
+              </div>
+
+              {/* Month Filter */}
+              <div className="flex items-center gap-2 bg-secondary/40 border border-border px-3 py-1.5 rounded-xl">
+                <Calendar className="w-4 h-4 text-primary" />
+                <span className="text-xs font-semibold text-muted-foreground">Month:</span>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-foreground focus:outline-none"
+                />
+                {selectedMonth && (
+                  <button
+                    onClick={() => setSelectedMonth('')}
+                    className="text-xs text-primary hover:underline font-semibold ml-1"
+                    title="Show all-time totals"
+                  >
+                    All Time
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="text-xs text-muted-foreground flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-              <span>Click on any material row to view its <b>Monthly Running Balance Ledger</b></span>
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span>Click any <b>Purchase IN</b> qty/value to view <b>Supplier &amp; Invoice Details</b></span>
             </div>
           </div>
 
@@ -253,17 +464,29 @@ export default function RM() {
                 <thead className="bg-secondary/70 text-muted-foreground sticky top-0 z-10 shadow-2xs">
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold">Material Name</th>
-                    <th className="px-4 py-3 text-right font-semibold">Opening Qty</th>
-                    <th className="px-4 py-3 text-right font-semibold text-green-600">Total IN</th>
-                    <th className="px-4 py-3 text-right font-semibold text-red-600">Total OUT</th>
-                    <th className="px-4 py-3 text-right font-semibold text-foreground">Balance Stock</th>
-                    <th className="px-4 py-3 text-right font-semibold">Rate</th>
-                    <th className="px-4 py-3 text-right font-semibold text-primary">Total Value</th>
+                    <th className="px-3 py-3 text-right font-semibold">Opening Qty</th>
+                    <th className="px-3 py-3 text-right font-semibold text-green-600">Purchase IN</th>
+                    <th className="px-3 py-3 text-right font-semibold text-green-700">Purchase Value</th>
+                    <th className="px-3 py-3 text-right font-semibold text-red-600">Total OUT</th>
+                    <th className="px-3 py-3 text-right font-semibold text-amber-600">Audit Adj (±)</th>
+                    <th className="px-3 py-3 text-right font-semibold text-foreground">Balance Stock</th>
+                    <th className="px-3 py-3 text-right font-semibold">Rate</th>
+                    <th className="px-3 py-3 text-right font-semibold text-primary">Stock Value</th>
                     <th className="px-4 py-3 text-center font-semibold">Quick Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-card">
-                  {filteredRM.map((rm) => (
+                  {filteredRM.map((rm) => {
+                    const stats = rmCalculatedStats.get(rm.id!) || {
+                      openingQty: rm.openingQty,
+                      purInQty: rm.inQty,
+                      purInValue: 0,
+                      outQty: rm.outQty,
+                      auditAdjQty: 0,
+                      closingBalance: rm.closingBalance
+                    };
+
+                    return (
                     <tr 
                       key={rm.id} 
                       onClick={() => openAction('HISTORY', rm)}
@@ -274,15 +497,51 @@ export default function RM() {
                         <span className="w-1.5 h-1.5 rounded-full bg-primary/40 group-hover:bg-primary transition-colors" />
                         <span className="group-hover:text-primary transition-colors">{rm.name}</span>
                       </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground font-mono">{rm.openingQty}</td>
-                      <td className="px-4 py-3 text-right text-green-600 font-bold font-mono">+{rm.inQty}</td>
-                      <td className="px-4 py-3 text-right text-red-600 font-bold font-mono">-{rm.outQty}</td>
-                      <td className="px-4 py-3 text-right font-extrabold text-foreground font-mono bg-secondary/15">
-                        {rm.closingBalance}
+                      <td className="px-3 py-3 text-right text-muted-foreground font-mono">{stats.openingQty}</td>
+                      <td 
+                        className="px-3 py-3 text-right font-mono"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPurchaseFilterRM(rm);
+                          setIsPurchaseDetailsOpen(true);
+                        }}
+                        title={`Click to view supplier-wise purchase details for ${rm.name}`}
+                      >
+                        <span className="cursor-pointer text-green-600 font-extrabold hover:underline hover:text-green-700 bg-green-500/10 hover:bg-green-500/20 px-2 py-0.5 rounded transition-colors inline-block">
+                          +{stats.purInQty}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground font-mono">₹ {rm.rate}</td>
-                      <td className="px-4 py-3 text-right font-bold text-primary font-mono">
-                        ₹ {(rm.closingBalance * rm.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      <td 
+                        className="px-3 py-3 text-right font-mono"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPurchaseFilterRM(rm);
+                          setIsPurchaseDetailsOpen(true);
+                        }}
+                        title={`Click to view supplier-wise purchase details for ${rm.name}`}
+                      >
+                        <span className="cursor-pointer text-green-700 font-bold hover:underline">
+                          ₹ {stats.purInValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right text-red-600 font-bold font-mono">
+                        {stats.outQty > 0 ? `-${stats.outQty}` : '0'}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono">
+                        {stats.auditAdjQty > 0 ? (
+                          <span className="text-amber-600 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">+{stats.auditAdjQty}</span>
+                        ) : stats.auditAdjQty < 0 ? (
+                          <span className="text-amber-700 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">{stats.auditAdjQty}</span>
+                        ) : (
+                          <span className="text-muted-foreground/50">0</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right font-extrabold text-foreground font-mono bg-secondary/15">
+                        {stats.closingBalance}
+                      </td>
+                      <td className="px-3 py-3 text-right text-muted-foreground font-mono">₹ {rm.rate}</td>
+                      <td className="px-3 py-3 text-right font-bold text-primary font-mono">
+                        ₹ {(stats.closingBalance * rm.rate).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       </td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1.5">
@@ -317,10 +576,11 @@ export default function RM() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {filteredRM.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
+                      <td colSpan={10} className="px-4 py-12 text-center text-muted-foreground">
                         <Package className="w-10 h-10 mx-auto opacity-20 mb-2" />
                         <p className="font-semibold text-base">No raw materials found</p>
                         <p className="text-xs mt-1">Use "+ Purchase / IN" or "Bulk Import" to add materials.</p>
@@ -430,7 +690,7 @@ export default function RM() {
       <RMAdjustModal
         isOpen={isAdjustOpen}
         onClose={() => setIsAdjustOpen(false)}
-        onSuccess={refetch}
+        onSuccess={handleRefetchAll}
         selectedRM={selectedRM}
         allRMs={rmList}
       />
@@ -439,7 +699,7 @@ export default function RM() {
       <RMInModal 
         isOpen={isInOpen} 
         onClose={() => setIsInOpen(false)} 
-        onSuccess={refetch} 
+        onSuccess={handleRefetchAll} 
         selectedRM={selectedRM}
         allRMs={rmList}
       />
@@ -448,7 +708,7 @@ export default function RM() {
       <RMOutModal 
         isOpen={isOutOpen} 
         onClose={() => setIsOutOpen(false)} 
-        onSuccess={refetch} 
+        onSuccess={handleRefetchAll} 
         selectedRM={selectedRM} 
       />
 
@@ -466,7 +726,7 @@ export default function RM() {
       <RMBulkPurchaseInModal
         isOpen={isBulkPurchaseInOpen}
         onClose={() => setIsBulkPurchaseInOpen(false)}
-        onSuccess={refetch}
+        onSuccess={handleRefetchAll}
         allRMs={rmList}
       />
 
@@ -475,14 +735,27 @@ export default function RM() {
         isOpen={isPurchaseRegisterOpen}
         onClose={() => setIsPurchaseRegisterOpen(false)}
         allRMs={rmList}
-        onUpdate={refetch}
+        onUpdate={handleRefetchAll}
       />
 
       {/* RM Audit Modal */}
       <RMAuditModal
         isOpen={isAuditOpen}
         onClose={() => setIsAuditOpen(false)}
-        onSuccess={refetch}
+        onSuccess={handleRefetchAll}
+      />
+
+      {/* Supplier-Wise -> Date & Invoice-Wise Purchase Details Modal */}
+      <RMPurchaseDetailsModal
+        isOpen={isPurchaseDetailsOpen}
+        onClose={() => {
+          setIsPurchaseDetailsOpen(false);
+          setPurchaseFilterRM(null);
+        }}
+        allRMs={rmList}
+        transactions={rmTransactions}
+        selectedMonth={selectedMonth}
+        initialMaterial={purchaseFilterRM}
       />
     </div>
   );

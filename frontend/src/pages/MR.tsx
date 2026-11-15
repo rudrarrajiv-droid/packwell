@@ -19,6 +19,7 @@ import PaperPurchaseDetailsModal from './PaperPurchaseDetailsModal';
 import TotalPaperPurchaseModal from './TotalPaperPurchaseModal';
 import CashLedgerModal from './CashLedgerModal';
 import ConsumableBreakdownModal, { type RmBreakdownItem } from './ConsumableBreakdownModal';
+import RMPurchaseDetailsModal, { isRMAuditTransaction } from './rm/RMPurchaseDetailsModal';
 import { getMonthlyExpenseAggregates, getExpenseCategories, getCashClosingBalanceForMonth } from '../lib/supabase/cashLedgerService';
 
 const DEFAULT_EXPENSE_CATEGORIES = [
@@ -152,6 +153,7 @@ export default function MR() {
   // Paper Purchase Modal State
   const [selectedPaperTypeForModal, setSelectedPaperTypeForModal] = useState<string | null>(null);
   const [showTotalPurchaseModal, setShowTotalPurchaseModal] = useState(false);
+  const [showRMPurchaseModal, setShowRMPurchaseModal] = useState(false);
   const [showCashLedgerModal, setShowCashLedgerModal] = useState(false);
   const [selectedExpenseForLedger, setSelectedExpenseForLedger] = useState<string | undefined>(undefined);
   const [rmBreakdownModalType, setRmBreakdownModalType] = useState<'CONSUMABLE' | 'LPG' | null>(null);
@@ -331,8 +333,8 @@ export default function MR() {
 
     const monthlyInTxns = rmTransactions.filter(t => {
       const txDate = t.date || t.createdAt;
-      // Filter strictly for IN (inward purchases) for active month
-      return isDateInTargetMonth(txDate, currentMonth) && t.type === 'IN';
+      // Filter strictly for IN (inward purchases) for active month & EXCLUDE RM Audit adjustments
+      return isDateInTargetMonth(txDate, currentMonth) && t.type === 'IN' && !isRMAuditTransaction(t);
     });
 
     let totalPurchase = 0;
@@ -1622,12 +1624,23 @@ export default function MR() {
                 {/* Consumables */}
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 mt-2">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="block font-bold text-slate-700 uppercase tracking-wide text-[10px]">Other Consumable Goods Purchase</span>
-                    {autoConsumablePurchaseWOGST > 0 && (
-                      <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                        Auto (RM Inward): ₹ {formatINR(autoConsumablePurchaseWOGST)}
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowRMPurchaseModal(true)}
+                      className="font-bold text-slate-700 hover:text-indigo-700 uppercase tracking-wide text-[10px] flex items-center gap-1.5 cursor-pointer transition-colors"
+                      title="Click to view Supplier-wise & Invoice-wise Raw Material Purchase Details"
+                    >
+                      <span>Other Consumable Goods Purchase</span>
+                      <Eye className="w-3 h-3 text-indigo-500" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowRMPurchaseModal(true)}
+                      className="text-[10px] text-amber-800 hover:text-amber-950 font-semibold bg-amber-50 hover:bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-200 cursor-pointer transition-colors underline decoration-dotted"
+                      title="Click to inspect Raw Material purchase bills (Audit entries excluded)"
+                    >
+                      Auto (RM Inward): ₹ {formatINR(autoConsumablePurchaseWOGST)}
+                    </button>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -2319,6 +2332,14 @@ export default function MR() {
           setSelectedExpenseForLedger(targetExp);
           setShowCashLedgerModal(true);
         }}
+      />
+
+      <RMPurchaseDetailsModal
+        isOpen={showRMPurchaseModal}
+        onClose={() => setShowRMPurchaseModal(false)}
+        allRMs={rmList}
+        transactions={rmTransactions}
+        selectedMonth={currentMonth}
       />
     </div>
   );

@@ -4,6 +4,7 @@ import { X, Search, Calendar, Filter, Edit, Trash2, Loader2, ArrowDownToLine, Ch
 import { useAuth } from '../../contexts/AuthContext';
 import { getRawMaterialTransactions, deleteRawMaterialTransaction, updateRawMaterialTransaction } from '../../lib/supabase/rmService';
 import type { RawMaterial, RawMaterialTransaction } from '../../lib/types/models';
+import { isRMDateInMonth, isRMAuditTransaction } from './RMPurchaseDetailsModal';
 
 export default function RMPurchaseRegisterModal({
   isOpen,
@@ -39,7 +40,7 @@ export default function RMPurchaseRegisterModal({
   });
 
   const inTransactions = useMemo(() => {
-    return transactions.filter(tx => tx.type === 'IN');
+    return transactions.filter(tx => tx.type === 'IN' && !isRMAuditTransaction(tx));
   }, [transactions]);
 
   const filteredTransactions = useMemo(() => {
@@ -48,21 +49,9 @@ export default function RMPurchaseRegisterModal({
       const rmName = rm ? rm.name.toLowerCase() : '';
       const supplier = tx.supplierName ? tx.supplierName.toLowerCase() : '';
       
-      const dateStr = tx.date ? String(tx.date) : '';
+      const dateStr = tx.date ? String(tx.date).split('T')[0] : '';
       const matchDate = dateFilter ? dateStr === dateFilter : true;
-      let matchMonth = true;
-      if (monthFilter) {
-        matchMonth = dateStr.startsWith(monthFilter);
-        if (!matchMonth) {
-          // Fallback if browser doesn't support type="month" and user types MM-YYYY
-          const parts = monthFilter.split(/[-/]/);
-          if (parts.length === 2 && parts[0].length === 2 && parts[1].length === 4) {
-            matchMonth = dateStr.startsWith(`${parts[1]}-${parts[0]}`);
-          } else {
-            matchMonth = dateStr.includes(monthFilter);
-          }
-        }
-      }
+      const matchMonth = monthFilter ? isRMDateInMonth(tx.date || tx.createdAt, monthFilter) : true;
       
       const matchParty = partyFilter ? supplier.includes(partyFilter.toLowerCase()) : true;
       const matchItem = itemFilter ? rmName.includes(itemFilter.toLowerCase()) : true;
@@ -295,6 +284,31 @@ export default function RMPurchaseRegisterModal({
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* Summary Footer */}
+        <div className="px-6 py-3 border-t border-border bg-secondary/20 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <span className="text-muted-foreground font-medium">
+            Showing <b className="text-foreground">{filteredTransactions.length}</b> purchase entries (Audit entries excluded)
+          </span>
+          <div className="flex items-center gap-5">
+            <div>
+              <span className="text-muted-foreground mr-1.5">Total Qty:</span>
+              <span className="font-bold text-green-600 font-mono">
+                +{filteredTransactions.reduce((s, t) => s + (Number(t.quantity) || 0), 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div>
+              <span className="text-muted-foreground mr-1.5">Total Purchase Value:</span>
+              <span className="font-black text-primary font-mono text-sm">
+                ₹ {filteredTransactions.reduce((s, t) => {
+                  const rm = allRMs.find(r => r.id === t.rawMaterialId);
+                  const rate = Number(t.rate) || Number(rm?.rate) || 0;
+                  return s + ((Number(t.quantity) || 0) * rate);
+                }, 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+          </div>
         </div>
         
         {error && (
