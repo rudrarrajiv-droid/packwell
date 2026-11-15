@@ -972,3 +972,188 @@ export const adjustFinishGoodStockAndRate = async (
     throw error;
   }
 };
+
+/**
+ * Automatically synchronizes a rate change from Dispatch Planning across
+ * both Master Data (products table) and Finish Goods (finish_goods table).
+ * Uses Postgres RPC adjust_finish_good_stock_and_rate to bypass RLS restrictions on finish_goods.
+ * Preserves rate history so past dates retain their historical rates!
+ */
+export const syncProductRateAcrossSystem = async (
+  itemName: string,
+  newRate: number,
+  customerName?: string,
+  effectiveDate?: string,
+  user: string = 'System'
+): Promise<{ success: boolean; updatedProducts: number; updatedFinishGoods: number }> => {
+  const normalizedName = (itemName || '').trim();
+  const rateNum = Number(newRate);
+  if (!normalizedName || isNaN(rateNum) || rateNum < 0) {
+    return { success: false, updatedProducts: 0, updatedFinishGoods: 0 };
+  }
+
+  const now = new Date().toISOString();
+  const effDate = effectiveDate || now.split('T')[0];
+  let updatedProducts = 0;
+  let updatedFinishGoods = 0;
+
+  try {
+    // 1. Find matching product(s) in products table
+    let { data: matchedProds } = await supabase
+      .from('products')
+      .select('firestore_document_id, item_name, customer_name, raw_data, actual_costing, created_at')
+      .ilike('item_name', normalizedName);
+
+    // If no exact match, try wildcard search
+    if (!matchedProds || matchedProds.length === 0) {
+      const { data: wildcardProds } = await supabase
+        .from('products')
+        .select('firestore_document_id, item_name, customer_name, raw_data, actual_costing, created_at')
+        .ilike('item_name', `%${normalizedName}%`);
+      matchedProds = wildcardProds;
+    }
+
+    const productIds: string[] = [];
+
+    if (matchedProds && matchedProds.length > 0) {
+      for (const prod of matchedProds) {
+        productIds.push(prod.firestore_document_id);
+        const raw = prod.raw_data || {};
+
+        // Manage rateHistory chronologically
+        const history: Array<{ rate: number; effectiveDate: string; changedAt?: string; changedBy?: string }> = 
+          Array.isArray(raw.rateHistory) ? [...raw.rateHistory] : [];
+
+        // If history is empty and previous rate existed, preserve baseline historical rate
+        const prevRate = Number(prod.actual_costing || raw.rate || raw.customerRate || 0);
+        if (history.length === 0 && prevRate > 0 && prevRate !== rateNum) {
+          const baseDate = (prod.created_at || '2026-08-01').split('T')[0];
+          history.push({
+            rate: prevRate,
+            effectiveDate: baseDate,
+            changedAt: prod.created_at || now,
+            changedBy: 'System'
+          });
+        }
+
+        // Check if an entry for this exact effectiveDate already exists
+        const existingIdx = history.findIndex(h => h.effectiveDate === effDate);
+        if (existingIdx >= 0) {
+          history[existingIdx].rate = rateNum;
+          history[existingIdx].changedAt = now;
+          history[existingIdx].changedBy = user;
+        } else {
+          history.push({
+            rate: rateNum,
+            effectiveDate: effDate,
+            changedAt: now,
+            changedBy: user
+          });
+        }
+
+        // Sort ascending by effectiveDate
+        history.sort((a, b) => (a.effectiveDate || '').localeCompare(b.effectiveDate || ''));
+
+        // Check if the new rate is for today/future or latest effective date
+        const isLatest = history[history.length - 1].effectiveDate <= effDate;
+
+        raw.rateHistory = history;
+        raw.effectiveDate = effDate;
+        raw.updatedAt = now;
+        raw.updatedBy = user;
+
+        if (isLatest) {
+          raw.customerRate = rateNum;
+          raw.rate = rateNum;
+          raw.actualCosting = rateNum;
+        }
+
+        const updatePayload: any = {
+          raw_data: raw,
+          updated_at: now,
+          updated_by: user,
+        };
+
+        if (isLatest) {
+          updatePayload.actual_costing = rateNum;
+        }
+
+        const { error: prodErr } = await supabase
+          .from('products')
+          .update(updatePayload)
+          .eq('firestore_document_id', prod.firestore_document_id);
+
+        if (!prodErr) updatedProducts++;
+      }
+    }
+
+    // 2. Find matching finish_goods using multiple safe queries (avoiding PostgREST .or() syntax pitfalls)
+    const fgMap = new Map<string, any>();
+
+    // A. By matched product IDs
+    if (productIds.length > 0) {
+      const { data: byProdId } = await supabase
+        .from('finish_goods')
+        .select('firestore_document_id, product_id, product_name, customer_name, rate')
+        .in('product_id', productIds);
+      (byProdId || []).forEach(fg => fgMap.set(fg.firestore_document_id, fg));
+
+      const { data: byDocId } = await supabase
+        .from('finish_goods')
+        .select('firestore_document_id, product_id, product_name, customer_name, rate')
+        .in('firestore_document_id', productIds);
+      (byDocId || []).forEach(fg => fgMap.set(fg.firestore_document_id, fg));
+    }
+
+    // B. By exact product_name
+    const { data: byExactName } = await supabase
+      .from('finish_goods')
+      .select('firestore_document_id, product_id, product_name, customer_name, rate')
+      .ilike('product_name', normalizedName);
+    (byExactName || []).forEach(fg => fgMap.set(fg.firestore_document_id, fg));
+
+    // C. By wildcard product_name
+    const { data: byWildcardName } = await supabase
+      .from('finish_goods')
+      .select('firestore_document_id, product_id, product_name, customer_name, rate')
+      .ilike('product_name', `%${normalizedName}%`);
+    (byWildcardName || []).forEach(fg => fgMap.set(fg.firestore_document_id, fg));
+
+    // 3. Update each matched finish_good using adjust_finish_good_stock_and_rate RPC
+    for (const [fgId, fg] of fgMap.entries()) {
+      try {
+        const { error: rpcErr } = await supabase.rpc('adjust_finish_good_stock_and_rate', {
+          p_finish_good_id: fgId,
+          p_new_rate: rateNum,
+          p_new_closing_balance: null,
+          p_new_non_moving_balance: null,
+          p_new_opening_qty: null,
+          p_remarks: `Rate sync from Dispatch Planning (Eff: ${effDate})`,
+          p_user: user || 'Dispatch Planning'
+        });
+
+        if (!rpcErr) {
+          updatedFinishGoods++;
+        } else {
+          console.error(`RPC error updating FG ${fgId}:`, rpcErr);
+        }
+      } catch (e) {
+        console.error(`Exception calling RPC for FG ${fgId}:`, e);
+      }
+    }
+
+    if (updatedProducts > 0 || updatedFinishGoods > 0) {
+      await logActivity({
+        user,
+        action: `Auto-synced rate to ₹${rateNum} (Effective: ${effDate}) for "${normalizedName}" across Master Data (${updatedProducts}) & Finish Goods (${updatedFinishGoods})`,
+        entity: 'products',
+        referenceId: normalizedName,
+      });
+    }
+
+    return { success: true, updatedProducts, updatedFinishGoods };
+  } catch (err) {
+    console.error('Error auto-syncing rate across system:', err);
+    return { success: false, updatedProducts, updatedFinishGoods };
+  }
+};

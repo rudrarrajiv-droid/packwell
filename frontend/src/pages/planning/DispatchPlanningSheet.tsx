@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { 
   Plus, Trash2, Printer, Download, RotateCcw, Save, 
   Calendar, Check, Share2, Sparkles, CheckCircle2, 
-  Eye, EyeOff, Users, Truck, FileText, PackageCheck 
+  Eye, EyeOff, Users, Truck, FileText, PackageCheck,
+  IndianRupee, RefreshCw, CloudUpload, Loader2 
 } from 'lucide-react';
 import { exportToExcel } from '../../lib/exportUtils';
 import type { DispatchPlanGroup, DispatchPlanItem } from './PlanningTypes';
 import PlanningWhatsappModal from './PlanningWhatsappModal';
 import { INITIAL_DISPATCH_GROUPS } from './samplePlanningData';
 import { getProducts } from '../../lib/supabase/productService';
+import { getFinishGoods, syncProductRateAcrossSystem } from '../../lib/supabase/finishGoodService';
 import { savePlanningSheet, fetchPlanningSheet, fetchMostRecentPreviousPlanning, subscribeToPlanningSheet } from '../../lib/supabase/planningService';
-import { RefreshCw, CloudUpload, Loader2 } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../lib/utils';
 
 const formatTodayDate = (): string => {
@@ -125,6 +127,11 @@ export default function DispatchPlanningSheet() {
   const [showWhatsappModal, setShowWhatsappModal] = useState(false);
   const syncTimeoutRef = useRef<any>(null);
 
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const [rateSyncToast, setRateSyncToast] = useState<string | null>(null);
+  const rateSyncTimeoutRef = useRef<{ [key: string]: any }>({});
+
   // Autocomplete state
   const [activeSearchKey, setActiveSearchKey] = useState<{ groupId: string; itemId: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -142,6 +149,110 @@ export default function DispatchPlanningSheet() {
     queryFn: () => getProducts() as Promise<any[]>,
     staleTime: 1000 * 60 * 10
   });
+
+  // Fetch Finish Goods (Customer Rates) from Supabase
+  const { data: finishGoods = [] } = useQuery({
+    queryKey: ['finish_goods'],
+    queryFn: () => getFinishGoods() as Promise<any[]>,
+    staleTime: 1000 * 60 * 10
+  });
+
+  // Lookup map: Item Name / Product ID -> Customer Rate or Actual Costing
+  const productRateMap = useMemo(() => {
+    const map = new Map<string, number>();
+
+    // 1. From products master (actualCosting or raw_data rate)
+    (masterProducts || []).forEach((p: any) => {
+      const rate = Number(p.actualCosting || p.raw_data?.rate || p.rate || 0);
+      if (rate > 0) {
+        if (p.id) map.set(p.id, rate);
+        if (p.itemName) map.set(String(p.itemName).trim().toUpperCase(), rate);
+      }
+    });
+
+    // 2. From Finish Goods (Customer selling rate has higher precedence)
+    (finishGoods || []).forEach((fg: any) => {
+      const rate = Number(fg.rate || 0);
+      if (rate > 0) {
+        if (fg.productId) map.set(fg.productId, rate);
+        if (fg.productName) map.set(String(fg.productName).trim().toUpperCase(), rate);
+      }
+    });
+
+    return map;
+  }, [masterProducts, finishGoods]);
+
+  // Helper to determine the effective rate of a dispatch item on the selected planDate
+  const getItemRate = (item: DispatchPlanItem): number => {
+    // 1. If this item already has an explicitly saved rate on this planning sheet, use it!
+    if (item.rate !== undefined && item.rate !== null && item.rate !== '') {
+      const r = parseFloat(String(item.rate));
+      if (!isNaN(r)) return r;
+    }
+
+    // 2. Lookup rate based on planDate from rateHistory (so past dates keep their past rate!)
+    if (item.jobName) {
+      const normName = item.jobName.trim().toUpperCase();
+      const prod = masterProducts.find((p: any) => 
+        (p.itemName && p.itemName.trim().toUpperCase() === normName) ||
+        (p.artworkNo && p.artworkNo.trim().toUpperCase() === normName)
+      );
+
+      const fg = finishGoods.find((f: any) => 
+        (f.productName && f.productName.trim().toUpperCase() === normName) ||
+        (prod && (f.productId === prod.id || f.id === prod.id))
+      );
+
+      const history = (prod?.raw_data?.rateHistory || fg?.raw_data?.rateHistory || []) as Array<{ rate: number; effectiveDate: string }>;
+
+      if (Array.isArray(history) && history.length > 0) {
+        // Sort history ascending by effectiveDate
+        const sorted = [...history].sort((a, b) => (a.effectiveDate || '').localeCompare(b.effectiveDate || ''));
+        // Find latest rate where effectiveDate <= planDate
+        const applicable = sorted.filter(h => h.effectiveDate && h.effectiveDate <= planDate);
+        if (applicable.length > 0) {
+          return applicable[applicable.length - 1].rate;
+        }
+        // If planDate is earlier than all history entries, use the earliest historical rate
+        return sorted[0].rate;
+      }
+
+      // 3. Fallback to current rate
+      const mapped = productRateMap.get(normName);
+      if (mapped) return mapped;
+    }
+    return 0;
+  };
+
+  // Helper to calculate total value for an item (Qty * Rate)
+  const getItemValue = (item: DispatchPlanItem): number => {
+    const q = parseFloat(String(item.qty || 0));
+    const r = getItemRate(item);
+    if (isNaN(q) || isNaN(r) || q <= 0 || r <= 0) return 0;
+    return Math.round(q * r * 100) / 100;
+  };
+
+  const formatINR = (val: number): string => {
+    return Number(val || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  };
+
+  // Automatically syncs rate change across Master Data and Finish Goods in real-time
+  const handleRateCommit = async (jobName: string, rawRateVal: any, customerName?: string) => {
+    const rateNum = parseFloat(String(rawRateVal));
+    if (isNaN(rateNum) || rateNum < 0 || !jobName || !jobName.trim()) return;
+
+    // Update local productRateMap immediately
+    productRateMap.set(jobName.trim().toUpperCase(), rateNum);
+
+    const res = await syncProductRateAcrossSystem(jobName, rateNum, customerName, planDate, user?.name || 'Dispatch Planning');
+    if (res.success && (res.updatedProducts > 0 || res.updatedFinishGoods > 0)) {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['finish_goods'] });
+
+      setRateSyncToast(`✓ Rate ₹${rateNum} (Effective: ${formatDateToDMY(planDate)}) updated in Master Data & Finish Goods!`);
+      setTimeout(() => setRateSyncToast(null), 3000);
+    }
+  };
 
   const loadPlanForDate = async (targetDate: string) => {
     setIsLoadingPlan(true);
@@ -326,14 +437,49 @@ export default function DispatchPlanningSheet() {
       .slice(0, 15);
   }, [activeSearchKey, searchQuery, masterProducts]);
 
-  // Select product from Master Data: auto-fills item name AND customer name
+  // Select product from Master Data: auto-fills item name, customer name, and item rate (applicable to planDate)
   const handleSelectProduct = (groupId: string, itemId: string, product: any) => {
+    // 1. Determine rate from rateHistory applicable to planDate, or current rate
+    let autoRate: number | string = '';
+    const history = (product.raw_data?.rateHistory || []) as Array<{ rate: number; effectiveDate: string }>;
+
+    if (Array.isArray(history) && history.length > 0) {
+      const sorted = [...history].sort((a, b) => (a.effectiveDate || '').localeCompare(b.effectiveDate || ''));
+      const applicable = sorted.filter(h => h.effectiveDate && h.effectiveDate <= planDate);
+      if (applicable.length > 0) {
+        autoRate = applicable[applicable.length - 1].rate;
+      } else {
+        autoRate = sorted[0].rate;
+      }
+    } else {
+      const mappedRate = productRateMap.get(String(product.itemName || '').trim().toUpperCase()) 
+        || (product.id ? productRateMap.get(product.id) : 0);
+
+      if (mappedRate && mappedRate > 0) {
+        autoRate = mappedRate;
+      } else if (Number(product.actualCosting) > 0) {
+        autoRate = Number(product.actualCosting);
+      } else if (Number(product.raw_data?.rate) > 0) {
+        autoRate = Number(product.raw_data.rate);
+      }
+    }
+
     setGroups(prev => {
       const updated = prev.map(g => {
         if (g.id !== groupId) return g;
         const newItems = g.items.map(it => {
           if (it.id !== itemId) return it;
-          return { ...it, jobName: product.itemName || it.jobName };
+          const rateVal = autoRate !== '' ? autoRate : (it.rate ?? '');
+          const q = parseFloat(String(it.qty || 0));
+          const r = parseFloat(String(rateVal || 0));
+          const calculatedVal = (!isNaN(q) && !isNaN(r) && q > 0 && r > 0) ? Math.round(q * r * 100) / 100 : undefined;
+
+          return { 
+            ...it, 
+            jobName: product.itemName || it.jobName,
+            rate: rateVal,
+            value: calculatedVal
+          };
         });
 
         // Auto-fill customer name from Master Data Product
@@ -397,20 +543,48 @@ export default function DispatchPlanningSheet() {
     });
   };
 
-  // Update item field
-  const updateItem = (groupId: string, itemId: string, field: 'jobName' | 'qty', value: any) => {
+  // Update item field (jobName, qty, rate, value)
+  const updateItem = (groupId: string, itemId: string, field: 'jobName' | 'qty' | 'rate' | 'value', value: any) => {
+    let targetJobName = '';
+    let targetCustomerName = '';
     setGroups(prev => {
       const updated = prev.map(g => {
         if (g.id !== groupId) return g;
+        targetCustomerName = g.customerName;
         const newItems = g.items.map(item => {
           if (item.id !== itemId) return item;
-          return { ...item, [field]: value };
+          targetJobName = item.jobName;
+          const updatedItem = { ...item, [field]: value };
+
+          // Automatically recalculate item value on Qty or Rate change
+          const qVal = field === 'qty' ? value : item.qty;
+          const rVal = field === 'rate' ? value : (item.rate ?? productRateMap.get(item.jobName?.trim().toUpperCase()) ?? 0);
+          const q = parseFloat(String(qVal || 0));
+          const r = parseFloat(String(rVal || 0));
+
+          if (!isNaN(q) && !isNaN(r) && q > 0 && r > 0) {
+            updatedItem.value = Math.round(q * r * 100) / 100;
+          } else {
+            updatedItem.value = undefined;
+          }
+
+          return updatedItem;
         });
         return { ...g, items: newItems };
       });
       saveToLocalStorage(updated);
       return updated;
     });
+
+    // If rate changed, debounce auto-sync to Master Data & Finish Goods
+    if (field === 'rate' && targetJobName) {
+      if (rateSyncTimeoutRef.current[targetJobName]) {
+        clearTimeout(rateSyncTimeoutRef.current[targetJobName]);
+      }
+      rateSyncTimeoutRef.current[targetJobName] = setTimeout(() => {
+        handleRateCommit(targetJobName, value, targetCustomerName);
+      }, 900);
+    }
   };
 
   // Add a new customer group
@@ -560,17 +734,32 @@ export default function DispatchPlanningSheet() {
     return sum;
   }, [visibleGroups]);
 
+  // Total dispatch plan value calculation for visible items (Qty * Rate)
+  const totalValue = useMemo(() => {
+    let sum = 0;
+    visibleGroups.forEach(g => {
+      g.items.forEach(it => {
+        sum += getItemValue(it);
+      });
+    });
+    return Math.round(sum * 100) / 100;
+  }, [visibleGroups, productRateMap]);
+
   // Export to Excel
   const exportExcel = () => {
     const flatData: any[] = [];
     visibleGroups.forEach(g => {
       g.items.forEach((it, idx) => {
+        const rate = getItemRate(it);
+        const val = getItemValue(it);
         flatData.push({
           'S No.': idx === 0 ? g.sNo : '',
           'DISPATCH DATE': idx === 0 ? formatDateToDMY(g.dispatchDate) : '',
           'CUSTOMER NAME': idx === 0 ? g.customerName : '',
           'ITEM / JOB NAME': it.jobName,
           'QTY': it.qty ?? '',
+          'RATE (₹)': rate > 0 ? rate : '',
+          'VALUE (₹)': val > 0 ? val : '',
           'STATUS': it.isDone ? 'COMPLETED' : 'PENDING'
         });
       });
@@ -580,8 +769,10 @@ export default function DispatchPlanningSheet() {
       'S No.': '',
       'DISPATCH DATE': '',
       'CUSTOMER NAME': '',
-      'ITEM / JOB NAME': 'TOTAL QUANTITY',
+      'ITEM / JOB NAME': 'TOTAL',
       'QTY': totalQty,
+      'RATE (₹)': '',
+      'VALUE (₹)': totalValue,
       'STATUS': ''
     });
 
@@ -597,13 +788,19 @@ export default function DispatchPlanningSheet() {
         text += `\n*${g.sNo}. ${g.customerName}* (Dispatch: ${formatDateToDMY(g.dispatchDate)})\n`;
         g.items.forEach((it) => {
           if (it.jobName) {
-            text += `  • ${it.jobName}: *${(Number(it.qty) || 0).toLocaleString()}* ${it.isDone ? '(✓ Dispatched)' : ''}\n`;
+            const rate = getItemRate(it);
+            const val = getItemValue(it);
+            const rateStr = rate > 0 ? ` @ ₹${rate} = ₹${formatINR(val)}` : '';
+            text += `  • ${it.jobName}: *${(Number(it.qty) || 0).toLocaleString()}* pcs${rateStr} ${it.isDone ? '(✓ Dispatched)' : ''}\n`;
           }
         });
       }
     });
     text += `\n━━━━━━━━━━━━━━━━━━━━━\n`;
     text += `*TOTAL DISPATCH QTY: ${totalQty.toLocaleString()}*\n`;
+    if (totalValue > 0) {
+      text += `*TOTAL DISPATCH VALUE: ₹${formatINR(totalValue)}*\n`;
+    }
 
     navigator.clipboard.writeText(text);
     setWhatsappToast(true);
@@ -615,7 +812,7 @@ export default function DispatchPlanningSheet() {
   return (
     <div className="space-y-5">
       {/* 1. EXECUTIVE KPI SUMMARY CARDS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 print:hidden">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 print:hidden">
         {/* Customer Parties */}
         <div className="bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent p-4 rounded-xl border border-emerald-200/80 shadow-xs flex items-center justify-between">
           <div>
@@ -649,6 +846,18 @@ export default function DispatchPlanningSheet() {
           </div>
           <div className="p-3 bg-teal-600 text-white rounded-xl shadow-xs">
             <Truck className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* Total Dispatch Value */}
+        <div className="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent p-4 rounded-xl border border-amber-200/80 shadow-xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 block">Total Value</span>
+            <span className="text-2xl font-black text-amber-950 mt-0.5 block">₹{formatINR(totalValue)}</span>
+            <span className="text-[10px] text-amber-600/80 font-medium">Planned valuation</span>
+          </div>
+          <div className="p-3 bg-amber-600 text-white rounded-xl shadow-xs">
+            <IndianRupee className="w-5 h-5" />
           </div>
         </div>
 
@@ -800,6 +1009,13 @@ export default function DispatchPlanningSheet() {
         </div>
       )}
 
+      {rateSyncToast && (
+        <div className="fixed top-20 right-6 z-50 bg-emerald-700 text-white px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-top-2 duration-200 border border-emerald-400">
+          <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+          <span>{rateSyncToast}</span>
+        </div>
+      )}
+
       {savedToast && (
         <div className="flex items-center gap-2 p-3 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg border border-emerald-300 animate-in fade-in slide-in-from-top-1 print:hidden">
           <Check className="w-4 h-4 text-emerald-600" />
@@ -837,7 +1053,7 @@ export default function DispatchPlanningSheet() {
             </div>
             <div className="text-right">
               <div className="text-sm font-black text-slate-900">DATE: {displayPlanDateDMY}</div>
-              <div className="text-xs text-slate-600 font-bold">Total Parties: {visibleGroups.length} | Total Qty: {totalQty.toLocaleString()}</div>
+              <div className="text-xs text-slate-600 font-bold">Total Parties: {visibleGroups.length} | Total Qty: {totalQty.toLocaleString()} | Total Value: ₹{formatINR(totalValue)}</div>
             </div>
           </div>
         </div>
@@ -853,13 +1069,15 @@ export default function DispatchPlanningSheet() {
 
         <table className="w-full text-xs border-collapse text-slate-950 font-sans">
           <thead>
-            <tr className="bg-slate-100 border-b-2 border-slate-900 text-center font-black text-[11px] sm:text-xs tracking-wider uppercase text-slate-900">
-              <th className="border border-slate-900 px-2 py-2.5 w-16 text-center bg-slate-200/80">S No.</th>
-              <th className="border border-slate-900 px-3 py-2.5 text-center min-w-[130px] bg-slate-200/60">DATE</th>
-              <th className="border border-slate-900 px-4 py-2.5 text-left min-w-[200px] bg-slate-100">CUSTOMER NAME</th>
-              <th className="border border-slate-900 px-4 py-2.5 text-left min-w-[280px] bg-slate-100">ITEM NAME</th>
-              <th className="border border-slate-900 px-3 py-2.5 text-center w-32 bg-emerald-100/80 text-emerald-950">QTY</th>
-              <th className="border border-slate-900 px-2 py-2.5 w-32 text-center print:hidden bg-slate-200">
+            <tr className="bg-slate-100 border-b-2 border-slate-900 text-center font-black text-[11px] sm:text-xs tracking-wider uppercase text-slate-900 print:text-[10px]">
+              <th className="border border-slate-900 px-1.5 py-2 w-12 print:w-7 text-center bg-slate-200/80">S No.</th>
+              <th className="border border-slate-900 px-2 py-2 text-center w-24 print:w-20 bg-slate-200/60">DATE</th>
+              <th className="border border-slate-900 px-2.5 py-2 text-left w-44 print:w-36 bg-slate-100">CUSTOMER NAME</th>
+              <th className="border border-slate-900 px-3 py-2 text-left min-w-[200px] print:w-56 bg-slate-100">ITEM NAME</th>
+              <th className="border border-slate-900 px-2 py-2 text-center w-20 print:w-16 bg-emerald-100/80 text-emerald-950">QTY</th>
+              <th className="border border-slate-900 px-2 py-2 text-center w-20 print:w-16 bg-amber-100/80 text-amber-950">RATE (₹)</th>
+              <th className="border border-slate-900 px-2 py-2 text-right w-24 print:w-20 bg-emerald-200/80 text-emerald-950">VALUE (₹)</th>
+              <th className="border border-slate-900 px-2 py-2 w-28 text-center print:hidden bg-slate-200">
                 Actions
               </th>
             </tr>
@@ -867,7 +1085,7 @@ export default function DispatchPlanningSheet() {
           {visibleGroups.length === 0 ? (
             <tbody>
               <tr>
-                <td colSpan={6} className="py-12 text-center text-slate-500 font-bold text-sm">
+                <td colSpan={8} className="py-12 text-center text-slate-500 font-bold text-sm">
                   No active dispatch items scheduled for this date.
                   <button
                     type="button"
@@ -896,6 +1114,8 @@ export default function DispatchPlanningSheet() {
                 <tbody key={group.id} className="print-party-group">
                   {group.items.map((item, itemIdx) => {
                     const isFirstRow = itemIdx === 0;
+                    const effectiveRate = getItemRate(item);
+                    const itemVal = getItemValue(item);
 
                   return (
                     <tr 
@@ -910,9 +1130,9 @@ export default function DispatchPlanningSheet() {
                       {isFirstRow && (
                         <td
                           rowSpan={rowSpanCount}
-                          className="border border-slate-900 px-2 py-2 text-center font-black align-middle bg-slate-100/60"
+                          className="border border-slate-900 px-1 py-1.5 text-center font-black align-middle bg-slate-100/60 print:text-[10px]"
                         >
-                          <span className="inline-block w-7 h-7 leading-7 rounded-full bg-slate-200 text-slate-900 font-mono font-black text-xs">
+                          <span className="inline-block w-6 h-6 leading-6 print:w-5 print:h-5 print:leading-5 rounded-full bg-slate-200 text-slate-900 font-mono font-black text-xs print:text-[9px]">
                             {group.sNo}
                           </span>
                         </td>
@@ -922,15 +1142,20 @@ export default function DispatchPlanningSheet() {
                       {isFirstRow && (
                         <td
                           rowSpan={rowSpanCount}
-                          className="border border-slate-900 px-2 py-2 text-center font-mono font-bold align-middle bg-white"
+                          className="border border-slate-900 px-1.5 py-1.5 text-center font-mono font-bold align-middle bg-white print:text-[10px]"
                         >
-                          <input
-                            type="text"
-                            value={formatDateToDMY(group.dispatchDate)}
-                            onChange={(e) => updateGroup(group.id, 'dispatchDate', e.target.value)}
-                            placeholder="DD-MM-YYYY"
-                            className="w-full text-center bg-transparent font-mono font-bold text-slate-900 border-none focus:outline-none focus:bg-amber-100/70 px-1 py-1 rounded text-xs"
-                          />
+                          <div className="print:hidden">
+                            <input
+                              type="text"
+                              value={formatDateToDMY(group.dispatchDate)}
+                              onChange={(e) => updateGroup(group.id, 'dispatchDate', e.target.value)}
+                              placeholder="DD-MM-YYYY"
+                              className="w-full text-center bg-transparent font-mono font-bold text-slate-900 border-none focus:outline-none focus:bg-amber-100/70 px-0.5 py-1 rounded text-xs"
+                            />
+                          </div>
+                          <div className="hidden print:block text-center font-mono font-bold text-[10px]">
+                            {formatDateToDMY(group.dispatchDate)}
+                          </div>
                         </td>
                       )}
 
@@ -938,77 +1163,128 @@ export default function DispatchPlanningSheet() {
                       {isFirstRow && (
                         <td
                           rowSpan={rowSpanCount}
-                          className="border border-slate-900 px-3 py-2 text-left font-black align-middle bg-white"
+                          className="border border-slate-900 px-2 py-1.5 text-left font-black align-middle bg-white print:text-[10px]"
                         >
-                          <input
-                            type="text"
-                            value={group.customerName}
-                            onChange={(e) => updateGroup(group.id, 'customerName', e.target.value.toUpperCase())}
-                            placeholder="CUSTOMER / PARTY NAME"
-                            className="w-full text-left bg-transparent font-extrabold text-blue-950 border-none focus:outline-none focus:bg-amber-100/70 px-1.5 py-1 rounded uppercase tracking-tight text-xs"
-                          />
+                          <div className="print:hidden">
+                            <input
+                              type="text"
+                              value={group.customerName}
+                              onChange={(e) => updateGroup(group.id, 'customerName', e.target.value.toUpperCase())}
+                              placeholder="CUSTOMER / PARTY NAME"
+                              className="w-full text-left bg-transparent font-extrabold text-blue-950 border-none focus:outline-none focus:bg-amber-100/70 px-1 py-1 rounded uppercase tracking-tight text-xs"
+                            />
+                          </div>
+                          <div className="hidden print:block text-left font-black uppercase text-slate-900 text-[10px] leading-tight break-words">
+                            {group.customerName || '-'}
+                          </div>
                         </td>
                       )}
 
                       {/* Item / Job Name with Smart Floating Autocomplete Dropdown */}
-                      <td className="border border-slate-900 px-3 py-1.5 text-left font-bold">
-                        <input
-                          ref={(el) => { itemInputRefs.current[item.id] = el; }}
-                          type="text"
-                          value={item.jobName}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            updateItem(group.id, item.id, 'jobName', val.toUpperCase());
-                            setActiveSearchKey({ groupId: group.id, itemId: item.id });
-                            setSearchQuery(val);
-                            setHighlightedIndex(0);
-                            updateDropdownPosition(e.currentTarget);
-                          }}
-                          onFocus={(e) => {
-                            setActiveSearchKey({ groupId: group.id, itemId: item.id });
-                            setSearchQuery(item.jobName || '');
-                            setHighlightedIndex(0);
-                            updateDropdownPosition(e.currentTarget);
-                          }}
-                          onKeyDown={(e) => {
-                            if (activeSearchKey?.itemId === item.id && searchMatches.length > 0) {
-                              if (e.key === 'ArrowDown') {
-                                e.preventDefault();
-                                setHighlightedIndex((prev) => (prev + 1) % searchMatches.length);
-                              } else if (e.key === 'ArrowUp') {
-                                e.preventDefault();
-                                setHighlightedIndex((prev) => (prev - 1 + searchMatches.length) % searchMatches.length);
-                              } else if (e.key === 'Enter') {
-                                e.preventDefault();
-                                handleSelectProduct(group.id, item.id, searchMatches[highlightedIndex]);
-                              } else if (e.key === 'Escape') {
-                                setActiveSearchKey(null);
+                      <td className="border border-slate-900 px-2 py-1.5 text-left font-bold print:text-[10px]">
+                        <div className="print:hidden">
+                          <input
+                            ref={(el) => { itemInputRefs.current[item.id] = el; }}
+                            type="text"
+                            value={item.jobName}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              updateItem(group.id, item.id, 'jobName', val.toUpperCase());
+                              setActiveSearchKey({ groupId: group.id, itemId: item.id });
+                              setSearchQuery(val);
+                              setHighlightedIndex(0);
+                              updateDropdownPosition(e.currentTarget);
+                            }}
+                            onFocus={(e) => {
+                              setActiveSearchKey({ groupId: group.id, itemId: item.id });
+                              setSearchQuery(item.jobName || '');
+                              setHighlightedIndex(0);
+                              updateDropdownPosition(e.currentTarget);
+                            }}
+                            onKeyDown={(e) => {
+                              if (activeSearchKey?.itemId === item.id && searchMatches.length > 0) {
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  setHighlightedIndex((prev) => (prev + 1) % searchMatches.length);
+                                } else if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  setHighlightedIndex((prev) => (prev - 1 + searchMatches.length) % searchMatches.length);
+                                } else if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleSelectProduct(group.id, item.id, searchMatches[highlightedIndex]);
+                                } else if (e.key === 'Escape') {
+                                  setActiveSearchKey(null);
+                                }
                               }
-                            }
-                          }}
-                          placeholder="Type item or party to search master data..."
-                          className={cn(
-                            "w-full text-left bg-transparent font-extrabold text-slate-950 border-none focus:outline-none focus:bg-amber-100/70 px-1.5 py-1 rounded uppercase text-xs",
-                            item.isDone ? "line-through text-slate-400" : ""
-                          )}
-                        />
+                            }}
+                            placeholder="Type item or party to search master data..."
+                            className={cn(
+                              "w-full text-left bg-transparent font-extrabold text-slate-950 border-none focus:outline-none focus:bg-amber-100/70 px-1 py-1 rounded uppercase text-xs",
+                              item.isDone ? "line-through text-slate-400" : ""
+                            )}
+                          />
+                        </div>
+                        <div className="hidden print:block text-left font-bold text-slate-950 text-[10px] leading-tight break-words">
+                          {item.jobName || '-'}
+                        </div>
                       </td>
 
                       {/* Qty */}
-                      <td className="border border-slate-900 px-2 py-1.5 text-center font-black bg-emerald-50/60">
-                        <input
-                          ref={(el) => { qtyInputRefs.current[item.id] = el; }}
-                          type="number"
-                          value={item.qty ?? ''}
-                          onChange={(e) => updateItem(group.id, item.id, 'qty', e.target.value)}
-                          onKeyDown={(e) => handleQtyKeyDown(e, group.id, itemIdx, rowSpanCount)}
-                          placeholder="0"
-                          className={cn(
-                            "w-full text-center bg-transparent font-mono font-black text-emerald-950 border-none focus:outline-none focus:bg-amber-200 px-1 py-1 rounded text-xs",
-                            item.isDone ? "line-through text-slate-400" : ""
-                          )}
-                          title="Enter Qty and press ENTER to add another item"
-                        />
+                      <td className="border border-slate-900 px-1.5 py-1.5 text-center font-black bg-emerald-50/60 print:bg-transparent print:text-[10px]">
+                        <div className="print:hidden">
+                          <input
+                            ref={(el) => { qtyInputRefs.current[item.id] = el; }}
+                            type="number"
+                            value={item.qty ?? ''}
+                            onChange={(e) => updateItem(group.id, item.id, 'qty', e.target.value)}
+                            onKeyDown={(e) => handleQtyKeyDown(e, group.id, itemIdx, rowSpanCount)}
+                            placeholder="0"
+                            className={cn(
+                              "w-full text-center bg-transparent font-mono font-black text-emerald-950 border-none focus:outline-none focus:bg-amber-200 px-0.5 py-1 rounded text-xs",
+                              item.isDone ? "line-through text-slate-400" : ""
+                            )}
+                            title="Enter Qty and press ENTER to add another item"
+                          />
+                        </div>
+                        <div className="hidden print:block text-center font-mono font-black text-slate-950 text-[10px]">
+                          {item.qty ? Number(item.qty).toLocaleString() : '-'}
+                        </div>
+                      </td>
+
+                      {/* Item Rate (Auto from Master Data or Manual Edit) */}
+                      <td className="border border-slate-900 px-1.5 py-1.5 text-center font-bold bg-amber-50/50 print:bg-transparent print:text-[10px]">
+                        <div className="print:hidden">
+                          <input
+                            type="number"
+                            step="any"
+                            value={item.rate !== undefined && item.rate !== null && item.rate !== '' ? item.rate : (effectiveRate > 0 ? effectiveRate : '')}
+                            onChange={(e) => updateItem(group.id, item.id, 'rate', e.target.value)}
+                            onBlur={(e) => {
+                              if (item.jobName && e.target.value) {
+                                handleRateCommit(item.jobName, e.target.value, group.customerName);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && item.jobName) {
+                                handleRateCommit(item.jobName, (e.target as HTMLInputElement).value, group.customerName);
+                              }
+                            }}
+                            placeholder={effectiveRate > 0 ? String(effectiveRate) : "0.00"}
+                            className={cn(
+                              "w-full text-center bg-transparent font-mono font-bold text-slate-900 border-none focus:outline-none focus:bg-amber-200 px-0.5 py-1 rounded text-xs",
+                              item.isDone ? "line-through text-slate-400" : ""
+                            )}
+                            title="Edit rate here — automatically syncs to Master Data & Finish Goods everywhere!"
+                          />
+                        </div>
+                        <div className="hidden print:block text-center font-mono font-bold text-slate-900 text-[10px]">
+                          {effectiveRate > 0 ? `₹${effectiveRate.toFixed(2)}` : '-'}
+                        </div>
+                      </td>
+
+                      {/* Value (Qty * Rate) */}
+                      <td className="border border-slate-900 px-2 py-1.5 text-right font-black font-mono text-emerald-950 bg-emerald-50/70 print:bg-transparent print:text-[10px]">
+                        {itemVal > 0 ? `₹${formatINR(itemVal)}` : '-'}
                       </td>
 
                       {/* Row & Group Actions (hidden during print) */}
@@ -1080,17 +1356,23 @@ export default function DispatchPlanningSheet() {
 
           {/* Footer Total Row */}
           <tfoot>
-            <tr className="bg-slate-200 border-t-2 border-slate-900 font-black text-slate-950">
-              <td colSpan={3} className="border border-slate-900 px-4 py-2.5 text-center uppercase tracking-wider text-xs sm:text-sm font-black">
+            <tr className="bg-slate-200 border-t-2 border-slate-900 font-black text-slate-950 print:text-[10px]">
+              <td colSpan={3} className="border border-slate-900 px-3 py-2 text-center uppercase tracking-wider text-xs sm:text-sm font-black print:text-[10px]">
                 TOTAL DISPATCH SUMMARY ({visibleGroups.length} PARTIES)
               </td>
-              <td className="border border-slate-900 px-4 py-2.5 text-right text-xs sm:text-sm font-black uppercase tracking-wider">
-                TOTAL QUANTITY:
+              <td className="border border-slate-900 px-3 py-2 text-right text-xs sm:text-sm font-black uppercase tracking-wider print:text-[10px]">
+                TOTAL:
               </td>
-              <td className="border border-slate-900 px-2 py-2.5 text-center text-xs sm:text-sm font-black bg-emerald-200/90 text-emerald-950 font-mono">
+              <td className="border border-slate-900 px-1 py-2 text-center text-xs sm:text-sm font-black bg-emerald-200/90 text-emerald-950 font-mono print:text-[10px]">
                 {totalQty.toLocaleString()}
               </td>
-              <td className="border border-slate-900 px-2 py-2.5 print:hidden bg-slate-300"></td>
+              <td className="border border-slate-900 px-1 py-2 text-center text-xs sm:text-sm font-black bg-amber-200/80 text-amber-950 font-mono print:text-[10px]">
+                -
+              </td>
+              <td className="border border-slate-900 px-2 py-2 text-right text-xs sm:text-sm font-black bg-emerald-300 text-emerald-950 font-mono print:text-[10px]">
+                ₹{formatINR(totalValue)}
+              </td>
+              <td className="border border-slate-900 px-2 py-2 print:hidden bg-slate-300"></td>
             </tr>
           </tfoot>
         </table>
@@ -1132,11 +1414,18 @@ export default function DispatchPlanningSheet() {
               >
                 <div className="font-extrabold text-sm text-slate-950 flex items-center justify-between">
                   <span>{prod.itemName}</span>
-                  {prod.ups && (
-                    <span className="text-[11px] font-black px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
-                      UPS: {prod.ups}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {productRateMap.get(String(prod.itemName || '').trim().toUpperCase()) ? (
+                      <span className="text-[11px] font-black px-1.5 py-0.5 bg-amber-50 text-amber-800 rounded border border-amber-200">
+                        ₹{productRateMap.get(String(prod.itemName || '').trim().toUpperCase())}
+                      </span>
+                    ) : null}
+                    {prod.ups && (
+                      <span className="text-[11px] font-black px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
+                        UPS: {prod.ups}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="text-xs text-slate-600 font-medium mt-0.5 flex items-center justify-between">
                   <span>Party: <strong className="text-emerald-900">{prod.customerName}</strong></span>
@@ -1171,6 +1460,7 @@ export default function DispatchPlanningSheet() {
         formattedDateStr={displayPlanDateDMY}
         dispatchGroups={visibleGroups}
         totalBoxQty={totalQty}
+        totalValue={totalValue}
         onCopyTextReport={copyWhatsApp}
       />
     </div>

@@ -17,6 +17,8 @@ export interface DispatchPlanItem {
   id: string;
   jobName: string;
   qty: number | string | null;
+  rate?: number | string | null;
+  value?: number | string | null;
   isDone?: boolean;
 }
 

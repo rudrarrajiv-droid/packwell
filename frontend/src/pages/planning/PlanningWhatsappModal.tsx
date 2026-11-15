@@ -17,6 +17,7 @@ interface PlanningWhatsappModalProps {
   dispatchGroups?: DispatchPlanGroup[];
   totalPly?: number;
   totalBoxQty?: number;
+  totalValue?: number;
   onCopyTextReport: () => void;
 }
 
@@ -701,6 +702,12 @@ export default function PlanningWhatsappModal({
                           const customerNumber = startCustIdx + gIdx + 1;
                           const partyItems = (grp.items || []).filter(i => (i.jobName && i.jobName.trim().length > 0) || i.qty);
                           const partyTotal = partyItems.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
+                          const partyTotalVal = partyItems.reduce((sum, it) => {
+                            const val = it.value !== undefined && it.value !== null 
+                              ? Number(it.value) 
+                              : ((Number(it.qty) || 0) * (Number(it.rate) || 0));
+                            return sum + (isNaN(val) ? 0 : val);
+                          }, 0);
 
                           return (
                             <div 
@@ -722,6 +729,11 @@ export default function PlanningWhatsappModal({
                                 <div className="flex items-center gap-3 text-[11px] font-bold">
                                   <span className="text-amber-300">
                                     Total: <strong className="text-white font-black font-mono">{partyTotal.toLocaleString()}</strong> Boxes
+                                    {partyTotalVal > 0 && (
+                                      <span className="text-emerald-300 ml-1.5">
+                                        (₹{partyTotalVal.toLocaleString('en-IN', { maximumFractionDigits: 2 })})
+                                      </span>
+                                    )}
                                   </span>
                                   <span className="text-[9px] text-slate-400 font-normal">
                                     {grp.dispatchDate || formattedDateStr}
@@ -735,32 +747,51 @@ export default function PlanningWhatsappModal({
                                   <tr className="bg-slate-100 font-bold border-b border-slate-900 text-[9px] text-slate-800">
                                     <th className="border-r border-slate-900 px-2 py-0.5 w-8 text-center">#</th>
                                     <th className="border-r border-slate-900 px-2.5 py-0.5 text-left">Job / Item Name</th>
-                                    <th className="border-r border-slate-900 px-2.5 py-0.5 w-28 text-right bg-amber-100 font-black">
+                                    <th className="border-r border-slate-900 px-2 py-0.5 w-20 text-right bg-amber-100 font-black">
                                       Dispatch Qty
                                     </th>
-                                    <th className="px-2.5 py-0.5 w-44 text-left">Remarks</th>
+                                    <th className="border-r border-slate-900 px-2 py-0.5 w-16 text-center bg-slate-200/70 font-bold">
+                                      Rate (₹)
+                                    </th>
+                                    <th className="border-r border-slate-900 px-2 py-0.5 w-20 text-right bg-emerald-100 font-black">
+                                      Value (₹)
+                                    </th>
+                                    <th className="px-2.5 py-0.5 w-28 text-left">Remarks</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {partyItems.map((item, iIdx) => (
-                                    <tr 
-                                      key={item.id || iIdx} 
-                                      className={iIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'}
-                                    >
-                                      <td className="border-r border-t border-slate-300 px-2 py-1 text-center font-bold text-slate-700 text-[10px]">
-                                        {iIdx + 1}
-                                      </td>
-                                      <td className="border-r border-t border-slate-300 px-2.5 py-1 font-bold text-slate-900 text-[11px]">
-                                        {item.jobName || '-'}
-                                      </td>
-                                      <td className="border-r border-t border-slate-300 px-2.5 py-1 text-right font-black font-mono text-emerald-950 bg-amber-50 text-[11px]">
-                                        {(Number(item.qty) || 0).toLocaleString()}
-                                      </td>
-                                      <td className="border-t border-slate-300 px-2.5 py-1 text-slate-600 italic text-[10px]">
-                                        {(item as any).remarks || '-'}
-                                      </td>
-                                    </tr>
-                                  ))}
+                                  {partyItems.map((item, iIdx) => {
+                                    const r = Number(item.rate) || 0;
+                                    const v = item.value !== undefined && item.value !== null 
+                                      ? Number(item.value) 
+                                      : (r > 0 ? (Number(item.qty) || 0) * r : 0);
+
+                                    return (
+                                      <tr 
+                                        key={item.id || iIdx} 
+                                        className={iIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/80'}
+                                      >
+                                        <td className="border-r border-t border-slate-300 px-2 py-1 text-center font-bold text-slate-700 text-[10px]">
+                                          {iIdx + 1}
+                                        </td>
+                                        <td className="border-r border-t border-slate-300 px-2.5 py-1 font-bold text-slate-900 text-[11px]">
+                                          {item.jobName || '-'}
+                                        </td>
+                                        <td className="border-r border-t border-slate-300 px-2 py-1 text-right font-black font-mono text-emerald-950 bg-amber-50 text-[11px]">
+                                          {(Number(item.qty) || 0).toLocaleString()}
+                                        </td>
+                                        <td className="border-r border-t border-slate-300 px-2 py-1 text-center font-mono font-bold text-slate-800 text-[10px]">
+                                          {r > 0 ? `₹${r.toFixed(2)}` : '-'}
+                                        </td>
+                                        <td className="border-r border-t border-slate-300 px-2 py-1 text-right font-black font-mono text-emerald-950 bg-emerald-50 text-[10px]">
+                                          {v > 0 ? `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
+                                        </td>
+                                        <td className="border-t border-slate-300 px-2.5 py-1 text-slate-600 italic text-[10px]">
+                                          {(item as any).remarks || '-'}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>
