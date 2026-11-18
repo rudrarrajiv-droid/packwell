@@ -12,6 +12,7 @@ import {
   saveCostingData,
   type SaleRateLookupContext,
 } from './jobCostingService';
+import { isFluteLayer } from '../../lib/corrugationUtils';
 import { syncProductRateAcrossSystem } from '../../lib/supabase/finishGoodService';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../lib/utils';
@@ -715,22 +716,28 @@ export default function JobCostingDetailModal({
 
           {/* Layer-wise Costing Breakdown Table */}
           <div className="border border-border rounded-xl overflow-x-auto shadow-sm">
-            <div className="bg-secondary/60 px-4 py-2.5 border-b border-border flex items-center justify-between">
+            <div className="bg-secondary/60 px-4 py-2.5 border-b border-border flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
                 <Layers className="w-4 h-4 text-blue-600" />
                 Layer-Wise Paper Allocation &amp; DPR Costing Breakdown
               </span>
-              <span className="text-[11px] text-muted-foreground">
-                All values in Indian Rupees (₹)
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-purple-900 bg-purple-100/90 border border-purple-200 px-2 py-0.5 rounded-full font-bold">
+                  Fluting Medium = Base Wt + 40% Flute Take-up (e.g. 100 GSM × 1.4 = 140 Eff. GSM)
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  All values in Indian Rupees (₹)
+                </span>
+              </div>
             </div>
 
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-secondary/30 border-b border-border font-bold text-muted-foreground text-left">
-                  <th className="p-3 w-28">Layer</th>
+                  <th className="p-3 w-32">Layer</th>
+                  <th className="p-3 w-40">Paper Spec</th>
                   <th className="p-3 w-20 text-center">Reel Size</th>
-                  <th className="p-3 text-right">Alloc. Wt</th>
+                  <th className="p-3 text-right min-w-[140px]">Alloc. Wt</th>
                   <th className="p-3 text-right">Rate (₹/Kg)</th>
                   <th className="p-3 text-right">Alloc. Value</th>
                   <th className="p-3 text-center bg-blue-50/50 min-w-[130px]">DPR Wt (Kg)</th>
@@ -740,79 +747,140 @@ export default function JobCostingDetailModal({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {data.layers.map((layer) => (
-                  <tr key={layer.layerIndex} className="hover:bg-muted/40 transition-colors">
-                    <td className="p-3 font-bold text-foreground">
-                      {layer.layerName}
-                      {layer.reelNumber && (
-                        <span className="block text-[10px] font-normal text-muted-foreground font-mono">
-                          Reel: {layer.reelNumber}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3 text-center font-semibold text-foreground">
-                      {layer.reelSize ? `${layer.reelSize}"` : '—'}
-                    </td>
-                    <td className="p-3 text-right font-bold text-foreground">
-                      {Math.round(layer.allocatedWeight).toLocaleString()} Kg
-                    </td>
-                    <td className="p-3 text-right">
-                      <div className="inline-flex items-center justify-end gap-1">
-                        <span className="text-muted-foreground font-semibold">₹</span>
+                {data.layers.map((layer) => {
+                  const isFlute = layer.isFlute ?? isFluteLayer(layer, layer.layerIndex);
+                  const gsm = Number(layer.gsm || 0);
+                  const bf = layer.bf;
+                  const allocWt = Math.round(layer.allocatedWeight);
+
+                  const baseWt = layer.baseWeightWithoutFlute && layer.baseWeightWithoutFlute > 0
+                    ? Math.round(layer.baseWeightWithoutFlute)
+                    : isFlute && allocWt > 0
+                    ? Math.round(allocWt / 1.4)
+                    : allocWt;
+                  const fluteExtra = isFlute ? Math.max(0, allocWt - baseWt) : 0;
+
+                  return (
+                    <tr key={layer.layerIndex} className="hover:bg-muted/40 transition-colors">
+                      <td className="p-3 font-bold text-foreground">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-900">{layer.layerName}</span>
+                          {isFlute ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-purple-100 text-purple-900 border border-purple-300">
+                              Flute (+40%)
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-300">
+                              Liner
+                            </span>
+                          )}
+                        </div>
+                        {layer.reelNumber && (
+                          <span className="block text-[10px] font-normal text-muted-foreground font-mono mt-0.5">
+                            Reel: {layer.reelNumber}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-left">
+                        {gsm > 0 ? (
+                          <div>
+                            <span className="font-black text-slate-900 text-xs">
+                              {gsm} GSM
+                            </span>
+                            {bf ? (
+                              <span className="text-[11px] font-bold text-slate-600 ml-1">
+                                {bf} BF
+                              </span>
+                            ) : null}
+                            {isFlute ? (
+                              <div className="text-[10px] font-bold text-purple-700 mt-0.5">
+                                +40% Take-up = {Math.round(gsm * 1.4)} Eff. GSM
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+                                Flat Liner (1.0x)
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-[11px]">—</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center font-semibold text-foreground">
+                        {layer.reelSize ? `${layer.reelSize}"` : '—'}
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="font-black text-slate-950 text-xs">
+                          {allocWt.toLocaleString()} Kg
+                        </div>
+                        {isFlute ? (
+                          <div className="text-[10px] font-bold text-purple-800 mt-0.5">
+                            Base: {baseWt.toLocaleString()} + 40% ({fluteExtra.toLocaleString()} Kg)
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+                            Flat Raw Wt
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <span className="text-muted-foreground font-semibold">₹</span>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            value={layer.reelRate || ''}
+                            onChange={(e) =>
+                              handleLayerChange(
+                                layer.layerIndex,
+                                'reelRate',
+                                e.target.value === '' ? 0 : parseFloat(e.target.value) || 0
+                              )
+                            }
+                            placeholder="0"
+                            className="w-16 px-1.5 py-1 text-right bg-card border border-border rounded text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            title="Rate fetched from Reels Inventory. Click to edit."
+                          />
+                        </div>
+                      </td>
+                      <td className="p-3 text-right font-black text-foreground">
+                        ₹{layer.allocatedValue.toLocaleString()}
+                      </td>
+                      <td className="p-2 text-center bg-blue-50/50">
                         <input
                           type="number"
-                          step="0.1"
                           min="0"
-                          value={layer.reelRate || ''}
+                          step="0.5"
+                          value={layer.dprWeight ?? ''}
                           onChange={(e) =>
                             handleLayerChange(
                               layer.layerIndex,
-                              'reelRate',
-                              e.target.value === '' ? 0 : parseFloat(e.target.value) || 0
+                              'dprWeight',
+                              e.target.value === '' ? null : parseFloat(e.target.value) || 0
                             )
                           }
-                          placeholder="0"
-                          className="w-16 px-1.5 py-1 text-right bg-card border border-border rounded text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          title="Rate fetched from Reels Inventory. Click to edit."
+                          placeholder="e.g. 100"
+                          className="w-24 px-2 py-1 text-center bg-white border border-blue-300 rounded font-bold text-blue-700 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
                         />
-                      </div>
-                    </td>
-                    <td className="p-3 text-right font-black text-foreground">
-                      ₹{layer.allocatedValue.toLocaleString()}
-                    </td>
-                    <td className="p-2 text-center bg-blue-50/50">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        value={layer.dprWeight ?? ''}
-                        onChange={(e) =>
-                          handleLayerChange(
-                            layer.layerIndex,
-                            'dprWeight',
-                            e.target.value === '' ? null : parseFloat(e.target.value) || 0
-                          )
-                        }
-                        placeholder="e.g. 100"
-                        className="w-24 px-2 py-1 text-center bg-white border border-blue-300 rounded font-bold text-blue-700 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
-                      />
-                    </td>
-                    <td className="p-3 text-right font-black text-blue-900 bg-blue-50/50">
-                      {layer.dprValue !== null ? `₹${layer.dprValue.toLocaleString()}` : '—'}
-                    </td>
-                    <td className="p-3 text-right font-bold text-amber-700 bg-amber-50/40">
-                      {data.manfBoxQty !== null ? `${layer.lessBoxWeightLoss} Kg` : '—'}
-                    </td>
-                    <td className="p-3 text-right font-black text-amber-900 bg-amber-50/40">
-                      {data.manfBoxQty !== null ? `₹${layer.lessBoxValueLoss.toLocaleString()}` : '—'}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="p-3 text-right font-black text-blue-900 bg-blue-50/50">
+                        {layer.dprValue !== null ? `₹${layer.dprValue.toLocaleString()}` : '—'}
+                      </td>
+                      <td className="p-3 text-right font-bold text-amber-700 bg-amber-50/40">
+                        {data.manfBoxQty !== null ? `${layer.lessBoxWeightLoss} Kg` : '—'}
+                      </td>
+                      <td className="p-3 text-right font-black text-amber-900 bg-amber-50/40">
+                        {data.manfBoxQty !== null ? `₹${layer.lessBoxValueLoss.toLocaleString()}` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
 
               <tfoot>
                 <tr className="bg-secondary/70 border-t-2 border-border font-black text-foreground">
-                  <td colSpan={2} className="p-3 uppercase tracking-wider text-xs">
+                  <td colSpan={3} className="p-3 uppercase tracking-wider text-xs">
                     TOTALS
                   </td>
                   <td className="p-3 text-right font-black">

@@ -5,6 +5,11 @@ export interface JobCostingLayer {
   layerName: string;
   reelSize: number | string;
   reelNumber: string;
+  gsm?: number;
+  bf?: number | string;
+  paperType?: string;
+  isFlute?: boolean;
+  baseWeightWithoutFlute?: number; // Raw weight before 40% flute take-up
   allocatedWeight: number;
   reelRate: number; // ₹/Kg from inventory or manual
   allocatedValue: number; // allocatedWeight * reelRate

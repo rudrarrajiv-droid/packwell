@@ -1,6 +1,7 @@
 import type { JobCostingData, JobCostingLayer, SaleRateSource } from './jobCostingTypes';
 import { updateJobCard } from '../../lib/supabase/jobCardService';
 import { DEFAULT_STANDARD_CONVERSION_COST } from '../../lib/conversionCostService';
+import { isFluteLayer } from '../../lib/corrugationUtils';
 
 const STORAGE_KEY_PREFIX = 'packwell_job_costing_';
 export const DEFAULT_SCRAP_PERCENT = 5;
@@ -332,9 +333,23 @@ export const buildJobCostingData = (
   });
 
   const rawLayers = snapshot.layers || [];
+  const ups = Number(snapshot.ups) > 0 ? Number(snapshot.ups) : 1;
+  const noOfPaper = Math.ceil(orderBoxQty / ups);
+  const snapReelSize = Number(snapshot.reelSize || 0);
+  const snapCutSize = Number(snapshot.cutSize || 0);
+
   const layers: JobCostingLayer[] = rawLayers.map((layer: any, idx: number) => {
     const savedLayer = saved?.layers?.find((l: any) => l.layerIndex === idx);
     const layerName = layer.layerName || `Layer ${idx + 1}`;
+    const gsm = Number(layer.gsm || savedLayer?.gsm || 0);
+    const bf = layer.bf || savedLayer?.bf || '';
+    const paperType = layer.paperType || savedLayer?.paperType || '';
+    const isFlute = isFluteLayer(layer, idx);
+
+    let baseWeightWithoutFlute = 0;
+    if (snapReelSize > 0 && snapCutSize > 0 && gsm > 0 && noOfPaper > 0) {
+      baseWeightWithoutFlute = Math.round(((snapReelSize * snapCutSize * gsm) / 3100 / 500 * noOfPaper) * 100) / 100;
+    }
 
     let reelNumber = '';
     let reelSize = layer.reqSize || snapshot.reelSize || '';
@@ -375,6 +390,11 @@ export const buildJobCostingData = (
       layerName,
       reelSize,
       reelNumber,
+      gsm,
+      bf,
+      paperType,
+      isFlute,
+      baseWeightWithoutFlute,
       allocatedWeight,
       reelRate,
       allocatedValue: 0,
