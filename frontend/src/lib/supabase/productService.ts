@@ -65,6 +65,9 @@ export interface SupabaseProduct {
   boxType?: string;
   specialRequirement?: string;
   actualCosting?: number;
+  customerRate?: number;
+  rate?: number;
+  rateHistory?: Array<{ rate: number; effectiveDate: string; changedAt?: string; changedBy?: string }>;
   layers: SupabaseProductLayer[];
   isArchived: boolean;
   createdBy: string | null;
@@ -128,6 +131,9 @@ const mapRow = (row: any): SupabaseProduct => ({
   boxType: row.raw_data?.boxType ?? undefined,
   specialRequirement: row.special_requirement ?? undefined,
   actualCosting: row.actual_costing != null ? Number(row.actual_costing) : undefined,
+  customerRate: row.raw_data?.customerRate != null ? Number(row.raw_data.customerRate) : undefined,
+  rate: row.raw_data?.rate != null ? Number(row.raw_data.rate) : undefined,
+  rateHistory: Array.isArray(row.raw_data?.rateHistory) ? row.raw_data.rateHistory : undefined,
   layers: row.layers ?? [],
   isArchived: row.is_archived,
   createdBy: row.created_by,

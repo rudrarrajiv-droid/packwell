@@ -5,3 +5,6 @@ dist/
 backend/prisma/dev.db
 .vercel
 firestore-backup/
+backups/
+*.xlsx
+

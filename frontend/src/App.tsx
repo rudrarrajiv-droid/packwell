@@ -19,6 +19,7 @@ import Scrap from './pages/Scrap';
 import PlantDailyMIS from './pages/PlantDailyMIS';
 import Planning from './pages/Planning';
 import JobCosting from './pages/JobCosting';
+import ConversionCost from './pages/ConversionCost';
 import AppLayout from './layouts/AppLayout';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -49,6 +50,7 @@ function App() {
                 <Route path="planning/corrugation" element={<Planning defaultTab="corrugation" />} />
                 <Route path="planning/dispatch" element={<Planning defaultTab="dispatch" />} />
                 <Route path="job-costing" element={<JobCosting />} />
+                <Route path="conversion-cost" element={<ConversionCost />} />
                 <Route path="job-cards" element={<JobCards />} />
                 <Route path="purchase-orders" element={<PurchaseOrders />} />
                 <Route path="master-data" element={<MasterData />} />

@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, FileText, Database, PackageSearch, PackageCheck, 
   Truck, Activity, Settings, LogOut, ShoppingCart, Users, 
   FileSpreadsheet, Box, Archive, Factory, Calendar, 
-  ChevronDown, ChevronRight, Calculator 
+  ChevronDown, ChevronRight, Calculator, Gauge 
 } from 'lucide-react';
+import { format } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
+import { useConversionCost } from '../hooks/useConversionCost';
 import { cn } from '../lib/utils';
 
 export default function AppLayout() {
@@ -15,6 +17,26 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isPlanningOpen, setIsPlanningOpen] = useState<boolean>(true);
+  const {
+    standardRate,
+    currentMonth,
+    previousMonth,
+    currentMonthMetrics,
+    previousMonthMetrics,
+    loadingMonthly,
+  } = useConversionCost();
+
+  const currentActual = currentMonthMetrics?.actualConversionCostPerKg ?? 0;
+  const prevActual = previousMonthMetrics?.actualConversionCostPerKg ?? 0;
+  const displayMetrics = currentActual > 0 ? currentMonthMetrics : previousMonthMetrics;
+  const displayMonthCode = currentActual > 0 ? currentMonth : previousMonth;
+  const displayActualRate = displayMetrics?.actualConversionCostPerKg ?? 0;
+  const displayMonthShort = useMemo(() => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(displayMonthCode)) return displayMonthCode;
+    const [y, m] = displayMonthCode.split('-').map(Number);
+    return format(new Date(y, m - 1, 1), 'MMM');
+  }, [displayMonthCode]);
+  const isOverStandard = displayActualRate > standardRate && displayActualRate > 0;
 
   const handleLogout = () => {
     logout();
@@ -37,6 +59,7 @@ export default function AppLayout() {
     { name: 'PO Management', path: '/purchase-orders', icon: ShoppingCart },
     { name: 'Job Cards', path: '/job-cards', icon: FileText },
     { name: 'Job Costing (P/L)', path: '/job-costing', icon: Calculator },
+    { name: 'Conversion Cost', path: '/conversion-cost', icon: Gauge },
     { name: 'Master Data', path: '/master-data', icon: Database },
     { name: 'Reel Inventory', path: '/inventory', icon: PackageSearch },
     { name: 'Finish Goods', path: '/finish-goods', icon: PackageCheck },
@@ -143,7 +166,7 @@ export default function AppLayout() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden print:overflow-visible print:block print:h-auto">
         {/* Top Header */}
-        <header className="h-16 border-b border-border bg-card flex items-center justify-between px-8 print:hidden">
+        <header className="min-h-16 py-2 border-b border-border bg-card flex flex-wrap items-center justify-between gap-3 px-4 sm:px-8 print:hidden">
           <h2 className="text-lg font-semibold text-foreground">
             {location.pathname.startsWith('/planning/corrugation')
               ? 'Corrugation Machine Planning'
@@ -153,6 +176,55 @@ export default function AppLayout() {
               ? 'Daily Planning'
               : navItems.find((i: any) => location.pathname.startsWith(i.path))?.name || 'Packwell India'}
           </h2>
+
+          {/* Global Bold & Colorful Conversion Cost Highlight (Visible on EVERY page) */}
+          <Link
+            to="/conversion-cost"
+            title="Click to edit Standard Conversion Cost or view Month-wise P&L Conversion Cost"
+            className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 rounded-xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white shadow-md hover:shadow-lg hover:scale-[1.01] transition-all border border-indigo-500/40"
+          >
+            <div className="flex items-center gap-1.5">
+              <Gauge className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="text-[10px] sm:text-[11px] uppercase tracking-wider font-extrabold text-amber-300">
+                Std Conv:
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 text-xs sm:text-sm font-black shadow-xs">
+                ₹{standardRate.toFixed(2)}/Kg
+              </span>
+            </div>
+
+            <div className="w-px h-5 bg-white/20 hidden sm:block" />
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] sm:text-[11px] uppercase tracking-wider font-extrabold text-indigo-200">
+                Actual ({displayMonthShort}):
+              </span>
+              <span
+                className={cn(
+                  'px-2 py-0.5 rounded-md text-xs sm:text-sm font-black shadow-xs',
+                  loadingMonthly && displayActualRate === 0
+                    ? 'bg-white/20 text-white'
+                    : displayActualRate === 0
+                    ? 'bg-slate-700 text-slate-200'
+                    : isOverStandard
+                    ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white ring-2 ring-rose-300/60'
+                    : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white ring-2 ring-emerald-300/60'
+                )}
+              >
+                {loadingMonthly && displayActualRate === 0
+                  ? '...'
+                  : displayActualRate > 0
+                  ? `₹${displayActualRate.toFixed(2)}/Kg`
+                  : 'N/A'}
+              </span>
+              {currentActual > 0 && prevActual > 0 && (
+                <span className="hidden xl:inline text-[10px] font-bold text-indigo-300">
+                  (Prev: ₹{prevActual.toFixed(2)})
+                </span>
+              )}
+            </div>
+          </Link>
+
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-3">
               <div className="text-right flex flex-col justify-center">

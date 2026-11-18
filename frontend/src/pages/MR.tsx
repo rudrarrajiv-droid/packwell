@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { getReels, getReelTransactions } from '../lib/supabase/reelService';
 import { getFinishGoods, getFinishGoodTransactions } from '../lib/supabase/finishGoodService';
 import { getRawMaterials, getRawMaterialTransactions } from '../lib/supabase/rmService';
@@ -11,7 +12,7 @@ import {
   Loader2, Save, Printer, Plus, Trash2, CheckCircle2,
   TrendingUp, TrendingDown, DollarSign, Wallet, Package, Layers,
   Receipt, Scale, ArrowUpRight, ArrowDownRight, Sparkles, SlidersHorizontal,
-  ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Building2, HelpCircle, FileDown, FileSpreadsheet, FileText, Search, Truck, RotateCcw, Users, Box, Eye, Filter
+  ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Building2, HelpCircle, FileDown, FileSpreadsheet, FileText, Search, Truck, RotateCcw, Users, Box, Eye, Filter, Gauge
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { exportMRToPDF, exportMRToExcel, previewMRPDF } from '../lib/mrExportUtils';
@@ -21,29 +22,13 @@ import CashLedgerModal from './CashLedgerModal';
 import ConsumableBreakdownModal, { type RmBreakdownItem } from './ConsumableBreakdownModal';
 import RMPurchaseDetailsModal, { isRMAuditTransaction } from './rm/RMPurchaseDetailsModal';
 import { getMonthlyExpenseAggregates, getExpenseCategories, getCashClosingBalanceForMonth } from '../lib/supabase/cashLedgerService';
-
-const DEFAULT_EXPENSE_CATEGORIES = [
-  "Engineer Food and Lodge Expense",
-  "Interest on OD A/c",
-  "Freight Outward Charges",
-  "Salary with Director Remuneration",
-  "Client Welfare / Commission",
-  "Staff Welfare & Pantry Exp.",
-  "Freight Inward Charges",
-  "Conveyance & Bike Petrol Expense",
-  "AMC Charges and Factory Insurance Exp",
-  "Machine Exp",
-  "Factory Rent Exp",
-  "Plant Exp",
-  "Office & Stationery Exp",
-  "Legal Expenses",
-  "DG Diesel",
-  "DG Rent",
-  "Electricity Bill",
-  "LPG Cylinder",
-  "Forklift Diesel",
-  "Consumable Goods (Excl. Gas)",
-];
+import {
+  DEFAULT_EXPENSE_CATEGORIES,
+  getSafeMonthBounds,
+  isDateInTargetMonth,
+  getStandardConversionCost,
+  getCachedStandardConversionCost,
+} from '../lib/conversionCostService';
 
 const DEFAULT_SISTER_PARTIES = [
   "Diya Industries",
@@ -61,66 +46,9 @@ const formatINR = (val: number, decimals: number = 0) => {
   });
 };
 
-// Safe month boundaries calculation helper (deterministic strings without Invalid Date crashes)
-const getSafeMonthBounds = (targetMonth: string) => {
-  if (!targetMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth)) {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    return {
-      monthStart: `${y}-${m}-01`,
-      monthEnd: `${y}-${m}-01`,
-      safeMonth: `${y}-${m}`
-    };
-  }
-  const [yStr, mStr] = targetMonth.split('-');
-  const y = parseInt(yStr, 10);
-  const m = parseInt(mStr, 10);
-  const monthStart = `${yStr}-${mStr}-01`;
-  const nextMonth = m === 12 ? 1 : m + 1;
-  const nextYear = m === 12 ? y + 1 : y;
-  const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-  return { monthStart, monthEnd, safeMonth: targetMonth };
-};
-
-// Robust date matching helper for transactions (supports ISO, DD-MM-YYYY, DD/MM/YYYY, '31 Aug 2026')
-const isDateInTargetMonth = (dateStr?: string | null, targetMonth: string = '2026-08'): boolean => {
-  if (!dateStr || !targetMonth || !/^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth)) return false;
-  const str = String(dateStr).trim();
-  if (str.startsWith(targetMonth)) return true;
-
-  const parts = targetMonth.split('-'); // ['2026', '08']
-  if (parts.length === 2) {
-    const y = parts[0];
-    const m = parts[1];
-    const mNum = parseInt(m, 10);
-    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-    const monthName = monthNames[mNum - 1];
-
-    if (monthName && str.toLowerCase().includes(monthName) && str.includes(y)) {
-      return true;
-    }
-
-    if (str.includes(y)) {
-      if (str.includes(`/${m}/`) || str.includes(`-${m}-`) || str.includes(`/${mNum}/`) || str.includes(`-${mNum}-`)) {
-        return true;
-      }
-    }
-  }
-
-  try {
-    const d = new Date(str);
-    if (!isNaN(d.getTime())) {
-      const parsedMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (parsedMonth === targetMonth) return true;
-    }
-  } catch {}
-
-  return false;
-};
-
 export default function MR() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [currentMonth, setCurrentMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -197,6 +125,12 @@ export default function MR() {
   const { data: dbCategories = [], refetch: refetchDbCategories } = useQuery({
     queryKey: ['expenseCategories'],
     queryFn: getExpenseCategories,
+  });
+
+  const { data: standardConvCostInfo } = useQuery({
+    queryKey: ['standardConversionCost'],
+    queryFn: getStandardConversionCost,
+    initialData: () => ({ rate: getCachedStandardConversionCost(), updatedBy: null, updatedAt: null }),
   });
 
   const totalCashLedgerMonth = useMemo(() => {
@@ -491,6 +425,8 @@ export default function MR() {
 
       await saveBatchMonthlyExpenses(report.id, dataToSave, user?.name || 'System');
       refetchReport();
+      queryClient.invalidateQueries({ queryKey: ['monthlyConversionStats'] });
+      queryClient.invalidateQueries({ queryKey: ['conversionCostTrend'] });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (e) {
@@ -1237,6 +1173,55 @@ export default function MR() {
           </div>
 
         </div>
+
+        {/* 2B. MONTHLY ACTUAL CONVERSION COST HIGHLIGHT BAR */}
+        {(() => {
+          const actualConvPerKg = paperTotals.conQty > 0 ? totalExpenses / paperTotals.conQty : 0;
+          const stdConvRate = standardConvCostInfo?.rate ?? getCachedStandardConversionCost();
+          const isOver = actualConvPerKg > stdConvRate && actualConvPerKg > 0;
+          return (
+            <div className={`rounded-2xl p-4 sm:p-5 border-2 shadow-sm flex flex-wrap items-center justify-between gap-4 print:p-2 print:rounded ${
+              actualConvPerKg === 0
+                ? 'bg-slate-100 border-slate-200 text-slate-700'
+                : isOver
+                ? 'bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border-rose-300 text-slate-900'
+                : 'bg-gradient-to-r from-emerald-50 via-teal-50 to-cyan-50 border-emerald-300 text-slate-900'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-white shadow-sm print:hidden ${
+                  isOver ? 'bg-gradient-to-br from-rose-600 to-orange-600' : 'bg-gradient-to-br from-emerald-600 to-teal-600'
+                }`}>
+                  <Gauge className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="text-xs font-black uppercase tracking-wider text-slate-600">
+                    Actual Conversion Cost — {monthFormattedTitle}
+                  </div>
+                  <div className="text-xs text-slate-600 font-semibold mt-0.5">
+                    Operational Expenses (₹ {formatINR(totalExpenses)}) ÷ Paper Consumption ({formatINR(paperTotals.conQty)} Kg)
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-right">
+                  <div className={`text-2xl sm:text-3xl font-black ${isOver ? 'text-rose-700' : 'text-emerald-700'}`}>
+                    {actualConvPerKg > 0 ? `₹ ${actualConvPerKg.toFixed(2)} / Kg` : '—'}
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-500">
+                    Standard Rate: <span className="text-amber-700 font-black">₹ {stdConvRate.toFixed(2)} / Kg</span>
+                  </div>
+                </div>
+                <Link
+                  to="/conversion-cost"
+                  className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black shadow-sm transition print:hidden"
+                >
+                  Manage Conv. Cost →
+                </Link>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* 3. PAPER INVENTORY RECONCILIATION TABLE */}
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden print:border-slate-800 print:rounded-none">
