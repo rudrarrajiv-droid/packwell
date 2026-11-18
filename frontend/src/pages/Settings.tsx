@@ -1,11 +1,26 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Settings as SettingsIcon, Download, Database, PackageSearch, AlertCircle, Upload, MonitorSmartphone, LogOut, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+  Settings as SettingsIcon,
+  Download,
+  Database,
+  PackageSearch,
+  AlertCircle,
+  Upload,
+  MonitorSmartphone,
+  LogOut,
+  Loader2,
+  FileSpreadsheet,
+  Calendar,
+  CheckCircle2,
+  Sparkles,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getActiveSessions, deleteAllOtherSessions, type UserSession } from '../lib/supabase/userSessionService';
 import { getProducts, createProduct, updateProduct } from '../lib/supabase/productService';
 import { getReels, createReel, updateReel } from '../lib/supabase/reelService';
 import { updateUserPassword } from '../lib/supabase/userCredentialsService';
 import { CONFIGURED_USERS } from '../lib/auth/users';
+import { downloadCompleteMonthlyBackup, formatMonthTitle } from '../lib/monthlyBackupService';
 import * as xlsx from 'xlsx';
 import CashLedgerAdminSettings from './CashLedgerAdminSettings';
 
@@ -21,6 +36,50 @@ export default function Settings() {
   
   const [activeSessions, setActiveSessions] = useState<UserSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(true);
+
+  // Monthly Master Backup state
+  const [backupMonth, setBackupMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [isGeneratingBackup, setIsGeneratingBackup] = useState(false);
+  const [backupProgressStep, setBackupProgressStep] = useState<string>('');
+  const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
+
+  // Available months for quick selection
+  const availableMonths = useMemo(() => {
+    const list: { val: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 15; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      list.push({ val, label });
+    }
+    return list;
+  }, []);
+
+  const handleDownloadMonthlyBackup = async () => {
+    if (!backupMonth) return;
+    setIsGeneratingBackup(true);
+    setBackupProgressStep('Starting backup generation...');
+    setBackupSuccessMessage(null);
+    try {
+      const res = await downloadCompleteMonthlyBackup(backupMonth, (step) => {
+        setBackupProgressStep(step);
+      });
+      if (res.success) {
+        setBackupSuccessMessage(`Successfully downloaded ${res.filename}!`);
+        setTimeout(() => setBackupSuccessMessage(null), 8000);
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Backup failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsGeneratingBackup(false);
+      setBackupProgressStep('');
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -318,6 +377,140 @@ export default function Settings() {
             )}
           </div>
         </section>
+
+        {/* Monthly Master Backup (All-in-One Multi-Sheet Excel) */}
+        {hasRole('ADMIN') && (
+        <section className="bg-gradient-to-br from-card via-card to-blue-50/20 border-2 border-blue-200 shadow-md rounded-xl overflow-hidden">
+          <div className="p-5 border-b border-blue-100 bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-sky-50/60 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-blue-600 text-white rounded-lg shadow-xs">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-black text-slate-900">
+                      Monthly All-in-One Master Backup
+                    </h2>
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-blue-100 text-blue-800 border border-blue-300">
+                      Multi-Sheet Excel (.xlsx)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 font-medium mt-0.5">
+                    Har mahine ka complete backup ek hi Excel file ke andar 9 sheets (Summary, Job Cards, Job Costing &amp; P/L, Dispatches, DC, POs, Reels &amp; Master Data) me download karein.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full text-xs font-bold">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              1-Click Full Archival
+            </span>
+          </div>
+
+          <div className="p-6 space-y-5">
+            {backupSuccessMessage && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2.5 shadow-xs">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span>{backupSuccessMessage} File aapke downloads folder me save ho gayi hai.</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+              {/* Month Picker Controls */}
+              <div className="md:col-span-7 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-blue-600" />
+                    Select Backup Month:
+                  </label>
+                  <select
+                    value={backupMonth}
+                    onChange={(e) => setBackupMonth(e.target.value)}
+                    disabled={isGeneratingBackup}
+                    className="px-3 py-2 bg-white border-2 border-blue-300 rounded-lg text-xs font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs cursor-pointer"
+                  >
+                    {availableMonths.map((m) => (
+                      <option key={m.val} value={m.val}>
+                        {m.label} ({m.val})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <span>ya Custom:</span>
+                  <input
+                    type="month"
+                    value={backupMonth}
+                    onChange={(e) => setBackupMonth(e.target.value)}
+                    disabled={isGeneratingBackup}
+                    className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Download Action Button */}
+              <div className="md:col-span-5 flex justify-start md:justify-end">
+                <button
+                  type="button"
+                  onClick={handleDownloadMonthlyBackup}
+                  disabled={isGeneratingBackup}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black shadow-md hover:shadow-lg transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingBackup ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{backupProgressStep || 'Generating Backup...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      <span>Download {formatMonthTitle(backupMonth)} Backup (.xlsx)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Included Sheets Preview Badges */}
+            <div className="pt-3 border-t border-border">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                Is Master Excel file ke andar ye 9 worksheets shamil hongi:
+              </span>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="px-2.5 py-1 bg-slate-100 text-slate-800 rounded-lg font-semibold border border-slate-200">
+                  📑 1. Summary
+                </span>
+                <span className="px-2.5 py-1 bg-blue-50 text-blue-800 rounded-lg font-semibold border border-blue-200">
+                  📑 2. Job Cards
+                </span>
+                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 rounded-lg font-semibold border border-emerald-200">
+                  📑 3. Job Costing &amp; P/L
+                </span>
+                <span className="px-2.5 py-1 bg-amber-50 text-amber-800 rounded-lg font-semibold border border-amber-200">
+                  📑 4. Dispatches (DC)
+                </span>
+                <span className="px-2.5 py-1 bg-purple-50 text-purple-800 rounded-lg font-semibold border border-purple-200">
+                  📑 5. Daily Conversion (DC)
+                </span>
+                <span className="px-2.5 py-1 bg-indigo-50 text-indigo-800 rounded-lg font-semibold border border-indigo-200">
+                  📑 6. Purchase Orders
+                </span>
+                <span className="px-2.5 py-1 bg-sky-50 text-sky-800 rounded-lg font-semibold border border-sky-200">
+                  📑 7. Finish Goods Stock
+                </span>
+                <span className="px-2.5 py-1 bg-teal-50 text-teal-800 rounded-lg font-semibold border border-teal-200">
+                  📑 8. Reel Inventory
+                </span>
+                <span className="px-2.5 py-1 bg-rose-50 text-rose-800 rounded-lg font-semibold border border-rose-200">
+                  📑 9. Master Data
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+        )}
 
         {/* Data Management Section */}
         {hasRole('ADMIN') && (
