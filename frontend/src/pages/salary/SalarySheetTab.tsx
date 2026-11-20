@@ -78,9 +78,11 @@ export default function SalarySheetTab() {
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(emp => {
-      if (filter === 'COMPANY') return emp.category === 'COMPANY';
-      if (filter === 'WAGES_DINESH') return emp.category === 'WAGES' && emp.contractorName === 'Dinesh';
-      if (filter === 'WAGES_VIKAS') return emp.category === 'WAGES' && emp.contractorName === 'Vikas';
+      const cat = (emp.category || '').trim().toUpperCase();
+      const contractor = (emp.contractorName || '').trim().toLowerCase();
+      if (filter === 'COMPANY') return cat === 'COMPANY';
+      if (filter === 'WAGES_DINESH') return cat === 'WAGES' && contractor === 'dinesh';
+      if (filter === 'WAGES_VIKAS') return cat === 'WAGES' && contractor === 'vikas';
       return false;
     });
   }, [employees, filter]);
@@ -99,16 +101,17 @@ export default function SalarySheetTab() {
     filteredEmployees.forEach(emp => {
       const empRecords = records.filter(r => r.employeeId === emp.id);
       
-      const totalPresent = empRecords.reduce((sum, r) => sum + r.present, 0);
-      const totalOTHours = empRecords.reduce((sum, r) => sum + r.otHours, 0);
+      const totalPresent = empRecords.reduce((sum, r) => sum + (Number(r.present) || 0), 0);
+      const totalOTHours = empRecords.reduce((sum, r) => sum + (Number(r.otHours) || 0), 0);
+      const totalRefreshment = Math.round(empRecords.reduce((sum, r) => sum + (Number(r.refreshment) || 0), 0));
       
-      if (totalPresent === 0 && totalOTHours === 0) {
+      // If employee has ANY attendance, OT, or refreshment in this period, they MUST show
+      if (totalPresent === 0 && totalOTHours === 0 && totalRefreshment === 0) {
         return;
       }
 
       const totalDaysAmount = Math.round(empRecords.reduce((sum, r) => sum + r.perDayAmount, 0));
       const totalOTAmount = Math.round(empRecords.reduce((sum, r) => sum + r.otAmount, 0));
-      const totalRefreshment = Math.round(empRecords.reduce((sum, r) => sum + r.refreshment, 0));
       
       let presentWorkingDays = 0;
       empRecords.forEach(r => {

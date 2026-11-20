@@ -284,7 +284,7 @@ export default function EmployeesTab() {
         fatherName: editFatherName.trim() || undefined,
         address: editAddress.trim() || undefined,
         status: editStatus,
-        leftDate: editStatus === 'LEFT' ? (editLeftDate || undefined) : (editLeftDate || undefined),
+        leftDate: editStatus === 'LEFT' ? (editLeftDate || undefined) : '',
         rejoinDate: editRejoinDate || undefined,
         isActive: editStatus === 'ACTIVE',
       }, user?.name || 'System');

@@ -90,10 +90,12 @@ export default function MonthlyReportTab() {
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(emp => {
+      const cat = (emp.category || '').trim().toUpperCase();
+      const contractor = (emp.contractorName || '').trim().toLowerCase();
       if (filter === 'ALL') return true;
-      if (filter === 'COMPANY') return emp.category === 'COMPANY';
-      if (filter === 'WAGES_DINESH') return emp.category === 'WAGES' && emp.contractorName === 'Dinesh';
-      if (filter === 'WAGES_VIKAS') return emp.category === 'WAGES' && emp.contractorName === 'Vikas';
+      if (filter === 'COMPANY') return cat === 'COMPANY';
+      if (filter === 'WAGES_DINESH') return cat === 'WAGES' && contractor === 'dinesh';
+      if (filter === 'WAGES_VIKAS') return cat === 'WAGES' && contractor === 'vikas';
       return true;
     });
   }, [employees, filter]);
@@ -105,17 +107,17 @@ export default function MonthlyReportTab() {
       // Filter records for this employee
       const empRecords = records.filter(r => r.employeeId === emp.id);
       
-      const totalPresent = empRecords.reduce((sum, r) => sum + r.present, 0);
-      const totalOTHours = empRecords.reduce((sum, r) => sum + r.otHours, 0);
+      const totalPresent = empRecords.reduce((sum, r) => sum + (Number(r.present) || 0), 0);
+      const totalOTHours = empRecords.reduce((sum, r) => sum + (Number(r.otHours) || 0), 0);
+      const totalRefreshment = Math.round(empRecords.reduce((sum, r) => sum + (Number(r.refreshment) || 0), 0));
       
-      // REQUIREMENT: JIS EMPLOYEE KA EK BHI DAY ME PESENT YA OT NAHI HAI USKA NAAM SHOW NA HO
-      if (totalPresent === 0 && totalOTHours === 0) {
+      // REQUIREMENT: JIS EMPLOYEE KA EK BHI DAY ME PRESENT, OT YA REFRESHMENT HAI USKA NAAM 100% SHOW HO
+      if (totalPresent === 0 && totalOTHours === 0 && totalRefreshment === 0) {
         return;
       }
 
       const totalDaysAmount = Math.round(empRecords.reduce((sum, r) => sum + r.perDayAmount, 0));
       const totalOTAmount = Math.round(empRecords.reduce((sum, r) => sum + r.otAmount, 0));
-      const totalRefreshment = Math.round(empRecords.reduce((sum, r) => sum + r.refreshment, 0));
       const grossSalary = totalDaysAmount + totalOTAmount + totalRefreshment;
 
       data.push({
@@ -157,9 +159,11 @@ export default function MonthlyReportTab() {
 
       // Count if present > 0 (even half day counts as present for manpower count)
       if (r.present > 0) {
-        if (emp.category === 'COMPANY') datesMap[r.date].companyCount++;
-        else if (emp.contractorName === 'Dinesh') datesMap[r.date].dineshCount++;
-        else if (emp.contractorName === 'Vikas') datesMap[r.date].vikasCount++;
+        const cat = (emp.category || '').trim().toUpperCase();
+        const contractor = (emp.contractorName || '').trim().toLowerCase();
+        if (cat === 'COMPANY') datesMap[r.date].companyCount++;
+        else if (contractor === 'dinesh') datesMap[r.date].dineshCount++;
+        else if (contractor === 'vikas') datesMap[r.date].vikasCount++;
       }
 
       datesMap[r.date].totalDaysAmount += r.perDayAmount;

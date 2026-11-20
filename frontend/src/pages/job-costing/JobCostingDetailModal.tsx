@@ -2,13 +2,14 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   X, Save, Printer, Share2, TrendingUp, TrendingDown,
   AlertTriangle, CheckCircle2, Layers, Box, Calculator,
-  Sparkles, RefreshCw, Gauge, UploadCloud, Lock
+  Sparkles, RefreshCw, Gauge, UploadCloud, Lock, FileText
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { JobCostingData, JobCostingLayer, SaleRateSource } from './jobCostingTypes';
 import {
   calculateFullJobCosting,
   lookupAutoSaleRate,
+  lookupPaperSpecRate,
   saveCostingData,
   type SaleRateLookupContext,
 } from './jobCostingService';
@@ -152,6 +153,50 @@ export default function JobCostingDetailModal({
     }
   };
 
+  // Re-fetch Paper Reel Rates from Inventory matching Paper Specs (GSM + BF + Paper Type)
+  const handleRefreshPaperRates = () => {
+    const reelsList = rateLookupContext.reels || [];
+    let updatedCount = 0;
+    const newLayers = data.layers.map((layer) => {
+      const autoRate = lookupPaperSpecRate(Number(layer.gsm || 0), layer.bf || '', layer.paperType, reelsList);
+      if (autoRate > 0) {
+        updatedCount++;
+        return {
+          ...layer,
+          reelRate: autoRate,
+        };
+      }
+      return layer;
+    });
+
+    setData((prev) =>
+      runRecalculate(
+        prev,
+        prev.manfBoxQty,
+        prev.saleRatePerBox,
+        prev.saleRateSource || 'NONE',
+        newLayers,
+        prev.conversionRateUsed,
+        prev.isConversionRateLocked
+      )
+    );
+
+    if (updatedCount > 0) {
+      setSyncMessage(`${updatedCount} layer(s) ka rate inventory se update ho gaya.`);
+      setTimeout(() => setSyncMessage(null), 3000);
+    } else {
+      alert('Inventory me in paper specs (GSM / BF) ka rate nahi mila.');
+    }
+  };
+
+  // Handler for updating Costing Remarks / Profit & Loss Reason
+  const handleNotesChange = (notes: string) => {
+    setData((prev) => ({
+      ...prev,
+      notes,
+    }));
+  };
+
   // Optional: Sync manually corrected rate back to Finish Goods & Master Data
   const handleSyncRateToMaster = async () => {
     if (!data.saleRatePerBox || data.saleRatePerBox <= 0) return;
@@ -281,6 +326,24 @@ export default function JobCostingDetailModal({
         ? (data.netProfitLoss / data.totalSaleValue) * 100
         : null;
 
+    const paperVarianceWeightPct =
+      hasDpr && data.totalAllocatedWeight > 0
+        ? ((paperVarianceWeight / data.totalAllocatedWeight) * 100).toFixed(1)
+        : null;
+
+    const totalLessBoxWeightLoss = data.layers.reduce((sum, l) => sum + (l.lessBoxWeightLoss || 0), 0);
+    const wipScrapLossPct =
+      hasDpr && data.totalDprValue > 0
+        ? ((data.totalLessBoxLoss / data.totalDprValue) * 100).toFixed(1)
+        : hasDpr && data.totalDprWeight > 0
+        ? ((totalLessBoxWeightLoss / data.totalDprWeight) * 100).toFixed(1)
+        : null;
+
+    const paperVariancePLPct =
+      hasDpr && data.totalAllocatedValue > 0 && data.paperVariancePL !== null
+        ? ((data.paperVariancePL / data.totalAllocatedValue) * 100).toFixed(1)
+        : null;
+
     let pendingReason = '';
     if (!hasDpr) pendingReason = 'Fill DPR Weight';
     else if (data.manfBoxQty === null) pendingReason = 'Enter Manf Box Qty';
@@ -290,6 +353,9 @@ export default function JobCostingDetailModal({
       hasDpr,
       paperVarianceWeight,
       paperVarianceValue,
+      paperVarianceWeightPct,
+      wipScrapLossPct,
+      paperVariancePLPct,
       shortfallBoxes,
       yieldPercentage,
       marginPercent,
@@ -341,6 +407,9 @@ export default function JobCostingDetailModal({
       text += `\n`;
     } else {
       text += `*STATUS:* ${stats.pendingReason || 'Pending Data'}\n`;
+    }
+    if (data.notes && data.notes.trim()) {
+      text += `*Remarks / Reason:* ${data.notes.trim()}\n`;
     }
 
     navigator.clipboard.writeText(text);
@@ -722,6 +791,15 @@ export default function JobCostingDetailModal({
                 Layer-Wise Paper Allocation &amp; DPR Costing Breakdown
               </span>
               <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleRefreshPaperRates}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-md bg-blue-100 hover:bg-blue-200 text-blue-900 border border-blue-300 transition-colors shadow-xs"
+                  title="Inventory se Paper Specs (GSM + BF) ke hisaab se rate fetch karein"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Fetch Paper Rates
+                </button>
                 <span className="text-[11px] text-purple-900 bg-purple-100/90 border border-purple-200 px-2 py-0.5 rounded-full font-bold">
                   Fluting Medium = Base Wt + 40% Flute Take-up (e.g. 100 GSM × 1.4 = 140 Eff. GSM)
                 </span>
@@ -1028,7 +1106,7 @@ export default function JobCostingDetailModal({
                       )}
                     >
                       {stats.hasDpr
-                        ? `${stats.paperVarianceWeight > 0 ? '+' : ''}${Math.round(stats.paperVarianceWeight)} Kg (${stats.paperVarianceValue > 0 ? '+' : '-'}₹${Math.abs(stats.paperVarianceValue).toLocaleString()})`
+                        ? `${stats.paperVarianceWeight > 0 ? '+' : ''}${Math.round(stats.paperVarianceWeight)} Kg (${stats.paperVarianceValue > 0 ? '+' : '-'}₹${Math.abs(stats.paperVarianceValue).toLocaleString()}) (${stats.paperVarianceWeight > 0 ? '+' : ''}${stats.paperVarianceWeightPct ?? '0.0'}%)`
                         : '—'}
                     </span>
                   </div>
@@ -1037,7 +1115,8 @@ export default function JobCostingDetailModal({
                       Intermediate WIP Scrap Loss:
                     </span>
                     <span className="font-bold text-amber-700">
-                      ₹{data.totalLessBoxLoss.toLocaleString()}
+                      ₹{data.totalLessBoxLoss.toLocaleString()}{' '}
+                      {stats.wipScrapLossPct !== null ? `(${stats.wipScrapLossPct}%)` : '(0.0%)'}
                     </span>
                   </div>
                   <div className="flex justify-between pt-2 border-t border-border">
@@ -1055,7 +1134,7 @@ export default function JobCostingDetailModal({
                       )}
                     >
                       {data.paperVariancePL !== null
-                        ? `${data.paperVariancePL >= 0 ? '+₹' : '-₹'}${Math.abs(data.paperVariancePL).toLocaleString()}`
+                        ? `${data.paperVariancePL >= 0 ? '+₹' : '-₹'}${Math.abs(data.paperVariancePL).toLocaleString()} (${data.paperVariancePL >= 0 ? '+' : ''}${stats.paperVariancePLPct ?? '0.0'}%)`
                         : '—'}
                     </span>
                   </div>
@@ -1072,6 +1151,21 @@ export default function JobCostingDetailModal({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Job Remarks / Reason for Profit or Loss */}
+          <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200">
+            <label className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-amber-950 mb-1.5">
+              <FileText className="w-4 h-4 text-amber-700" />
+              Job Remarks / Reason for Profit or Loss (रिमार्क्स / लाभ-हानि का कारण)
+            </label>
+            <textarea
+              rows={2}
+              value={data.notes || ''}
+              onChange={(e) => handleNotesChange(e.target.value)}
+              placeholder="Is job me profit ya loss ki kya wajah rahi? (e.g. Paper rate increase hua, corrugation me extra scrap nikla, printing rejection, good production efficiency, etc.)"
+              className="w-full text-xs p-2.5 rounded-lg border border-amber-300 bg-white text-foreground focus:ring-2 focus:ring-amber-500 focus:outline-none placeholder:text-muted-foreground/70"
+            />
           </div>
         </div>
 

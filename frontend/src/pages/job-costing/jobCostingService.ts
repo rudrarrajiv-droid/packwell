@@ -53,7 +53,73 @@ export interface SaleRateLookupContext {
   finishGoods?: any[];
   products?: any[];
   purchaseOrders?: any[];
+  reels?: any[];
 }
+
+/**
+ * Smart lookup for paper reel rate based on paper specification (GSM + BF + PaperType).
+ * Picks the most recent purchase rate from inventory matching the spec.
+ */
+export const lookupPaperSpecRate = (
+  gsm: number,
+  bf: string | number,
+  paperType: string | undefined,
+  reelsInventory: any[]
+): number => {
+  if (!gsm && !bf) return 0;
+  const targetGsm = Number(gsm || 0);
+  const targetBf = String(bf || '').trim().toUpperCase();
+  const targetPt = String(paperType || '').trim().toUpperCase();
+
+  const validReels = (reelsInventory || []).filter((r: any) => {
+    const rate = Number(r.rate || r.purchaseRate || 0);
+    return rate > 0;
+  });
+
+  if (validReels.length === 0) return 0;
+
+  const sortByNewest = (arr: any[]) =>
+    [...arr].sort((a, b) => {
+      const da = new Date(a.createdAt || a.created_at || a.date || 0).getTime();
+      const db = new Date(b.createdAt || b.created_at || b.date || 0).getTime();
+      return db - da;
+    });
+
+  // 1. Exact match on GSM + BF + PaperType
+  if (targetGsm > 0 && targetBf && targetPt) {
+    const exact = validReels.filter((r: any) => {
+      const rGsm = Number(r.gsm || 0);
+      const rBf = String(r.bf || '').trim().toUpperCase();
+      const rPt = String(r.paperType || r.paper_type || '').trim().toUpperCase();
+      return rGsm === targetGsm && rBf === targetBf && (rPt === targetPt || rPt.includes(targetPt) || targetPt.includes(rPt));
+    });
+    if (exact.length > 0) {
+      return Number(sortByNewest(exact)[0].rate || sortByNewest(exact)[0].purchaseRate || 0);
+    }
+  }
+
+  // 2. Match on GSM + BF
+  if (targetGsm > 0 && targetBf) {
+    const gsmBf = validReels.filter((r: any) => {
+      const rGsm = Number(r.gsm || 0);
+      const rBf = String(r.bf || '').trim().toUpperCase();
+      return rGsm === targetGsm && rBf === targetBf;
+    });
+    if (gsmBf.length > 0) {
+      return Number(sortByNewest(gsmBf)[0].rate || sortByNewest(gsmBf)[0].purchaseRate || 0);
+    }
+  }
+
+  // 3. Fallback on GSM only
+  if (targetGsm > 0) {
+    const gsmOnly = validReels.filter((r: any) => Number(r.gsm || 0) === targetGsm);
+    if (gsmOnly.length > 0) {
+      return Number(sortByNewest(gsmOnly)[0].rate || sortByNewest(gsmOnly)[0].purchaseRate || 0);
+    }
+  }
+
+  return 0;
+};
 
 export const lookupAutoSaleRate = (
   jobCardOrIdentity: {
@@ -371,7 +437,7 @@ export const buildJobCostingData = (
     }
 
     let reelRate = savedLayer?.reelRate;
-    if (reelRate === undefined || reelRate === null) {
+    if (reelRate === undefined || reelRate === null || reelRate === 0) {
       if (layer.allocatedReels && layer.allocatedReels.length > 0) {
         const firstReelNo = String(layer.allocatedReels[0].reelNumber || '').trim().toUpperCase();
         const firstReelId = String(layer.allocatedReels[0].reelId || '');
@@ -380,6 +446,12 @@ export const buildJobCostingData = (
         reelRate = reelRateMap[reelNumber.trim().toUpperCase()] || 0;
       } else {
         reelRate = 0;
+      }
+
+      // Smart Fallback: If reel rate is still 0 (e.g. reel allocation skipped, or reel had no rate),
+      // auto-fetch latest purchase rate from inventory matching paper spec (GSM + BF + Paper Type)
+      if (!reelRate || reelRate === 0) {
+        reelRate = lookupPaperSpecRate(gsm, bf, paperType, reelsInventory);
       }
     }
 

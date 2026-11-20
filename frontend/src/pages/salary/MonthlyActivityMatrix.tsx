@@ -72,14 +72,22 @@ export default function MonthlyActivityMatrix({
         };
       })
       .filter(emp => {
-        const firstDate = dates[0] || '';
-        const lastDate = dates[dates.length - 1] || '';
-        const isLeftBeforeMonth = Boolean(emp.leftDate && firstDate && emp.leftDate < firstDate && (!emp.rejoinDate || emp.rejoinDate > lastDate));
-        if (isLeftBeforeMonth && emp.totalPresent === 0 && emp.totalOTHours === 0) {
-          return false;
+        const hasActivity = (emp.totalPresent || 0) > 0 || (emp.totalOTHours || 0) > 0 || (emp.totalRefreshment || 0) > 0;
+        
+        // If employee has any attendance in this month, ALWAYS show them
+        if (hasActivity) {
+          if (searchTerm.trim()) {
+            const term = searchTerm.toLowerCase();
+            const matchName = emp.name.toLowerCase().includes(term);
+            const matchDesig = (emp.designation || '').toLowerCase().includes(term);
+            const matchContractor = (emp.contractorName || '').toLowerCase().includes(term);
+            return matchName || matchDesig || matchContractor;
+          }
+          return true;
         }
+
         // Filter out zero-activity employees if showAllEmployees is false
-        if (!showAllEmployees && emp.totalPresent === 0 && emp.totalOTHours === 0) {
+        if (!showAllEmployees) {
           return false;
         }
         if (searchTerm.trim()) {

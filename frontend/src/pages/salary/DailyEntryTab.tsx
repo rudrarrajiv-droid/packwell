@@ -81,18 +81,28 @@ export default function DailyEntryTab() {
           return true;
         }
 
-        const isLeft = emp.status === 'LEFT' || Boolean(emp.leftDate);
+        // Active employees must ALWAYS show in daily attendance
+        const isActive = emp.status === 'ACTIVE' || (emp.status !== 'LEFT' && emp.isActive !== false);
+        if (isActive) {
+          return true;
+        }
+
+        // Only employees who are genuinely marked LEFT are checked against leftDate
+        const isLeft = emp.status === 'LEFT' || emp.isActive === false;
         if (isLeft) {
-          if (emp.leftDate && dateToLoad <= emp.leftDate) {
+          const leftDateStr = emp.leftDate ? String(emp.leftDate).split('T')[0] : '';
+          const rejoinDateStr = emp.rejoinDate ? String(emp.rejoinDate).split('T')[0] : '';
+
+          if (leftDateStr && dateToLoad <= leftDateStr) {
             return true;
           }
-          if (emp.rejoinDate && dateToLoad >= emp.rejoinDate) {
+          if (rejoinDateStr && dateToLoad >= rejoinDateStr) {
             return true;
           }
           return false;
         }
 
-        return emp.isActive !== false;
+        return true;
       });
 
       setEmployees(eligibleEmps);
@@ -362,10 +372,12 @@ export default function DailyEntryTab() {
   };
 
   const filteredEmployees = employees.filter(emp => {
+    const cat = (emp.category || '').trim().toUpperCase();
+    const contractor = (emp.contractorName || '').trim().toLowerCase();
     if (filter === 'ALL') return true;
-    if (filter === 'COMPANY') return emp.category === 'COMPANY';
-    if (filter === 'WAGES_DINESH') return emp.category === 'WAGES' && emp.contractorName === 'Dinesh';
-    if (filter === 'WAGES_VIKAS') return emp.category === 'WAGES' && emp.contractorName === 'Vikas';
+    if (filter === 'COMPANY') return cat === 'COMPANY';
+    if (filter === 'WAGES_DINESH') return cat === 'WAGES' && contractor === 'dinesh';
+    if (filter === 'WAGES_VIKAS') return cat === 'WAGES' && contractor === 'vikas';
     return true;
   });
 

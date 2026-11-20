@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   Calculator, Search, Download,
   TrendingUp, TrendingDown, AlertTriangle, Layers,
-  Eye, RefreshCw, Sparkles, Gauge, ArrowRight
+  Eye, RefreshCw, Sparkles, Gauge, ArrowRight, FileText
 } from 'lucide-react';
 import { getAllJobCards } from '../lib/supabase/jobCardService';
 import { getReels } from '../lib/supabase/reelService';
@@ -141,8 +141,8 @@ export default function JobCosting() {
   });
 
   const rateLookupContext = useMemo(
-    () => ({ finishGoods, products, purchaseOrders }),
-    [finishGoods, products, purchaseOrders]
+    () => ({ finishGoods, products, purchaseOrders, reels }),
+    [finishGoods, products, purchaseOrders, reels]
   );
 
   // 4. Process Costing Rows (Strictly 01/11/2026 onwards + Reel Allocated only)
@@ -248,6 +248,7 @@ export default function JobCosting() {
           : r.netProfitLoss >= 0
           ? 'PROFIT'
           : 'LOSS',
+      'Loss / Profit Reason (Remarks)': r.notes || '',
     }));
 
     exportToExcel(exportData, 'Job_Full_Costing_Report_01_11_2026_Onwards');
@@ -537,6 +538,15 @@ export default function JobCosting() {
                         {row.customerName && (
                           <span className="block text-[10px] text-muted-foreground font-medium mt-0.5">
                             {row.customerName}
+                          </span>
+                        )}
+                        {row.notes && (
+                          <span
+                            className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200 text-[10px] font-semibold max-w-[220px] truncate"
+                            title={row.notes}
+                          >
+                            <FileText className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span className="truncate">{row.notes}</span>
                           </span>
                         )}
                       </td>
