@@ -10,7 +10,7 @@ import {
 } from '../../lib/supabase/plantMisService';
 import type { 
   PlantMisFullData, PlantMisFgItem, PlantMisMachineLog, 
-  CutSizeItem 
+  CutSizeItem, PrevMonthMtdSummary 
 } from '../../lib/supabase/plantMisService';
 import { useAuth } from '../../contexts/AuthContext';
 import BulkCutSizeModal from './BulkCutSizeModal';
@@ -36,19 +36,45 @@ export default function PlantMisEntryModal({
   const [outsourceSaleExcl, setOutsourceSaleExcl] = useState<number | string>(initialData.report.outsourceSaleExclGst || '');
   const [outsourceSaleIncl, setOutsourceSaleIncl] = useState<number | string>(initialData.report.outsourceSaleInclGst || '');
 
-  // Current Month Total Sale (MTD) state
-  const [mtdSelfExcl, setMtdSelfExcl] = useState<number | string>(
-    initialData.report.mtdSelfSaleExclGst ?? (initialData.mtdSummary.selfExcl || '')
-  );
-  const [mtdSelfIncl, setMtdSelfIncl] = useState<number | string>(
-    initialData.report.mtdSelfSaleInclGst ?? (initialData.mtdSummary.selfIncl || '')
-  );
-  const [mtdOutsourceExcl, setMtdOutsourceExcl] = useState<number | string>(
-    initialData.report.mtdOutsourceSaleExclGst ?? (initialData.mtdSummary.outsourceExcl || '')
-  );
-  const [mtdOutsourceIncl, setMtdOutsourceIncl] = useState<number | string>(
-    initialData.report.mtdOutsourceSaleInclGst ?? (initialData.mtdSummary.outsourceIncl || '')
-  );
+  // Base Previous MTD total for current month (0 if 1st day of month or month changed)
+  const prevMonthMtd: PrevMonthMtdSummary = initialData.prevMonthMtdSummary || {
+    isSameMonth: false,
+    prevDate: null,
+    selfExcl: 0,
+    selfIncl: 0,
+    outsourceExcl: 0,
+    outsourceIncl: 0
+  };
+
+  // Current Month Total Sale (MTD) state - Auto initialized with (Base Prev MTD + Initial Day Sale)
+  const [mtdSelfExcl, setMtdSelfExcl] = useState<number | string>(() => {
+    if (initialData.report.mtdSelfSaleExclGst !== null && initialData.report.mtdSelfSaleExclGst !== undefined) {
+      return initialData.report.mtdSelfSaleExclGst;
+    }
+    const val = prevMonthMtd.selfExcl + (Number(initialData.report.selfSaleExclGst) || 0);
+    return val > 0 ? val : '';
+  });
+  const [mtdSelfIncl, setMtdSelfIncl] = useState<number | string>(() => {
+    if (initialData.report.mtdSelfSaleInclGst !== null && initialData.report.mtdSelfSaleInclGst !== undefined) {
+      return initialData.report.mtdSelfSaleInclGst;
+    }
+    const val = prevMonthMtd.selfIncl + (Number(initialData.report.selfSaleInclGst) || 0);
+    return val > 0 ? val : '';
+  });
+  const [mtdOutsourceExcl, setMtdOutsourceExcl] = useState<number | string>(() => {
+    if (initialData.report.mtdOutsourceSaleExclGst !== null && initialData.report.mtdOutsourceSaleExclGst !== undefined) {
+      return initialData.report.mtdOutsourceSaleExclGst;
+    }
+    const val = prevMonthMtd.outsourceExcl + (Number(initialData.report.outsourceSaleExclGst) || 0);
+    return val > 0 ? val : '';
+  });
+  const [mtdOutsourceIncl, setMtdOutsourceIncl] = useState<number | string>(() => {
+    if (initialData.report.mtdOutsourceSaleInclGst !== null && initialData.report.mtdOutsourceSaleInclGst !== undefined) {
+      return initialData.report.mtdOutsourceSaleInclGst;
+    }
+    const val = prevMonthMtd.outsourceIncl + (Number(initialData.report.outsourceSaleInclGst) || 0);
+    return val > 0 ? val : '';
+  });
 
   const [remarks, setRemarks] = useState(initialData.report.remarks || '');
 
@@ -121,11 +147,44 @@ export default function PlantMisEntryModal({
   const totalMtdExcl = Number(mtdSelfExcl || 0) + Number(mtdOutsourceExcl || 0);
   const totalMtdIncl = Number(mtdSelfIncl || 0) + Number(mtdOutsourceIncl || 0);
 
+  // Auto calculate Day Sale -> Current Month MTD Sale
+  const handleSelfSaleExclChange = (valStr: string) => {
+    setSelfSaleExcl(valStr);
+    const dayVal = valStr === '' ? 0 : parseFloat(valStr) || 0;
+    const computed = prevMonthMtd.selfExcl + dayVal;
+    setMtdSelfExcl(computed > 0 ? computed : (dayVal > 0 ? dayVal : ''));
+  };
+
+  const handleSelfSaleInclChange = (valStr: string) => {
+    setSelfSaleIncl(valStr);
+    const dayVal = valStr === '' ? 0 : parseFloat(valStr) || 0;
+    const computed = prevMonthMtd.selfIncl + dayVal;
+    setMtdSelfIncl(computed > 0 ? computed : (dayVal > 0 ? dayVal : ''));
+  };
+
+  const handleOutsourceSaleExclChange = (valStr: string) => {
+    setOutsourceSaleExcl(valStr);
+    const dayVal = valStr === '' ? 0 : parseFloat(valStr) || 0;
+    const computed = prevMonthMtd.outsourceExcl + dayVal;
+    setMtdOutsourceExcl(computed > 0 ? computed : (dayVal > 0 ? dayVal : ''));
+  };
+
+  const handleOutsourceSaleInclChange = (valStr: string) => {
+    setOutsourceSaleIncl(valStr);
+    const dayVal = valStr === '' ? 0 : parseFloat(valStr) || 0;
+    const computed = prevMonthMtd.outsourceIncl + dayVal;
+    setMtdOutsourceIncl(computed > 0 ? computed : (dayVal > 0 ? dayVal : ''));
+  };
+
   const handleAutoSumMtd = () => {
-    setMtdSelfExcl(initialData.mtdSummary.selfExcl || '');
-    setMtdSelfIncl(initialData.mtdSummary.selfIncl || '');
-    setMtdOutsourceExcl(initialData.mtdSummary.outsourceExcl || '');
-    setMtdOutsourceIncl(initialData.mtdSummary.outsourceIncl || '');
+    const sExcl = prevMonthMtd.selfExcl + (Number(selfSaleExcl) || 0);
+    const sIncl = prevMonthMtd.selfIncl + (Number(selfSaleIncl) || 0);
+    const oExcl = prevMonthMtd.outsourceExcl + (Number(outsourceSaleExcl) || 0);
+    const oIncl = prevMonthMtd.outsourceIncl + (Number(outsourceSaleIncl) || 0);
+    setMtdSelfExcl(sExcl > 0 ? sExcl : '');
+    setMtdSelfIncl(sIncl > 0 ? sIncl : '');
+    setMtdOutsourceExcl(oExcl > 0 ? oExcl : '');
+    setMtdOutsourceIncl(oIncl > 0 ? oIncl : '');
   };
 
   // Auto-Fill FG from dispatches
@@ -505,7 +564,7 @@ export default function PlantMisEntryModal({
                           type="number"
                           min="0"
                           value={selfSaleExcl}
-                          onChange={e => setSelfSaleExcl(e.target.value)}
+                          onChange={e => handleSelfSaleExclChange(e.target.value)}
                           placeholder="e.g. 6240188"
                           className="w-full text-xs font-mono font-bold px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground"
                         />
@@ -516,7 +575,7 @@ export default function PlantMisEntryModal({
                           type="number"
                           min="0"
                           value={selfSaleIncl}
-                          onChange={e => setSelfSaleIncl(e.target.value)}
+                          onChange={e => handleSelfSaleInclChange(e.target.value)}
                           placeholder="e.g. 6552197"
                           className="w-full text-xs font-mono font-bold px-2.5 py-1.5 rounded-md border border-border bg-background text-blue-600 dark:text-blue-400"
                         />
@@ -536,7 +595,7 @@ export default function PlantMisEntryModal({
                           type="number"
                           min="0"
                           value={outsourceSaleExcl}
-                          onChange={e => setOutsourceSaleExcl(e.target.value)}
+                          onChange={e => handleOutsourceSaleExclChange(e.target.value)}
                           placeholder="e.g. 1100000"
                           className="w-full text-xs font-mono font-bold px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground"
                         />
@@ -547,7 +606,7 @@ export default function PlantMisEntryModal({
                           type="number"
                           min="0"
                           value={outsourceSaleIncl}
-                          onChange={e => setOutsourceSaleIncl(e.target.value)}
+                          onChange={e => handleOutsourceSaleInclChange(e.target.value)}
                           placeholder="e.g. 1177798"
                           className="w-full text-xs font-mono font-bold px-2.5 py-1.5 rounded-md border border-border bg-background text-purple-600 dark:text-purple-400"
                         />
@@ -584,10 +643,38 @@ export default function PlantMisEntryModal({
                       Cumulative Total
                     </span>
                   </div>
-                  <span className="text-xs font-mono font-bold text-indigo-400">
-                    ₹{totalMtdIncl.toLocaleString('en-IN')}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAutoSumMtd}
+                      className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Day Sale se Month Cumulative recalculate karein"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      Auto-Calc
+                    </button>
+                    <span className="text-xs font-mono font-bold text-indigo-400">
+                      ₹{totalMtdIncl.toLocaleString('en-IN')}
+                    </span>
+                  </div>
                 </div>
+
+                {/* Auto calculation indicator */}
+                {prevMonthMtd.isSameMonth && prevMonthMtd.prevDate ? (
+                  <div className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-indigo-400 shrink-0" />
+                    <span>
+                      Pichle din ({prevMonthMtd.prevDate.split('-').reverse().join('/')}) ki sale me Day Sale auto-add ho rahi hai.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span>
+                      Mahine ka 1st day / Fresh month: pichle mahine ki sale carry-forward nahi hogi.
+                    </span>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   {/* Self Manufacturing MTD */}

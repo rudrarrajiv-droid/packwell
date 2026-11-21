@@ -85,12 +85,22 @@ export interface FgStockValuation {
   totalBoxes: number;
 }
 
+export interface PrevMonthMtdSummary {
+  isSameMonth: boolean;
+  prevDate: string | null;
+  selfExcl: number;
+  selfIncl: number;
+  outsourceExcl: number;
+  outsourceIncl: number;
+}
+
 export interface PlantMisFullData {
   report: PlantMisReport;
   fgItems: PlantMisFgItem[];
   machineLogs: PlantMisMachineLog[];
   prevReport: PlantMisReport | null;
   mtdSummary: MtdRevenueSummary;
+  prevMonthMtdSummary?: PrevMonthMtdSummary;
   fgStockValuation: FgStockValuation;
   isExisting: boolean;
 }
@@ -460,6 +470,12 @@ export const getPlantMisByDate = async (dateStr: string): Promise<PlantMisFullDa
       outsourceSaleInclGst: Number(prevData.outsource_sale_incl_gst) || 0,
       totalSaleExclGst: Number(prevData.total_sale_excl_gst) || 0,
       totalSaleInclGst: Number(prevData.total_sale_incl_gst) || 0,
+      mtdSelfSaleExclGst: prevData.mtd_self_sale_excl_gst !== null ? Number(prevData.mtd_self_sale_excl_gst) : null,
+      mtdSelfSaleInclGst: prevData.mtd_self_sale_incl_gst !== null ? Number(prevData.mtd_self_sale_incl_gst) : null,
+      mtdOutsourceSaleExclGst: prevData.mtd_outsource_sale_excl_gst !== null ? Number(prevData.mtd_outsource_sale_excl_gst) : null,
+      mtdOutsourceSaleInclGst: prevData.mtd_outsource_sale_incl_gst !== null ? Number(prevData.mtd_outsource_sale_incl_gst) : null,
+      mtdTotalSaleExclGst: prevData.mtd_total_sale_excl_gst !== null ? Number(prevData.mtd_total_sale_excl_gst) : null,
+      mtdTotalSaleInclGst: prevData.mtd_total_sale_incl_gst !== null ? Number(prevData.mtd_total_sale_incl_gst) : null,
       remarks: prevData.remarks || ''
     };
   }
@@ -470,28 +486,55 @@ export const getPlantMisByDate = async (dateStr: string): Promise<PlantMisFullDa
 
   const { data: mtdRows } = await supabase
     .from('daily_plant_mis_reports')
-    .select('self_sale_excl_gst, self_sale_incl_gst, outsource_sale_excl_gst, outsource_sale_incl_gst, total_sale_excl_gst, total_sale_incl_gst')
+    .select('report_date, self_sale_excl_gst, self_sale_incl_gst, outsource_sale_excl_gst, outsource_sale_incl_gst, total_sale_excl_gst, total_sale_incl_gst, mtd_self_sale_excl_gst, mtd_self_sale_incl_gst, mtd_outsource_sale_excl_gst, mtd_outsource_sale_incl_gst, mtd_total_sale_excl_gst, mtd_total_sale_incl_gst')
     .gte('report_date', monthStart)
-    .lte('report_date', dateStr);
+    .lte('report_date', dateStr)
+    .order('report_date', { ascending: true });
 
-  const mtdSummary: MtdRevenueSummary = {
+  // Prior working days in the SAME month before dateStr
+  const priorRows = (mtdRows || []).filter(r => r.report_date < dateStr);
+  const isSameMonth = priorRows.length > 0;
+  const lastPriorRow = isSameMonth ? priorRows[priorRows.length - 1] : null;
+
+  const prevMonthMtdSummary: PrevMonthMtdSummary = {
+    isSameMonth,
+    prevDate: lastPriorRow ? lastPriorRow.report_date : null,
     selfExcl: 0,
     selfIncl: 0,
     outsourceExcl: 0,
     outsourceIncl: 0,
+  };
+
+  if (lastPriorRow) {
+    const hasExplicitMtd =
+      lastPriorRow.mtd_self_sale_excl_gst !== null ||
+      lastPriorRow.mtd_self_sale_incl_gst !== null;
+    if (hasExplicitMtd) {
+      prevMonthMtdSummary.selfExcl = Number(lastPriorRow.mtd_self_sale_excl_gst) || 0;
+      prevMonthMtdSummary.selfIncl = Number(lastPriorRow.mtd_self_sale_incl_gst) || 0;
+      prevMonthMtdSummary.outsourceExcl = Number(lastPriorRow.mtd_outsource_sale_excl_gst) || 0;
+      prevMonthMtdSummary.outsourceIncl = Number(lastPriorRow.mtd_outsource_sale_incl_gst) || 0;
+    } else {
+      priorRows.forEach(r => {
+        prevMonthMtdSummary.selfExcl += Number(r.self_sale_excl_gst) || 0;
+        prevMonthMtdSummary.selfIncl += Number(r.self_sale_incl_gst) || 0;
+        prevMonthMtdSummary.outsourceExcl += Number(r.outsource_sale_excl_gst) || 0;
+        prevMonthMtdSummary.outsourceIncl += Number(r.outsource_sale_incl_gst) || 0;
+      });
+    }
+  }
+
+  const mtdSummary: MtdRevenueSummary = {
+    selfExcl: prevMonthMtdSummary.selfExcl + (Number(report.selfSaleExclGst) || 0),
+    selfIncl: prevMonthMtdSummary.selfIncl + (Number(report.selfSaleInclGst) || 0),
+    outsourceExcl: prevMonthMtdSummary.outsourceExcl + (Number(report.outsourceSaleExclGst) || 0),
+    outsourceIncl: prevMonthMtdSummary.outsourceIncl + (Number(report.outsourceSaleInclGst) || 0),
     totalExcl: 0,
     totalIncl: 0,
     daysCount: mtdRows?.length || 0
   };
-
-  (mtdRows || []).forEach(row => {
-    mtdSummary.selfExcl += Number(row.self_sale_excl_gst) || 0;
-    mtdSummary.selfIncl += Number(row.self_sale_incl_gst) || 0;
-    mtdSummary.outsourceExcl += Number(row.outsource_sale_excl_gst) || 0;
-    mtdSummary.outsourceIncl += Number(row.outsource_sale_incl_gst) || 0;
-    mtdSummary.totalExcl += Number(row.total_sale_excl_gst) || 0;
-    mtdSummary.totalIncl += Number(row.total_sale_incl_gst) || 0;
-  });
+  mtdSummary.totalExcl = mtdSummary.selfExcl + mtdSummary.outsourceExcl;
+  mtdSummary.totalIncl = mtdSummary.selfIncl + mtdSummary.outsourceIncl;
 
   // If report has explicit MTD values set, override cumulative sum
   if (report.mtdTotalSaleInclGst && report.mtdTotalSaleInclGst > 0) {
@@ -512,6 +555,7 @@ export const getPlantMisByDate = async (dateStr: string): Promise<PlantMisFullDa
     machineLogs,
     prevReport,
     mtdSummary,
+    prevMonthMtdSummary,
     fgStockValuation,
     isExisting
   };
