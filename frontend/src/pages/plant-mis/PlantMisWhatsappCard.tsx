@@ -153,7 +153,6 @@ export default function PlantMisWhatsappCard({
         (s) => s.status === 'MAINTENANCE' || s.status === 'BREAKDOWN'
       );
       const hasOutput =
-        m.totalHours > 0 ||
         m.totalSqMtr > 0 ||
         m.totalKg > 0 ||
         m.totalPly > 0 ||
@@ -230,6 +229,9 @@ export default function PlantMisWhatsappCard({
     (corrugationMachines.length > 0 ||
       pastingMachines.length > 0 ||
       finishingMachines.length > 0);
+
+  const hasLeftContent = Boolean(hasRevenue || hasFg || hasStockValuation);
+  const hasRightContent = Boolean(hasAnyMachines);
 
   // 5. THEME STYLES CONFIGURATION (Compact, high contrast)
   const themeStyles = useMemo(() => {
@@ -401,67 +403,68 @@ export default function PlantMisWhatsappCard({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mt-3">
         
         {/* ════════════════════════════════════════════════════════════
-            FIRST HALF (LEFT COLUMN - 6 COLS): 
+            FIRST HALF (LEFT COLUMN): 
             1. Day Sales (Zero outsource hidden)
             2. Month Sales (Zero outsource hidden)
             3. FG Production Items (In-House with Rate & Value)
             4. Warehouse FG Stock Valuation (If Enabled)
            ════════════════════════════════════════════════════════════ */}
-        <div className="lg:col-span-6 space-y-3">
-          
-          {/* 1 & 2. SALES SUMMARY (COMPACT & CLEAN - NO WASTED SPACE) */}
-          {hasRevenue && (
-            <div className={`rounded-2xl p-3 border ${themeStyles.sectionBoxBg} space-y-2`}>
-              <div className="flex items-center justify-between pb-1 border-b border-inherit/30">
-                <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5 text-inherit">
-                  <span className="text-emerald-500">💰</span>
-                  <span>Sales Performance (Without & With GST)</span>
-                </span>
-                <span className={`text-[10px] font-mono ${themeStyles.textSubtle}`}>INR (₹)</span>
-              </div>
+        {hasLeftContent && (
+          <div className={`${hasRightContent ? 'lg:col-span-6' : 'col-span-12'} space-y-3`}>
+            
+            {/* 1 & 2. SALES SUMMARY (COMPACT & CLEAN - NO WASTED SPACE) */}
+            {hasRevenue && (
+              <div className={`rounded-2xl p-3 border ${themeStyles.sectionBoxBg} space-y-2`}>
+                <div className="flex items-center justify-between pb-1 border-b border-inherit/30">
+                  <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5 text-inherit">
+                    <span className="text-emerald-500">💰</span>
+                    <span>Sales Performance (Without & With GST)</span>
+                  </span>
+                  <span className={`text-[10px] font-mono ${themeStyles.textSubtle}`}>INR (₹)</span>
+                </div>
 
-              <div className="space-y-1.5 font-mono text-xs">
-                
-                {/* 1. TODAY'S SALE */}
-                {hasDayOutsource ? (
-                  /* If Outsource > 0: Show Plant, Outsource & Total */
-                  <div className="space-y-1">
-                    <div className={`flex items-center justify-between p-1.5 rounded-lg border ${themeStyles.borderRow} ${themeStyles.textRowBg} text-[11px]`}>
-                      <span className={`font-sans font-bold ${themeStyles.textPrimary}`}>🏭 Day Plant Sale:</span>
-                      <span className={themeStyles.textBody}>₹{Number(report.selfSaleExclGst).toLocaleString('en-IN')} (Excl) | <strong className={themeStyles.textSuccess}>₹{Number(report.selfSaleInclGst).toLocaleString('en-IN')}</strong> (Incl)</span>
-                    </div>
-                    <div className={`flex items-center justify-between p-1.5 rounded-lg border ${themeStyles.borderRow} ${themeStyles.textRowBg} text-[11px]`}>
-                      <span className={`font-sans font-bold ${themeStyles.textWarn}`}>📦 Day Outsource:</span>
-                      <span className={themeStyles.textBody}>₹{Number(report.outsourceSaleExclGst).toLocaleString('en-IN')} (Excl) | <strong className={themeStyles.textSuccess}>₹{Number(report.outsourceSaleInclGst).toLocaleString('en-IN')}</strong> (Incl)</span>
-                    </div>
-                    <div className={`flex items-center justify-between p-1.5 rounded-lg border ${themeStyles.boxHighlightBg} font-bold`}>
-                      <span className={`font-sans font-black ${themeStyles.textSuccess} uppercase text-[11px]`}>Total Day Sales:</span>
-                      <span className={themeStyles.textBody}>₹{Number(report.totalSaleExclGst).toLocaleString('en-IN')} (Excl) | <strong className={themeStyles.textSuccess}>₹{Number(report.totalSaleInclGst).toLocaleString('en-IN')}</strong> (Bill)</span>
-                    </div>
-                  </div>
-                ) : (
-                  /* If Outsource is ZERO: Show ONLY Plant Sale cleanly! */
-                  <div className={`p-2 rounded-xl border ${themeStyles.boxHighlightBg} flex items-center justify-between`}>
-                    <div>
-                      <span className={`font-sans font-black text-xs ${themeStyles.textSuccess} uppercase tracking-tight block`}>
-                        Today's Total Sale ({formattedDateStr}):
-                      </span>
-                      <span className={`text-[9px] ${themeStyles.textSubtle} font-sans`}>100% In-House Plant Production</span>
-                    </div>
-                    <div className="text-right">
-                      <div className={`font-black text-sm ${themeStyles.textBody}`}>
-                        ₹ {Number(report.totalSaleExclGst || 0).toLocaleString('en-IN')} <span className={`text-[9px] ${themeStyles.textSubtle} font-sans`}>(Excl)</span>
+                <div className={`font-mono text-xs ${!hasRightContent ? 'grid grid-cols-1 md:grid-cols-2 gap-3 space-y-0' : 'space-y-1.5'}`}>
+                  
+                  {/* 1. TODAY'S SALE */}
+                  {hasDayOutsource ? (
+                    /* If Outsource > 0: Show Plant, Outsource & Total */
+                    <div className="space-y-1 flex flex-col justify-between">
+                      <div className={`flex items-center justify-between p-1.5 rounded-lg border ${themeStyles.borderRow} ${themeStyles.textRowBg} text-[11px]`}>
+                        <span className={`font-sans font-bold ${themeStyles.textPrimary}`}>🏭 Day Plant Sale:</span>
+                        <span className={themeStyles.textBody}>₹{Number(report.selfSaleExclGst).toLocaleString('en-IN')} (Excl) | <strong className={themeStyles.textSuccess}>₹{Number(report.selfSaleInclGst).toLocaleString('en-IN')}</strong> (Incl)</span>
                       </div>
-                      <div className={`font-black text-xs ${themeStyles.textSuccess}`}>
-                        ₹ {Number(report.totalSaleInclGst || 0).toLocaleString('en-IN')} <span className={`text-[9px] ${themeStyles.textSubtle} font-sans`}>(With GST)</span>
+                      <div className={`flex items-center justify-between p-1.5 rounded-lg border ${themeStyles.borderRow} ${themeStyles.textRowBg} text-[11px]`}>
+                        <span className={`font-sans font-bold ${themeStyles.textWarn}`}>📦 Day Outsource:</span>
+                        <span className={themeStyles.textBody}>₹{Number(report.outsourceSaleExclGst).toLocaleString('en-IN')} (Excl) | <strong className={themeStyles.textSuccess}>₹{Number(report.outsourceSaleInclGst).toLocaleString('en-IN')}</strong> (Incl)</span>
+                      </div>
+                      <div className={`flex items-center justify-between p-1.5 rounded-lg border ${themeStyles.boxHighlightBg} font-bold`}>
+                        <span className={`font-sans font-black ${themeStyles.textSuccess} uppercase text-[11px]`}>Total Day Sales:</span>
+                        <span className={themeStyles.textBody}>₹{Number(report.totalSaleExclGst).toLocaleString('en-IN')} (Excl) | <strong className={themeStyles.textSuccess}>₹{Number(report.totalSaleInclGst).toLocaleString('en-IN')}</strong> (Bill)</span>
                       </div>
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    /* If Outsource is ZERO: Show ONLY Plant Sale cleanly! */
+                    <div className={`p-2 rounded-xl border ${themeStyles.boxHighlightBg} flex items-center justify-between ${!hasRightContent ? 'h-full' : ''}`}>
+                      <div>
+                        <span className={`font-sans font-black text-xs ${themeStyles.textSuccess} uppercase tracking-tight block`}>
+                          Today's Total Sale ({formattedDateStr}):
+                        </span>
+                        <span className={`text-[9px] ${themeStyles.textSubtle} font-sans`}>100% In-House Plant Production</span>
+                      </div>
+                      <div className="text-right">
+                        <div className={`font-black text-sm ${themeStyles.textBody}`}>
+                          ₹ {Number(report.totalSaleExclGst || 0).toLocaleString('en-IN')} <span className={`text-[9px] ${themeStyles.textSubtle} font-sans`}>(Excl)</span>
+                        </div>
+                        <div className={`font-black text-xs ${themeStyles.textSuccess}`}>
+                          ₹ {Number(report.totalSaleInclGst || 0).toLocaleString('en-IN')} <span className={`text-[9px] ${themeStyles.textSubtle} font-sans`}>(With GST)</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-                {/* 2. CURRENT MONTH SALES (MTD) — Plant & Outsource ALAG ALAG */}
-                {mtdSummary && (
-                  <div className="space-y-1">
+                  {/* 2. CURRENT MONTH SALES (MTD) — Plant & Outsource ALAG ALAG */}
+                  {mtdSummary && (
+                    <div className="space-y-1 flex flex-col justify-between">
                     {/* MTD Header label */}
                     <div className={`text-[10px] font-black uppercase tracking-wider ${themeStyles.textPrimary} px-1 flex items-center gap-1`}>
                       📅 Current Month Sales (MTD):
@@ -606,33 +609,36 @@ export default function PlantMisWhatsappCard({
             </div>
           )}
 
-        </div>
+          </div>
+        )}
 
         {/* ════════════════════════════════════════════════════════════
-            SECOND HALF (RIGHT COLUMN - 6 COLS): 
+            SECOND HALF (RIGHT COLUMN): 
             TOP TO BOTTOM STREAMLINED MACHINE OPERATIONS (1-LINE ENTRIES)
+            (ONLY RENDERED IF AT LEAST ONE MACHINE IS ACTIVE / HAS OUTPUT)
            ════════════════════════════════════════════════════════════ */}
-        <div className="lg:col-span-6 space-y-3">
-          
-          {/* Header Bar */}
-          <div className="flex items-center justify-between pb-1 border-b border-inherit/40">
-            <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5 text-inherit">
-              <span className="text-emerald-500">⚙️</span>
-              <span>Machine Wise Production Summary</span>
-            </span>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-emerald-500 font-bold text-[10px]">
-                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>
-                {activeMachinesCount} Active
+        {hasRightContent && (
+          <div className={`${hasLeftContent ? 'lg:col-span-6' : 'col-span-12'} space-y-3`}>
+            
+            {/* Header Bar */}
+            <div className="flex items-center justify-between pb-1 border-b border-inherit/40">
+              <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5 text-inherit">
+                <span className="text-emerald-500">⚙️</span>
+                <span>Machine Wise Production Summary</span>
               </span>
-              {maintenanceMachinesCount > 0 && (
-                <span className="text-rose-500 font-bold text-[10px]">
-                  <span className="inline-block w-2 h-2 rounded-full bg-rose-500 mr-1"></span>
-                  {maintenanceMachinesCount} Maint.
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-emerald-500 font-bold text-[10px]">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"></span>
+                  {activeMachinesCount} Active
                 </span>
-              )}
+                {maintenanceMachinesCount > 0 && (
+                  <span className="text-rose-500 font-bold text-[10px]">
+                    <span className="inline-block w-2 h-2 rounded-full bg-rose-500 mr-1"></span>
+                    {maintenanceMachinesCount} Maint.
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
 
           {/* 1. CORRUGATION & PAPER CUTTING SECTION */}
           {corrugationMachines.length > 0 && (
@@ -806,7 +812,14 @@ export default function PlantMisWhatsappCard({
             </div>
           )}
 
-        </div>
+          </div>
+        )}
+
+        {!hasLeftContent && !hasRightContent && (
+          <div className="col-span-12 text-center py-8 text-xs font-bold text-muted-foreground border border-dashed rounded-xl">
+            No production or sales data recorded for this date.
+          </div>
+        )}
 
       </div>
 
