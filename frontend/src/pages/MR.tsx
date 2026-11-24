@@ -21,7 +21,8 @@ import TotalPaperPurchaseModal from './TotalPaperPurchaseModal';
 import CashLedgerModal from './CashLedgerModal';
 import ConsumableBreakdownModal, { type RmBreakdownItem } from './ConsumableBreakdownModal';
 import RMPurchaseDetailsModal, { isRMAuditTransaction } from './rm/RMPurchaseDetailsModal';
-import { getMonthlyExpenseAggregates, getExpenseCategories, getCashClosingBalanceForMonth } from '../lib/supabase/cashLedgerService';
+import { getMonthlyExpenseAggregates, getExpenseCategories, getCashClosingBalanceForMonth, getCashLedgerEntries } from '../lib/supabase/cashLedgerService';
+import { getEmployees } from '../lib/supabase/employeeService';
 import {
   DEFAULT_EXPENSE_CATEGORIES,
   getSafeMonthBounds,
@@ -118,6 +119,19 @@ export default function MR() {
   const { data: cashClosingBalance = 0, refetch: refetchCashClosingBalance } = useQuery({
     queryKey: ['cashLedgerClosingBalance', currentMonth, 'CASH'],
     queryFn: () => getCashClosingBalanceForMonth(currentMonth, 'CASH'),
+    enabled: isValidMonth
+  });
+
+  // Query all employees for Salary & Wages Annexure mapping
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employeesAll'],
+    queryFn: () => getEmployees(false),
+  });
+
+  // Query Cash Ledger detailed entries for active month Annexure
+  const { data: rawCashLedgerEntries = [] } = useQuery({
+    queryKey: ['cashLedgerMonthlyEntries', currentMonth],
+    queryFn: () => getCashLedgerEntries({ month: currentMonth }),
     enabled: isValidMonth
   });
 
@@ -775,6 +789,241 @@ export default function MR() {
     }));
   }, [visibleExpenses, manualData, autoFreightOutward, autoSalaryWages, autoConsumableGoods, autoLpgCylinder]);
 
+  // --- ANNEXURE BREAKDOWN LISTS FOR EXCEL EXPORT ---
+  const salaryBreakdown = useMemo(() => {
+    const empMap = new Map<string, any>();
+    (employees || []).forEach(emp => {
+      if (emp.id) empMap.set(emp.id, emp);
+    });
+
+    const breakdown = (monthAttendance || []).map(r => {
+      const emp = empMap.get(r.employeeId);
+      const daysAmt = Number(r.perDayAmount) || 0;
+      const otAmt = Number(r.otAmount) || 0;
+      const refAmt = Number(r.refreshment) || 0;
+      const presentDays = Number(r.present) || 0;
+      const perDayRate = presentDays > 0 ? Math.round(daysAmt / presentDays) : (emp?.basicSalary ? Math.round(emp.basicSalary / 30) : 0);
+      const total = Math.round(daysAmt + otAmt + refAmt);
+
+      return {
+        employeeCode: emp?.employeeCode || '',
+        employeeName: emp?.name || `Employee #${(r.employeeId || '').slice(0, 6)}`,
+        category: emp?.category || '',
+        contractorName: emp?.contractorName || '',
+        designation: emp?.designation || '',
+        presentDays,
+        perDayAmount: perDayRate,
+        dayAmount: Math.round(daysAmt),
+        otHours: Number(r.otHours) || 0,
+        otAmount: Math.round(otAmt),
+        refreshment: Math.round(refAmt),
+        total,
+      };
+    });
+
+    return breakdown.sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+  }, [monthAttendance, employees]);
+
+  const freightBreakdown = useMemo(() => {
+    const outwards = fgTransactions.filter(t => t.type === 'OUT' && (t.invoiceNo || t.freight || t.holding));
+    const invoiceMap = new Map<string, any>();
+
+    outwards.forEach(tx => {
+      const rawDate = tx.date || tx.createdAt || '';
+      if (isDateInTargetMonth(rawDate, currentMonth)) {
+        const key = tx.invoiceNo ? `INV:${tx.invoiceNo}` : `TX:${tx.id}`;
+        if (!invoiceMap.has(key)) {
+          const fr = Number(tx.freight) || 0;
+          const hl = Number(tx.holding) || 0;
+          const pt = Number(tx.point) || 0;
+          const ot = Number(tx.others) || 0;
+          const tot = fr + hl + pt + ot;
+          invoiceMap.set(key, {
+            date: rawDate.slice(0, 10),
+            invoiceNo: tx.invoiceNo || '-',
+            vehicleNo: tx.vehicleNo || '-',
+            customerName: tx.customerName || '-',
+            transporterName: tx.transporterName || '-',
+            freight: Math.round(fr),
+            holding: Math.round(hl),
+            point: Math.round(pt),
+            others: Math.round(ot),
+            total: Math.round(tot),
+          });
+        }
+      }
+    });
+
+    return Array.from(invoiceMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [fgTransactions, currentMonth]);
+
+  const consumableBreakdown = useMemo(() => {
+    return (consumableBreakdownItems || []).map(item => ({
+      date: item.date,
+      materialName: item.materialName,
+      unit: item.unit,
+      type: item.type,
+      quantity: item.quantity,
+      rate: item.rate,
+      amount: item.amount,
+      referenceNo: item.referenceNo || '',
+      remarks: item.remarks || '',
+    }));
+  }, [consumableBreakdownItems]);
+
+  const lpgBreakdown = useMemo(() => {
+    return (lpgBreakdownItems || []).map(item => ({
+      date: item.date,
+      materialName: item.materialName,
+      unit: item.unit,
+      type: item.type,
+      quantity: item.quantity,
+      rate: item.rate,
+      amount: item.amount,
+      referenceNo: item.referenceNo || '',
+      remarks: item.remarks || '',
+    }));
+  }, [lpgBreakdownItems]);
+
+  const cashLedgerBreakdown = useMemo(() => {
+    return (rawCashLedgerEntries || []).map(e => ({
+      date: e.date,
+      expenseHead: e.expenseHead,
+      narration: e.narration || '',
+      voucherNo: e.voucherNo || '',
+      paymentMode: e.paymentMode,
+      amount: Number(e.dr) > 0 ? Number(e.dr) : Number(e.cr) || 0,
+      partyName: '',
+    })).sort((a, b) => a.date.localeCompare(b.date));
+  }, [rawCashLedgerEntries]);
+
+  // Dedicated Sheet Configuration for EVERY Visible Operational Expense
+  const expenseSheets = useMemo(() => {
+    const usedNames = new Set<string>(['profit_loss_statement']);
+    const sheets: any[] = [];
+    const rawEntries = rawCashLedgerEntries || [];
+
+    visibleExpenses.forEach(exp => {
+      const isConsumable = exp === "Consumable Goods (Excl. Gas)" || exp === "Consumable Goods";
+      const isLpg = exp === "LPG Cylinder";
+      const effectiveAmt = getEffectiveExpenseValue(exp);
+
+      // Match cash ledger entries for this expense head (case-insensitive)
+      const expLower = exp.trim().toLowerCase();
+      const matchingCash = rawEntries.filter(
+        e => (e.expenseHead || '').trim().toLowerCase() === expLower
+      );
+
+      // Sanitize sheet name for Excel (max 26 chars, no forbidden chars)
+      let cleanName = exp.replace(/[\\/?*\[\]:]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (cleanName.length > 25) cleanName = cleanName.slice(0, 25).trim();
+      if (!cleanName) cleanName = 'Expense';
+      let finalName = cleanName;
+      let counter = 1;
+      while (usedNames.has(finalName.toLowerCase())) {
+        finalName = `${cleanName.slice(0, 22)}_${counter}`;
+        counter++;
+      }
+      usedNames.add(finalName.toLowerCase());
+
+      const items: any[] = [];
+
+      if (isConsumable && autoConsumableGoods > 0) {
+        (consumableBreakdownItems || []).forEach(rm => {
+          items.push({
+            date: rm.date,
+            materialName: rm.materialName,
+            unit: rm.unit,
+            quantity: rm.quantity,
+            rate: rm.rate,
+            amount: rm.amount,
+            referenceNo: rm.referenceNo || '',
+            remarks: rm.remarks || '',
+          });
+        });
+        matchingCash.forEach(ce => {
+          items.push({
+            date: ce.date,
+            voucherNo: ce.voucherNo || '',
+            narration: ce.narration || '',
+            paymentMode: ce.paymentMode,
+            amount: Number(ce.dr) > 0 ? Number(ce.dr) : Number(ce.cr) || 0,
+          });
+        });
+        sheets.push({
+          expenseName: exp,
+          sheetName: finalName,
+          totalAmount: effectiveAmt,
+          items,
+          type: 'RM_BREAKDOWN',
+        });
+      } else if (isLpg && autoLpgCylinder > 0) {
+        (lpgBreakdownItems || []).forEach(rm => {
+          items.push({
+            date: rm.date,
+            materialName: rm.materialName,
+            unit: rm.unit,
+            quantity: rm.quantity,
+            rate: rm.rate,
+            amount: rm.amount,
+            referenceNo: rm.referenceNo || '',
+            remarks: rm.remarks || '',
+          });
+        });
+        matchingCash.forEach(ce => {
+          items.push({
+            date: ce.date,
+            voucherNo: ce.voucherNo || '',
+            narration: ce.narration || '',
+            paymentMode: ce.paymentMode,
+            amount: Number(ce.dr) > 0 ? Number(ce.dr) : Number(ce.cr) || 0,
+          });
+        });
+        sheets.push({
+          expenseName: exp,
+          sheetName: finalName,
+          totalAmount: effectiveAmt,
+          items,
+          type: 'RM_BREAKDOWN',
+        });
+      } else {
+        // Cash Ledger entries (e.g. Salary with Director Remuneration, Freight Outward, Tea, Electricity, etc.)
+        matchingCash.forEach(ce => {
+          items.push({
+            date: ce.date,
+            voucherNo: ce.voucherNo || '',
+            narration: ce.narration || '',
+            paymentMode: ce.paymentMode,
+            amount: Number(ce.dr) > 0 ? Number(ce.dr) : Number(ce.cr) || 0,
+          });
+        });
+
+        // Fallback: If Freight Outward has 0 cash ledger entries, check freight invoice outwards
+        if (exp === "Freight Outward Charges" && items.length === 0 && freightBreakdown.length > 0) {
+          freightBreakdown.forEach(fb => {
+            items.push({
+              date: fb.date,
+              voucherNo: fb.invoiceNo,
+              narration: `${fb.customerName} (Vehicle: ${fb.vehicleNo}${fb.transporterName ? ', Transporter: ' + fb.transporterName : ''})`,
+              paymentMode: 'BANK/DISPATCH',
+              amount: fb.total,
+            });
+          });
+        }
+
+        sheets.push({
+          expenseName: exp,
+          sheetName: finalName,
+          totalAmount: effectiveAmt,
+          items,
+          type: 'CASH_LEDGER',
+        });
+      }
+    });
+
+    return sheets;
+  }, [visibleExpenses, rawCashLedgerEntries, consumableBreakdownItems, lpgBreakdownItems, autoConsumableGoods, autoLpgCylinder, freightBreakdown, manualData]);
+
   // Parameters pack for PDF and Excel export
   const exportParams = useMemo(() => ({
     monthFormattedTitle,
@@ -816,7 +1065,13 @@ export default function MR() {
     wipStockValue,
     paperStockValue,
     rmStockValue,
-    grandTotalStock
+    grandTotalStock,
+    salaryBreakdown,
+    freightBreakdown,
+    consumableBreakdown,
+    lpgBreakdown,
+    cashLedgerEntries: cashLedgerBreakdown,
+    expenseSheets,
   }), [
     monthFormattedTitle, paperStats, paperTotals, visibleSaleParties, manualData,
     cashScrapRevenue, tallyDataWOGST, tallyDataWGST, creditNoteWOGST, creditNoteWGST,
@@ -827,7 +1082,8 @@ export default function MR() {
     kraftPurchaseWOGST, kraftPurchaseWGST, consumablePurchaseWOGST, consumablePurchaseWGST,
     currentMonthPurchaseWOGST, currentMonthPurchaseWGST,
     totalExpenses, netProfit, profitMarginPercent,
-    fgStockValue, nonMovingStockValue, wipStockValue, paperStockValue, rmStockValue, grandTotalStock
+    fgStockValue, nonMovingStockValue, wipStockValue, paperStockValue, rmStockValue, grandTotalStock,
+    salaryBreakdown, freightBreakdown, consumableBreakdown, lpgBreakdown, cashLedgerBreakdown, expenseSheets,
   ]);
 
   const handleDownloadPDF = () => {
