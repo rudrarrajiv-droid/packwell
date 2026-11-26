@@ -526,8 +526,8 @@ export default function MasterData() {
                   className="text-sm rounded-md border border-input px-3 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-ring min-w-[200px]"
                 >
                   <option value="">-- Select New Customer --</option>
-                  {customers.map(c => (
-                    <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, customers)}</option>
+                  {displayedCustomers.map(c => (
+                    <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, displayedCustomers)}</option>
                   ))}
                 </select>
                 <button
@@ -547,7 +547,7 @@ export default function MasterData() {
           {tab === 'customers' ? (
             <CustomersTable 
               data={filteredCustomers} 
-              products={products} 
+              products={displayedProducts} 
               isLoading={loadingC} 
               onEdit={isAdmin && catalogView === 'active' ? handleEditCustomer : undefined} 
               onDelete={canDelete && catalogView === 'active' ? handleDeleteCustomer : undefined} 
@@ -595,8 +595,8 @@ export default function MasterData() {
       {mergeData && (
         <MergeModal
           data={mergeData}
-          customers={customers}
-          products={products}
+          customers={displayedCustomers}
+          products={displayedProducts}
           onClose={() => setMergeData(null)}
           onSuccess={() => {
             setMergeData(null);
@@ -608,8 +608,8 @@ export default function MasterData() {
       {dependencyData && (
         <DependencyModal
           data={dependencyData}
-          customers={customers}
-          products={products}
+          customers={displayedCustomers}
+          products={displayedProducts}
           onClose={() => setDependencyData(null)}
           onSuccess={() => {
             setDependencyData(null);
@@ -992,7 +992,7 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
   const [modalCustomers, setModalCustomers] = useState<Customer[]>(customers);
 
   React.useEffect(() => {
-    setModalCustomers(customers);
+    setModalCustomers(customers.filter(c => !c.isLegacy));
   }, [customers]);
 
   const { register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProductForm>({

@@ -46,7 +46,6 @@ export const MASTER_DATA_CUTOFF_DATE = '2026-11-26T00:00:00';
 
 export const isLegacyMasterRecord = (row: { catalogVersion?: string; isLegacy?: boolean; createdAt?: string | null }): boolean => {
   if (row.catalogVersion === '2026_NEW') return false;
-  if (row.isLegacy === false) return false;
   if (row.isLegacy === true) return true;
   if (!row.createdAt) return true;
   try {

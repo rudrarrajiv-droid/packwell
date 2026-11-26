@@ -649,8 +649,8 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
     },
   });
 
-  const activeCustomers = useMemo(() => customers.filter((c: any) => !c.isLegacy), [customers]);
-  const activeProducts = useMemo(() => products.filter((p: any) => !p.isLegacy), [products]);
+  const activeCustomers = useMemo(() => customers.filter((c: any) => c.catalogVersion === '2026_NEW' || (!c.isLegacy && c.createdAt && new Date(c.createdAt).getTime() >= new Date('2026-11-26T00:00:00').getTime())), [customers]);
+  const activeProducts = useMemo(() => products.filter((p: any) => p.catalogVersion === '2026_NEW' || (!p.isLegacy && p.createdAt && new Date(p.createdAt).getTime() >= new Date('2026-11-26T00:00:00').getTime())), [products]);
 
   const [showCreateProductModal, setShowCreateProductModal] = useState(false);
 
@@ -661,6 +661,14 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
       return data;
     },
   });
+
+  // For new job cards, ONLY allow POs linked to active (26/11/2026+) products
+  const availablePurchaseOrders = useMemo(() => {
+    if (isEditMode) return purchaseOrders;
+    return purchaseOrders.filter((po: any) => {
+      return activeProducts.some((p: any) => p.id === po.productId || (p.itemName && po.productName && p.itemName.toLowerCase() === po.productName.toLowerCase()));
+    });
+  }, [isEditMode, purchaseOrders, activeProducts]);
 
   const [loadingNextNo, setLoadingNextNo] = useState(!isEditMode);
   const [productSearchText, setProductSearchText] = useState(() => {
@@ -981,7 +989,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                 
                 {showPoDropdown && poSearchText.length > 0 && (
                   <div className="absolute z-10 w-full mt-1 bg-card border border-border rounded-md shadow-xl max-h-60 overflow-y-auto">
-                    {purchaseOrders
+                    {availablePurchaseOrders
                       .filter((p: any) => 
                         (p.poNo || '').toLowerCase().includes(poSearchText.toLowerCase()) ||
                         (p.customerName || '').toLowerCase().includes(poSearchText.toLowerCase()) ||
@@ -1003,14 +1011,14 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                           <div className="text-xs text-muted-foreground mt-0.5">{p.productName} | OPN: {p.orderQty} | BAL: {p.orderQty + (p.inQty || 0) - (p.outQty || 0)}</div>
                         </div>
                       ))}
-                    {purchaseOrders.filter((p: any) => 
+                    {availablePurchaseOrders.filter((p: any) => 
                         (p.poNo || '').toLowerCase().includes(poSearchText.toLowerCase()) ||
                         (p.customerName || '').toLowerCase().includes(poSearchText.toLowerCase()) ||
                         (p.artworkNo || '').toLowerCase().includes(poSearchText.toLowerCase()) ||
                         (p.productName || '').toLowerCase().includes(poSearchText.toLowerCase())
                     ).length === 0 && (
                       <div className="px-4 py-4 text-sm text-gray-500 italic text-center">
-                        No matching POs found.
+                        {isEditMode ? 'No matching POs found.' : 'No active POs found for new job cards.'}
                       </div>
                     )}
                   </div>
