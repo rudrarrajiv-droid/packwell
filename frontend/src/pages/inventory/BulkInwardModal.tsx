@@ -233,6 +233,7 @@ export default function BulkInwardModal({ reels, onClose, onSuccess }: { reels: 
                   <option value="VK">VK</option>
                   <option value="HWC">HWC</option>
                   <option value="DUPLEX">DUPLEX</option>
+                  <option value="HDPE">HDPE (Mtr)</option>
                   <option value="OTHERS">OTHERS</option>
                 </select>
                 

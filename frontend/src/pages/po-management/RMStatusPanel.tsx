@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProducts } from '../../lib/supabase/productService';
 import { getReels } from '../../lib/supabase/reelService';
-import { calculateLayerWeight } from '../../lib/corrugationUtils';
+import { calculateLayerWeight, isHdpeLayer, calculateHdpeConsumption } from '../../lib/corrugationUtils';
 import { getConcurrentPartnerIndices, getLayerStandDescription } from '../../lib/corrugatorPairing';
 import { PackageSearch, CheckCircle2, AlertTriangle, ShoppingCart, Package2 } from 'lucide-react';
 
@@ -42,6 +42,7 @@ type LayerStatus = {
   bf: string;
   gsm: number;
   reelSize: number;
+  unit?: string;
   requiredKg: number;
   availableKg: number;
   matchedExact: boolean;
@@ -89,6 +90,33 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
       const layerName = layer.layerName || '';
       const standDescription = getLayerStandDescription(idx, totalLayers);
 
+      if (isHdpeLayer(layer)) {
+        const requiredMtr = calculateHdpeConsumption(cutSize, ups, orderQty).totalMtr;
+        const candidateReels = virtualReels.filter((r: any) => {
+          if (r.virtualBalance <= 0) return false;
+          const rPaperType = (r.paperType || '').toUpperCase().trim();
+          return rPaperType === 'HDPE';
+        });
+        const totalAvailMtr = candidateReels.reduce((sum: number, r: any) => sum + r.virtualBalance, 0);
+        const shortMtr = Math.max(0, requiredMtr - totalAvailMtr);
+        return {
+          layerName,
+          standDescription,
+          paperType: 'HDPE',
+          bf: '-',
+          gsm: 90,
+          reelSize,
+          unit: 'Mtr',
+          requiredKg: requiredMtr,
+          availableKg: totalAvailMtr,
+          matchedExact: candidateReels.length > 0,
+          matchedFallback: false,
+          shortKg: shortMtr,
+          isOrdered: false,
+          status: shortMtr <= 0 ? 'OK' : 'SHORT',
+        };
+      }
+
       // No spec → cannot check
       if (!reelSize || !cutSize || !gsm) {
         return {
@@ -122,7 +150,7 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
         const rBf = String(r.bf || '').trim();
         const rPaperType = normalizePaperType(r.paperType || '');
 
-        const gsmMatch = rGsm === String(gsm) || 
+        const gsmMatch = rGsm === String(gsm) ||
           (gsm === 220 && rGsm === '230') || (gsm === 230 && rGsm === '220') ||
           (gsm === 100 && rGsm === '120') || (gsm === 120 && rGsm === '100');
         const bfMatch = !bf || rBf === bf;
@@ -148,7 +176,7 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
           const rBf = String(r.bf || '').trim();
           const rPaperType = normalizePaperType(r.paperType || '');
 
-          const gsmMatch = rGsm === String(gsm) || 
+          const gsmMatch = rGsm === String(gsm) ||
             (gsm === 220 && rGsm === '230') || (gsm === 230 && rGsm === '220') ||
             (gsm === 100 && rGsm === '120') || (gsm === 120 && rGsm === '100');
           const bfMatch = !bf || rBf === bf;
@@ -215,32 +243,29 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
   const allOk = layerStatuses.length > 0 && layerStatuses.every(l => l.status === 'OK');
 
   return (
-    <div className={`mt-2 rounded-lg border text-xs overflow-hidden transition-all ${
-      allOk ? 'border-green-300 bg-green-50' :
+    <div className={`mt-2 rounded-lg border text-xs overflow-hidden transition-all ${allOk ? 'border-green-300 bg-green-50' :
       hasShortage ? 'border-red-300 bg-red-50' :
-      'border-blue-200 bg-blue-50'
-    }`}>
-      {/* Header */}
-      <div className={`flex items-center gap-2 px-3 py-1.5 font-bold ${
-        allOk ? 'bg-green-100 text-green-800' :
-        hasShortage ? 'bg-red-100 text-red-800' :
-        'bg-blue-100 text-blue-800'
+        'border-blue-200 bg-blue-50'
       }`}>
+      {/* Header */}
+      <div className={`flex items-center gap-2 px-3 py-1.5 font-bold ${allOk ? 'bg-green-100 text-green-800' :
+        hasShortage ? 'bg-red-100 text-red-800' :
+          'bg-blue-100 text-blue-800'
+        }`}>
         {allOk ? <CheckCircle2 className="w-3.5 h-3.5" /> :
-         hasShortage ? <AlertTriangle className="w-3.5 h-3.5" /> :
-         <ShoppingCart className="w-3.5 h-3.5" />}
+          hasShortage ? <AlertTriangle className="w-3.5 h-3.5" /> :
+            <ShoppingCart className="w-3.5 h-3.5" />}
         RM Status — {allOk ? '✅ All Material Available' : hasShortage ? '⚠️ Material Shortage' : '🔵 Material Ordered'}
       </div>
 
       {/* Layers */}
       <div className="divide-y divide-border/40">
         {layerStatuses.map((layer, i) => (
-          <div key={i} className={`px-3 py-1.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 ${
-            layer.status === 'OK' ? 'bg-green-50/60' :
+          <div key={i} className={`px-3 py-1.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 ${layer.status === 'OK' ? 'bg-green-50/60' :
             layer.status === 'SHORT' ? 'bg-red-50/70' :
-            layer.status === 'ORDERED' ? 'bg-blue-50/70' :
-            'bg-gray-50/60'
-          }`}>
+              layer.status === 'ORDERED' ? 'bg-blue-50/70' :
+                'bg-gray-50/60'
+            }`}>
             <div className="flex items-center gap-1.5 min-w-[170px]">
               <span className="font-bold text-foreground">{layer.layerName}</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-100 text-amber-800 border border-amber-200">
@@ -254,12 +279,12 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
             </span>
             <span>
               <span className="text-muted-foreground">Required: </span>
-              <span className="font-bold">{layer.requiredKg} Kg</span>
+              <span className="font-bold">{layer.requiredKg} {layer.unit || 'Kg'}</span>
             </span>
             <span>
               <span className="text-muted-foreground">Available: </span>
               <span className={`font-bold ${layer.availableKg >= layer.requiredKg ? 'text-green-700' : 'text-red-700'}`}>
-                {layer.availableKg} Kg
+                {layer.availableKg} {layer.unit || 'Kg'}
               </span>
             </span>
             {layer.matchedFallback && !layer.matchedExact && (
@@ -270,7 +295,7 @@ export default function RMStatusPanel({ productId, orderQty }: Props) {
             )}
             {layer.status === 'SHORT' && (
               <span className="ml-auto flex items-center gap-1 text-red-700 font-bold">
-                <AlertTriangle className="w-3 h-3" /> Short {layer.shortKg} Kg
+                <AlertTriangle className="w-3 h-3" /> Short {layer.shortKg} {layer.unit || 'Kg'}
               </span>
             )}
             {layer.status === 'ORDERED' && (

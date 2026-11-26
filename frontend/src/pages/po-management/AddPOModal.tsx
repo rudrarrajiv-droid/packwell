@@ -133,23 +133,23 @@ function SearchableCustomerSelect({ value, onChange, customers, hasError, onCust
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!open) { 
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } 
-      return; 
+    if (!open) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); }
+      return;
     }
-    if (e.key === 'ArrowDown') { 
-      e.preventDefault(); 
-      setHighlightIdx(i => Math.min(i + 1, filtered.length - 1)); 
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIdx(i => Math.min(i + 1, filtered.length - 1));
     }
-    else if (e.key === 'ArrowUp') { 
-      e.preventDefault(); 
-      setHighlightIdx(i => Math.max(i - 1, 0)); 
+    else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIdx(i => Math.max(i - 1, 0));
     }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      if (filtered[highlightIdx]) { 
-        onChange(filtered[highlightIdx].id, filtered[highlightIdx].name); 
-        setOpen(false); 
+      if (filtered[highlightIdx]) {
+        onChange(filtered[highlightIdx].id, filtered[highlightIdx].name);
+        setOpen(false);
       } else if (canCreateNew) {
         handleCreateCustomer();
       }
@@ -284,15 +284,15 @@ interface SearchableProductSelectProps {
   onProductCreated: (newProduct: ProductOption) => void;
 }
 
-function SearchableProductSelect({ 
-  value, 
-  onChange, 
-  products, 
+function SearchableProductSelect({
+  value,
+  onChange,
+  products,
   selectedCustomerId,
   selectedCustomerName,
-  hasError, 
+  hasError,
   triggerDataId,
-  onProductCreated 
+  onProductCreated
 }: SearchableProductSelectProps) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -316,7 +316,7 @@ function SearchableProductSelect({
   // Group & filter products: Prioritize items for the selected customer!
   const { customerItems, otherItems, filteredList } = useMemo(() => {
     const q = search.trim().toLowerCase();
-    
+
     // Check customer match
     const isCustMatch = (p: ProductOption) => {
       if (selectedCustomerId && p.customerId === selectedCustomerId) return true;
@@ -485,9 +485,9 @@ function SearchableProductSelect({
     else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightIdx(i => Math.max(i - 1, 0)); }
     else if (e.key === 'Enter') {
       e.preventDefault();
-      if (filteredList[highlightIdx]) { 
-        onChange(filteredList[highlightIdx].id, filteredList[highlightIdx]); 
-        setOpen(false); 
+      if (filteredList[highlightIdx]) {
+        onChange(filteredList[highlightIdx].id, filteredList[highlightIdx]);
+        setOpen(false);
       } else if (canCreateNew) {
         handleCreateNewProduct();
       }
@@ -652,20 +652,20 @@ type POItem = {
   deliveryDate: string;
 };
 
-export default function AddPOModal({ 
-  onClose, 
+export default function AddPOModal({
+  onClose,
   onSuccess,
   initialPoNo,
   initialCustomerId
-}: { 
-  onClose: () => void; 
+}: {
+  onClose: () => void;
   onSuccess: () => void;
   initialPoNo?: string;
   initialCustomerId?: string;
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  
+
   const [commonData, setCommonData] = useState({
     poNo: initialPoNo || '',
     poDate: new Date().toISOString().split('T')[0],
@@ -700,9 +700,9 @@ export default function AddPOModal({
   const [localCustomers, setLocalCustomers] = useState<any[]>([]);
 
   useEffect(() => {
-    if (dbCustomers.length > 0) {
-      setLocalCustomers(dbCustomers);
-    }
+    // Strictly use Active Master Data (26/11/2026+) for creating new POs
+    const active = dbCustomers.filter((c: any) => !c.isLegacy);
+    setLocalCustomers(active);
   }, [dbCustomers]);
 
   // Fetch Products
@@ -710,8 +710,8 @@ export default function AddPOModal({
     queryKey: ['products'],
     queryFn: async () => {
       const data = await getProducts() as any[];
-      return data.map((product: any) => ({ 
-        ...product, 
+      return data.map((product: any) => ({
+        ...product,
         name: product.itemName || product.name,
         size: `${product.length || ''}x${product.width || ''}x${product.height || ''}`.trim()
       }));
@@ -721,9 +721,9 @@ export default function AddPOModal({
   const [localProducts, setLocalProducts] = useState<any[]>([]);
 
   useEffect(() => {
-    if (dbProducts.length > 0) {
-      setLocalProducts(dbProducts);
-    }
+    // Strictly use Active Master Data (26/11/2026+) for creating new POs
+    const active = dbProducts.filter((p: any) => !p.isLegacy);
+    setLocalProducts(active);
   }, [dbProducts]);
 
   // Check if PO exists when poNo changes
@@ -840,7 +840,7 @@ export default function AddPOModal({
     if (!commonData.poNo.trim()) newErrors.poNo = "PO No. is required.";
     if (!commonData.poDate) newErrors.poDate = "PO Date is required.";
     if (!commonData.customerId) newErrors.customerId = "Customer is required.";
-    
+
     if (items.length === 0) {
       newErrors.general = "At least one item must be added.";
     }
@@ -851,16 +851,16 @@ export default function AddPOModal({
       if (!item.productId) newErrors[`productId-${item.id}`] = "Required";
       else {
         if (selectedProductIds.has(item.productId)) {
-           newErrors[`productId-${item.id}`] = "Duplicate item in list";
+          newErrors[`productId-${item.id}`] = "Duplicate item in list";
         }
         selectedProductIds.add(item.productId);
       }
-      
+
       const rateNum = Number(item.rate);
       if (!item.rate || isNaN(rateNum) || rateNum < 0) {
         newErrors[`rate-${item.id}`] = "Invalid";
       }
-      
+
       const qtyNum = Number(item.orderQty);
       if (!item.orderQty || isNaN(qtyNum) || qtyNum <= 0) {
         newErrors[`orderQty-${item.id}`] = "Invalid";
@@ -877,8 +877,8 @@ export default function AddPOModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return; 
-    
+    if (isSubmitting) return;
+
     if (!validateForm()) return;
 
     setIsSubmitting(true);
@@ -921,9 +921,9 @@ export default function AddPOModal({
       }
 
       if (purchaseOrdersToCreate.length === 0) {
-         setErrors({ general: "No valid items to save." });
-         setIsSubmitting(false);
-         return;
+        setErrors({ general: "No valid items to save." });
+        setIsSubmitting(false);
+        return;
       }
 
       const productIds = Array.from(new Set(items.map(i => i.productId).filter(Boolean)));
@@ -954,7 +954,7 @@ export default function AddPOModal({
     try {
       if (shouldNilOld && pendingOldPOs.length > 0) {
         await bulkCloseCustomerPOs(
-          pendingOldPOs.map(p => p.id!), 
+          pendingOldPOs.map(p => p.id!),
           user?.name || 'System',
           {
             date: commonData.poDate || new Date().toISOString().split('T')[0],
@@ -974,7 +974,7 @@ export default function AddPOModal({
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
       <div className="bg-card w-full max-w-5xl rounded-2xl shadow-2xl flex flex-col max-h-[92vh] border border-border overflow-hidden animate-fade-in">
-        
+
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border bg-muted/30">
           <div className="flex items-center gap-3">
@@ -988,9 +988,9 @@ export default function AddPOModal({
               </p>
             </div>
           </div>
-          <button 
-            type="button" 
-            onClick={onClose} 
+          <button
+            type="button"
+            onClick={onClose}
             disabled={isSubmitting}
             className="p-2 hover:bg-muted rounded-full transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
@@ -1002,19 +1002,19 @@ export default function AddPOModal({
         <div className="p-5 overflow-y-auto flex-1 space-y-6">
           {errors.general && (
             <div className="p-3 bg-red-100 border border-red-300 text-red-800 rounded-xl text-sm font-semibold flex items-center">
-               {errors.general}
+              {errors.general}
             </div>
           )}
 
           <form id="add-po-form" onSubmit={handleSubmit} className="space-y-6">
-            
+
             {/* Common Details Card */}
             <div className="bg-muted/20 p-5 rounded-2xl border border-border space-y-4">
               <h3 className="text-xs font-bold text-foreground uppercase tracking-wider border-b border-border pb-2 flex items-center gap-2">
                 <Building2 className="w-4 h-4 text-primary" />
                 PO Common Details
               </h3>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {/* PO Number */}
                 <div className="md:col-span-1">
@@ -1022,8 +1022,8 @@ export default function AddPOModal({
                     PO No. <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="e.g. PO-55000089"
                       className={cn(
                         "w-full px-3 py-2 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold",
@@ -1031,8 +1031,8 @@ export default function AddPOModal({
                       )}
                       value={commonData.poNo}
                       onChange={e => {
-                        setCommonData({...commonData, poNo: e.target.value});
-                        if (errors.poNo) setErrors({...errors, poNo: ''});
+                        setCommonData({ ...commonData, poNo: e.target.value });
+                        if (errors.poNo) setErrors({ ...errors, poNo: '' });
                       }}
                     />
                     {isCheckingPO && (
@@ -1041,7 +1041,7 @@ export default function AddPOModal({
                   </div>
                   {errors.poNo && <p className="text-red-500 text-[10px] mt-1 font-bold">{errors.poNo}</p>}
                 </div>
-                
+
                 {/* Smart Searchable Customer Select */}
                 <div className="md:col-span-1">
                   <label className="block text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">
@@ -1062,33 +1062,33 @@ export default function AddPOModal({
                   <label className="block text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">
                     PO Date <span className="text-red-500">*</span>
                   </label>
-                  <input 
-                    type="date" 
+                  <input
+                    type="date"
                     className={cn(
                       "w-full px-3 py-2 text-sm rounded-lg border bg-background text-foreground transition-colors font-medium",
                       errors.poDate ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
                     )}
                     value={commonData.poDate}
                     onChange={e => {
-                      setCommonData({...commonData, poDate: e.target.value});
-                      if (errors.poDate) setErrors({...errors, poDate: ''});
+                      setCommonData({ ...commonData, poDate: e.target.value });
+                      if (errors.poDate) setErrors({ ...errors, poDate: '' });
                     }}
                   />
                   {errors.poDate && <p className="text-red-500 text-[10px] mt-1 font-bold">{errors.poDate}</p>}
                 </div>
-                
+
                 {/* Consignee */}
                 <div className="md:col-span-1">
-                   <label className="block text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">
-                     Consignee (Optional)
-                   </label>
-                   <input 
-                     type="text" 
-                     placeholder="Enter consignee / destination"
-                     className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background text-foreground transition-colors"
-                     value={commonData.consignee}
-                     onChange={e => setCommonData({...commonData, consignee: e.target.value})}
-                   />
+                  <label className="block text-xs font-bold text-foreground uppercase tracking-wider mb-1.5">
+                    Consignee (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter consignee / destination"
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background text-foreground transition-colors"
+                    value={commonData.consignee}
+                    onChange={e => setCommonData({ ...commonData, consignee: e.target.value })}
+                  />
                 </div>
               </div>
 
@@ -1142,83 +1142,83 @@ export default function AddPOModal({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                     {items.map((item, index) => (
+                    {items.map((item, index) => (
                       <React.Fragment key={item.id}>
-                       <tr className="hover:bg-muted/20 transition-colors">
-                        <td className="px-3 py-2 text-center font-bold text-xs text-muted-foreground">{index + 1}</td>
-                        <td className="px-3 py-2" style={{ overflow: 'visible', position: 'relative' }}>
-                          <SearchableProductSelect
-                            value={item.productId}
-                            onChange={(val, prod) => handleItemChange(item.id, 'productId', val, prod)}
-                            products={localProducts}
-                            selectedCustomerId={commonData.customerId}
-                            selectedCustomerName={commonData.customerName}
-                            hasError={!!errors[`productId-${item.id}`]}
-                            triggerDataId={item.id}
-                            onProductCreated={handleProductCreated}
-                          />
-                          {errors[`productId-${item.id}`] && <span className="text-red-500 text-[10px] font-bold block mt-0.5">{errors[`productId-${item.id}`]}</span>}
-                        </td>
-                        <td className="px-3 py-2">
-                           <input 
-                            type="number" 
-                            step="0.001"
-                            min="0"
-                            placeholder="0.000"
-                            className={cn(
-                              "w-full px-2.5 py-1.5 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold text-right",
-                              errors[`rate-${item.id}`] ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
-                            )}
-                            value={item.rate}
-                            onChange={e => handleItemChange(item.id, 'rate', e.target.value)}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                           <input 
-                            type="number" 
-                            min="1"
-                            placeholder="0"
-                            ref={el => { qtyRefs.current[item.id] = el; }}
-                            className={cn(
-                              "w-full px-2.5 py-1.5 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold text-right text-primary",
-                              errors[`orderQty-${item.id}`] ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
-                            )}
-                            value={item.orderQty}
-                            onChange={e => handleItemChange(item.id, 'orderQty', e.target.value)}
-                            onKeyDown={e => handleQtyKeyDown(e, item.id)}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                           <input 
-                            type="date"
-                            className={cn(
-                              "w-full px-2.5 py-1.5 text-sm rounded-lg border bg-background text-foreground transition-colors font-medium",
-                              errors[`deliveryDate-${item.id}`] ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
-                            )}
-                            value={item.deliveryDate}
-                            onChange={e => handleItemChange(item.id, 'deliveryDate', e.target.value)}
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem(item.id)}
-                            disabled={items.length === 1}
-                            className="text-muted-foreground hover:text-red-600 disabled:opacity-20 disabled:cursor-not-allowed p-1 transition-colors rounded"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                      {/* RM Shortage Panel */}
-                      {item.productId && Number(item.orderQty) > 0 && (
-                        <tr key={`rm-${item.id}`}>
-                          <td colSpan={6} className="px-3 pb-2">
-                            <RMStatusPanel productId={item.productId} orderQty={Number(item.orderQty)} />
+                        <tr className="hover:bg-muted/20 transition-colors">
+                          <td className="px-3 py-2 text-center font-bold text-xs text-muted-foreground">{index + 1}</td>
+                          <td className="px-3 py-2" style={{ overflow: 'visible', position: 'relative' }}>
+                            <SearchableProductSelect
+                              value={item.productId}
+                              onChange={(val, prod) => handleItemChange(item.id, 'productId', val, prod)}
+                              products={localProducts}
+                              selectedCustomerId={commonData.customerId}
+                              selectedCustomerName={commonData.customerName}
+                              hasError={!!errors[`productId-${item.id}`]}
+                              triggerDataId={item.id}
+                              onProductCreated={handleProductCreated}
+                            />
+                            {errors[`productId-${item.id}`] && <span className="text-red-500 text-[10px] font-bold block mt-0.5">{errors[`productId-${item.id}`]}</span>}
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              step="0.001"
+                              min="0"
+                              placeholder="0.000"
+                              className={cn(
+                                "w-full px-2.5 py-1.5 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold text-right",
+                                errors[`rate-${item.id}`] ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
+                              )}
+                              value={item.rate}
+                              onChange={e => handleItemChange(item.id, 'rate', e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="0"
+                              ref={el => { qtyRefs.current[item.id] = el; }}
+                              className={cn(
+                                "w-full px-2.5 py-1.5 text-sm rounded-lg border bg-background text-foreground transition-colors font-bold text-right text-primary",
+                                errors[`orderQty-${item.id}`] ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
+                              )}
+                              value={item.orderQty}
+                              onChange={e => handleItemChange(item.id, 'orderQty', e.target.value)}
+                              onKeyDown={e => handleQtyKeyDown(e, item.id)}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="date"
+                              className={cn(
+                                "w-full px-2.5 py-1.5 text-sm rounded-lg border bg-background text-foreground transition-colors font-medium",
+                                errors[`deliveryDate-${item.id}`] ? "border-red-500 ring-1 ring-red-500/20" : "border-input focus:ring-primary/20"
+                              )}
+                              value={item.deliveryDate}
+                              onChange={e => handleItemChange(item.id, 'deliveryDate', e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem(item.id)}
+                              disabled={items.length === 1}
+                              className="text-muted-foreground hover:text-red-600 disabled:opacity-20 disabled:cursor-not-allowed p-1 transition-colors rounded"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </td>
                         </tr>
-                      )}
-                    </React.Fragment>
+                        {/* RM Shortage Panel */}
+                        {item.productId && Number(item.orderQty) > 0 && (
+                          <tr key={`rm-${item.id}`}>
+                            <td colSpan={6} className="px-3 pb-2">
+                              <RMStatusPanel productId={item.productId} orderQty={Number(item.orderQty)} />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -1234,17 +1234,17 @@ export default function AddPOModal({
             Press <kbd className="px-1.5 py-0.5 bg-secondary border border-border rounded font-mono text-[10px]">Enter</kbd> in Qty field to auto-add next line item
           </div>
           <div className="flex gap-3">
-            <button 
-              type="button" 
-              onClick={onClose} 
+            <button
+              type="button"
+              onClick={onClose}
               disabled={isSubmitting}
               className="px-5 py-2.5 rounded-xl font-bold text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50 border border-border"
             >
               Cancel
             </button>
-            <button 
+            <button
               form="add-po-form"
-              type="submit" 
+              type="submit"
               disabled={isSubmitting}
               className="bg-primary text-primary-foreground px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-primary/90 transition-all shadow-md disabled:opacity-50 flex items-center gap-1.5"
             >
@@ -1282,14 +1282,14 @@ export default function AddPOModal({
               </p>
             </div>
             <div className="p-5 border-t border-border bg-muted/20 flex justify-end gap-3">
-              <button 
+              <button
                 onClick={() => { setShowConfirmNil(false); proceedWithSave(validatedDataToSave, false); }}
                 className="px-4 py-2 bg-secondary text-secondary-foreground font-bold rounded-xl hover:bg-secondary/80 transition-colors"
                 disabled={isSubmitting}
               >
                 No, Keep Them Open
               </button>
-              <button 
+              <button
                 onClick={() => { setShowConfirmNil(false); proceedWithSave(validatedDataToSave, true); }}
                 className="px-4 py-2 bg-red-600 text-white font-bold rounded-xl shadow hover:bg-red-700 transition-colors"
                 disabled={isSubmitting}

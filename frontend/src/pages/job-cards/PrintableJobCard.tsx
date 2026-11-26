@@ -1,5 +1,5 @@
 import React from 'react';
-import { calculateLayerWeight } from '../../lib/corrugationUtils';
+import { calculateLayerWeight, isHdpeLayer, calculateHdpeConsumption } from '../../lib/corrugationUtils';
 
 export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
   if (!jobCard) return null;
@@ -8,10 +8,16 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
   const roundWeight = (w: any) => Math.round(Number(w) || 0);
 
   const getLayerWeight = (layer: any, idx: number) => {
-    const reelSize = Number(product?.reelSize || product?.reel_size || 0);
     const cutSize = Number(product?.cutSize || product?.cut_size || 0);
     const ups = Number(product?.ups || 1) || 1;
-    const noOfPaper = Math.ceil(Number(jobCard.orderQty || 0) / ups);
+    const orderQty = Number(jobCard.orderQty || 0);
+
+    if (isHdpeLayer(layer)) {
+      return calculateHdpeConsumption(cutSize, ups, orderQty).totalMtr;
+    }
+
+    const reelSize = Number(product?.reelSize || product?.reel_size || 0);
+    const noOfPaper = Math.ceil(orderQty / ups);
     const gsm = Number(layer.gsm) || 0;
     if (reelSize > 0 && cutSize > 0 && gsm > 0 && noOfPaper > 0) {
       return calculateLayerWeight(reelSize, cutSize, gsm, noOfPaper, layer, idx);
@@ -20,17 +26,18 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
   };
 
   const totalCalculatedPaperWeight = (product?.layers || []).reduce((acc: number, layer: any, idx: number) => {
+    if (isHdpeLayer(layer)) return acc; // HDPE is in meters, paper weight is in Kg
     return acc + getLayerWeight(layer, idx);
   }, 0);
 
   return (
     <div id="job-card-print-area" className="print-view-container w-[210mm] h-[297mm] print:h-[100vh] print:max-h-[100vh] overflow-hidden flex flex-col mx-auto bg-white text-black p-[5mm] sm:p-[10mm] text-[12px] font-sans leading-snug box-border relative">
-      
+
       {/* HEADER */}
       <div className="grid grid-cols-3 items-center border-b-2 border-black pb-2 mb-2">
         <div className="flex justify-start">
           <div className="w-16 h-16 bg-white flex items-center justify-center">
-             <img src="/logo.gif" alt="Packwell India Logo" className="w-full h-full object-contain grayscale invert bg-white" />
+            <img src="/logo.gif" alt="Packwell India Logo" className="w-full h-full object-contain grayscale invert bg-white" />
           </div>
         </div>
         <div className="text-center">
@@ -86,20 +93,20 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
               const ups = Number(product?.ups) || 1;
               const ply = Number(product?.ply) || 0;
               const qty = Number(jobCard?.orderQty) || 0;
-              
+
               let calcTotalPly: number | string = '';
-              
+
               if (ups > 0 && ply > 0) {
                 const flutedLayers = Math.floor(ply / 2);
                 calcTotalPly = Math.round((qty * flutedLayers) / ups);
               }
-              
+
               if (calcTotalPly === '') return '-';
-              
+
               const totalPly = Number(calcTotalPly);
               const fluteStr = product?.flute || '';
               if (!fluteStr) return `${totalPly} Ply`;
-              
+
               const normalized = fluteStr.toUpperCase().replace(/\s+/g, '');
               let flutes = [];
               if (normalized.includes('+')) {
@@ -239,16 +246,24 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
                   <td className="border border-black p-1 font-semibold text-center align-middle">
                     {getReelSpecCell('gsm', origGSM)}
                   </td>
-                  <td className="border border-black p-1 font-bold text-center align-middle">{roundWeight(getLayerWeight(layer, idx))} Kg</td>
+                  <td className="border border-black p-1 font-bold text-center align-middle">
+                    {roundWeight(getLayerWeight(layer, idx))} {isHdpeLayer(layer) ? 'Mtr' : 'Kg'}
+                  </td>
                   <td className="border border-black p-1 text-center align-middle whitespace-pre-line break-words">
                     {hasArray ? (
                       <div className="flex flex-col gap-1">
                         {layer.allocatedReels.map((r: any, i: number) => (
-                          <span key={i} className="whitespace-nowrap font-bold text-blue-900 border-b border-gray-200 last:border-0 pb-0.5 last:pb-0">{roundWeight(r.allocatedWeight)} Kg</span>
+                          <span key={i} className="whitespace-nowrap font-bold text-blue-900 border-b border-gray-200 last:border-0 pb-0.5 last:pb-0">
+                            {roundWeight(r.allocatedWeight)} {isHdpeLayer(layer) ? 'Mtr' : 'Kg'}
+                          </span>
                         ))}
                       </div>
                     ) : (
-                      layer.allocatedReelWeight ? <span className="font-bold text-blue-900">{roundWeight(layer.allocatedReelWeight)} Kg</span> : '-'
+                      layer.allocatedReelWeight ? (
+                        <span className="font-bold text-blue-900">
+                          {roundWeight(layer.allocatedReelWeight)} {isHdpeLayer(layer) ? 'Mtr' : 'Kg'}
+                        </span>
+                      ) : '-'
                     )}
                   </td>
                   <td className="border border-black p-1 text-center align-middle whitespace-pre-line break-words">
@@ -279,7 +294,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
                       } else if (hasLegacy) {
                         allocW = Number(layer.allocatedReelWeight) || 0;
                       }
-                      
+
                       const diff = reqW - allocW;
                       let remarkText = '';
                       if (diff <= 0.1) {
@@ -287,7 +302,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
                       } else {
                         remarkText = `BALANCE REQUIRED ${roundWeight(diff)} KG`;
                       }
-                      
+
                       if (jobCard.status === 'PENDING') {
                         remarkText += ' (PENDING FOR ISSUE)';
                       }
@@ -367,7 +382,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
           </tbody>
         </table>
       </div>
-      
+
       {/* INSTRUCTIONS */}
       {(() => {
         const formatRemark = (r: any): string => {
@@ -413,19 +428,19 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
       {/* PREPARED / CHECKED / PRODUCTION HEAD */}
       <div className="grid grid-cols-3 gap-8 mt-auto pt-4 text-center text-gray-800 font-bold uppercase text-[10px] break-inside-avoid relative bottom-0">
         <div className="border-t border-black pt-1">
-          Prepared By<br/>
+          Prepared By<br />
           <span className="font-normal text-[11px] uppercase">MR. SHUBHAM CHAUHAN</span>
         </div>
         <div className="border-t border-black pt-1">
-          Checked By<br/>
+          Checked By<br />
           <span className="font-normal text-[11px] uppercase">MR. JITENDER BALHARA</span>
         </div>
         <div className="border-t border-black pt-1">
-          Production Head<br/>
+          Production Head<br />
           <span className="font-normal text-[11px] uppercase">MR. RAJ KUMAR</span>
         </div>
       </div>
-      
+
     </div>
   );
 }

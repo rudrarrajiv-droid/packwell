@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Users, Package, X, CircleDashed, ChevronDown, ChevronUp, Trash2, Edit, FilterX, GitMerge } from 'lucide-react';
+import { Plus, Search, Users, Package, X, CircleDashed, ChevronDown, ChevronUp, Trash2, Edit, FilterX, GitMerge, Lock, Sparkles } from 'lucide-react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { cn, getCustomerDisplayLabel } from '../lib/utils';
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer, checkCustomerUsage, migrateCustomer } from '../lib/supabase/customerService';
@@ -14,6 +14,7 @@ import { AddTradingItemModal } from './finish-goods/AddTradingItemModal';
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function MasterData() {
+  const [catalogView, setCatalogView] = useState<'active' | 'legacy'>('active');
   const [tab, setTab] = useState<'customers' | 'products'>('customers');
   const [search, setSearch] = useState('');
   
@@ -104,21 +105,30 @@ export default function MasterData() {
     }
   };
 
+  // Partition into Active (26/11/2026+) and Legacy catalogs
+  const activeCustomers = useMemo(() => customers.filter(c => !c.isLegacy), [customers]);
+  const legacyCustomers = useMemo(() => customers.filter(c => c.isLegacy), [customers]);
+  const activeProducts = useMemo(() => products.filter(p => !p.isLegacy), [products]);
+  const legacyProducts = useMemo(() => products.filter(p => p.isLegacy), [products]);
+
+  const displayedCustomers = catalogView === 'active' ? activeCustomers : legacyCustomers;
+  const displayedProducts = catalogView === 'active' ? activeProducts : legacyProducts;
+
   // Derived Filtering
   const filteredCustomers = useMemo(() => {
     const searchLower = (search || '').toLowerCase().trim();
-    let res = customers.filter(c => (c?.name || '').toLowerCase().includes(searchLower));
+    let res = displayedCustomers.filter(c => (c?.name || '').toLowerCase().includes(searchLower));
     res.sort((a, b) => {
        const custA = (a.name || '').trim();
        const custB = (b.name || '').trim();
        return custA.localeCompare(custB, undefined, { numeric: true, sensitivity: 'base' });
     });
     return res;
-  }, [customers, search]);
+  }, [displayedCustomers, search]);
 
   const filteredProducts = useMemo(() => {
     const searchLower = (search || '').toLowerCase().trim();
-    let filtered = products.filter(p => {
+    let filtered = displayedProducts.filter(p => {
       if (!p) return false;
       // General Search
       const itemName = (p.itemName || '').toLowerCase();
@@ -172,14 +182,14 @@ export default function MasterData() {
     });
 
     return enriched;
-  }, [products, finishGoods, search, filterReelSize, filterBF, filterGSM, filterFlute, filterCutSize]);
+  }, [displayedProducts, finishGoods, search, filterReelSize, filterBF, filterGSM, filterFlute, filterCutSize]);
 
   // Unique values for filter dropdowns
-  const uniqueReelSizes = Array.from(new Set(products.map(p => p?.reelSize).filter((v): v is number => v !== undefined && v !== null && !isNaN(Number(v))))).sort((a,b)=>Number(a)-Number(b));
-  const uniqueCutSizes = Array.from(new Set(products.map(p => p?.cutSize).filter((v): v is number => v !== undefined && v !== null && !isNaN(Number(v))))).sort((a,b)=>Number(a)-Number(b));
-  const uniqueFlutes = Array.from(new Set(products.map(p => p?.flute).filter(Boolean)));
-  const uniqueBFs = Array.from(new Set(products.flatMap(p => (Array.isArray(p?.layers) ? p.layers : []).map(l => l?.bf)).filter(Boolean)));
-  const uniqueGSMs = Array.from(new Set(products.flatMap(p => (Array.isArray(p?.layers) ? p.layers : []).map(l => l?.gsm)).filter(Boolean))).sort((a,b)=>Number(a)-Number(b));
+  const uniqueReelSizes = Array.from(new Set(displayedProducts.map(p => p?.reelSize).filter((v): v is number => v !== undefined && v !== null && !isNaN(Number(v))))).sort((a,b)=>Number(a)-Number(b));
+  const uniqueCutSizes = Array.from(new Set(displayedProducts.map(p => p?.cutSize).filter((v): v is number => v !== undefined && v !== null && !isNaN(Number(v))))).sort((a,b)=>Number(a)-Number(b));
+  const uniqueFlutes = Array.from(new Set(displayedProducts.map(p => p?.flute).filter(Boolean)));
+  const uniqueBFs = Array.from(new Set(displayedProducts.flatMap(p => (Array.isArray(p?.layers) ? p.layers : []).map(l => l?.bf)).filter(Boolean)));
+  const uniqueGSMs = Array.from(new Set(displayedProducts.flatMap(p => (Array.isArray(p?.layers) ? p.layers : []).map(l => l?.gsm)).filter(Boolean))).sort((a,b)=>Number(a)-Number(b));
 
   const handleEditCustomer = (customer: Customer) => {
     setEditingCustomer(customer);
@@ -234,11 +244,74 @@ export default function MasterData() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* Catalog Mode Selector: Active (26/11/2026+) vs Legacy (Locked Historical) */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mb-5 p-2 bg-secondary/30 rounded-xl border border-border">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setCatalogView('active'); setSearch(''); setSelectedProducts(new Set()); }}
+            className={cn(
+              "px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2.5 transition-all shadow-sm",
+              catalogView === 'active'
+                ? "bg-emerald-600 text-white shadow-emerald-600/30 ring-2 ring-emerald-500/30"
+                : "bg-background text-muted-foreground hover:text-foreground hover:bg-secondary/70"
+            )}
+          >
+            <Sparkles className="w-4 h-4 text-emerald-200" />
+            <span>Active Master Data (26/11/2026+)</span>
+            <span className={cn(
+              "text-xs px-2 py-0.5 rounded-full font-extrabold ml-1",
+              catalogView === 'active' ? "bg-white/20 text-white" : "bg-secondary text-muted-foreground"
+            )}>
+              {activeProducts.length} items
+            </span>
+          </button>
+
+          <button
+            onClick={() => { setCatalogView('legacy'); setSearch(''); setSelectedProducts(new Set()); }}
+            className={cn(
+              "px-5 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2.5 transition-all shadow-sm",
+              catalogView === 'legacy'
+                ? "bg-amber-700 text-white shadow-amber-700/30 ring-2 ring-amber-600/30"
+                : "bg-background text-muted-foreground hover:text-foreground hover:bg-secondary/70"
+            )}
+          >
+            <Lock className="w-4 h-4 text-amber-200" />
+            <span>Legacy Master Data (View Only)</span>
+            <span className={cn(
+              "text-xs px-2 py-0.5 rounded-full font-extrabold ml-1",
+              catalogView === 'legacy' ? "bg-white/20 text-white" : "bg-secondary text-muted-foreground"
+            )}>
+              {legacyProducts.length} items
+            </span>
+          </button>
+        </div>
+
+        <div className="text-xs font-medium text-muted-foreground px-3">
+          {catalogView === 'active' ? (
+            <span className="text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              Naye Job Cards aur transactions sirf is sheet se link honge
+            </span>
+          ) : (
+            <span className="text-amber-700 dark:text-amber-300 font-semibold flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5" />
+              Locked Historical Catalog — View Only (Purana data safe hai)
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* Header & Summary Cards */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Master Data</h1>
-          <p className="text-muted-foreground text-sm mt-1">Manage customers and products</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            {catalogView === 'active' ? 'Active Master Data (2026+)' : 'Legacy Master Data (Pre-2026)'}
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            {catalogView === 'active' 
+              ? 'New verified customers and items starting from 26/11/2026' 
+              : 'Historical products and customers preserved for previous records'}
+          </p>
         </div>
         <div className="flex gap-4">
           <div 
@@ -250,8 +323,10 @@ export default function MasterData() {
                 : "bg-primary/5 border border-primary/20 opacity-70 hover:opacity-100"
             )}
           >
-            <span className="text-xs font-bold text-primary uppercase tracking-wider mb-1">Total Customers</span>
-            <span className="text-2xl font-extrabold text-primary leading-none">{customers.length}</span>
+            <span className="text-xs font-bold text-primary uppercase tracking-wider mb-1">
+              {catalogView === 'active' ? 'Active Customers' : 'Legacy Customers'}
+            </span>
+            <span className="text-2xl font-extrabold text-primary leading-none">{displayedCustomers.length}</span>
           </div>
           <div 
             onClick={() => { setTab('products'); setSearch(''); setSelectedProducts(new Set()); }}
@@ -262,16 +337,27 @@ export default function MasterData() {
                 : "bg-primary/5 border border-primary/20 opacity-70 hover:opacity-100"
             )}
           >
-            <span className="text-xs font-bold text-primary uppercase tracking-wider mb-1">Total Products</span>
-            <span className="text-2xl font-extrabold text-primary leading-none">{products.length}</span>
+            <span className="text-xs font-bold text-primary uppercase tracking-wider mb-1">
+              {catalogView === 'active' ? 'Active Products' : 'Legacy Products'}
+            </span>
+            <span className="text-2xl font-extrabold text-primary leading-none">{displayedProducts.length}</span>
           </div>
         </div>
       </div>
 
-      {/* Removed Redundant Tabs Row */}
-
       {/* Table Card */}
       <div className="flex-1 bg-card border border-border shadow-sm rounded-lg overflow-hidden flex flex-col">
+        {catalogView === 'legacy' && (
+          <div className="mx-4 mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center justify-between text-xs font-semibold text-amber-900 dark:text-amber-200">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Yeh purana historical master data hai (Pre-26/11/2026). Naye Job Cards me yeh data nahi aayega. Kisi bhi record ko edit ya delete nahi kiya ja sakta.</span>
+            </div>
+            <span className="bg-amber-200/80 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100 px-2.5 py-1 rounded text-[11px] font-bold shrink-0 ml-2">
+              LOCKED / VIEW ONLY
+            </span>
+          </div>
+        )}
         
         {/* Top Controls */}
         <div className="p-4 border-b border-border space-y-4">
@@ -298,7 +384,7 @@ export default function MasterData() {
                     className="px-3 py-2 w-full text-sm rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-ring"
                   >
                     <option value="">-- All Customers --</option>
-                    {customers.map(c => <option key={c.id} value={c.name}>{getCustomerDisplayLabel(c, customers)}</option>)}
+                    {displayedCustomers.map(c => <option key={c.id} value={c.name}>{getCustomerDisplayLabel(c, displayedCustomers)}</option>)}
                   </select>
                 </div>
               )}
@@ -310,8 +396,8 @@ export default function MasterData() {
                   ...p,
                   paper: (p as any).paper || (Array.isArray(p?.layers) ? p.layers.length : '')
                 }))} 
-                filenamePrefix={tab === 'customers' ? 'Customers' : 'Products'}
-                title={tab === 'customers' ? 'Customer Directory' : 'Product Master'}
+                filenamePrefix={tab === 'customers' ? `${catalogView === 'active' ? 'Active' : 'Legacy'}_Customers` : `${catalogView === 'active' ? 'Active' : 'Legacy'}_Products`}
+                title={tab === 'customers' ? `${catalogView === 'active' ? 'Active' : 'Legacy'} Customer Directory` : `${catalogView === 'active' ? 'Active' : 'Legacy'} Product Master`}
                 columnMap={tab === 'customers' ? {
                   'name': 'Customer Name',
                   'createdAt': 'Added On'
@@ -326,41 +412,43 @@ export default function MasterData() {
                   'flute': 'Flute'
                 }}
               />
-              {tab === 'customers' ? (
-                <RoleGuard requireRole="ADMIN">
-                  <button
-                    onClick={() => {
-                      setEditingCustomer(null);
-                      setShowCustomerModal(true);
-                    }}
-                    className="bg-primary text-primary-foreground px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-primary/90 transition-colors"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Customer
-                  </button>
-                </RoleGuard>
-              ) : (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setShowTradingModal(true);
-                    }}
-                    className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Trading Item
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditingProduct(null);
-                      setShowProductModal(true);
-                    }}
-                    className="bg-primary text-primary-foreground px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-primary/90 transition-colors"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Product
-                  </button>
-                </div>
+              {catalogView === 'active' && (
+                <>
+                  {tab === 'customers' ? (
+                    <button
+                      onClick={() => {
+                        setEditingCustomer(null);
+                        setShowCustomerModal(true);
+                      }}
+                      className="bg-primary text-primary-foreground px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-primary/90 transition-colors"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Customer
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setShowTradingModal(true);
+                        }}
+                        className="bg-secondary text-secondary-foreground border border-border px-4 py-2 flex items-center text-sm font-medium rounded-md shadow-sm hover:bg-secondary/80 transition-colors"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Trading Item
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingProduct(null);
+                          setShowProductModal(true);
+                        }}
+                        className="bg-primary text-primary-foreground px-4 py-2 flex items-center text-sm font-medium rounded-md shadow hover:bg-primary/90 transition-colors"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Product
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -457,14 +545,21 @@ export default function MasterData() {
         {/* Table */}
         <div className="flex-1 overflow-auto">
           {tab === 'customers' ? (
-            <CustomersTable data={filteredCustomers} products={products} isLoading={loadingC} onEdit={isAdmin ? handleEditCustomer : undefined} onDelete={canDelete ? handleDeleteCustomer : undefined} onMerge={canDelete ? (c) => setMergeData({ entity: c, type: 'customer' }) : undefined} />
+            <CustomersTable 
+              data={filteredCustomers} 
+              products={products} 
+              isLoading={loadingC} 
+              onEdit={isAdmin && catalogView === 'active' ? handleEditCustomer : undefined} 
+              onDelete={canDelete && catalogView === 'active' ? handleDeleteCustomer : undefined} 
+              onMerge={canDelete && catalogView === 'active' ? (c) => setMergeData({ entity: c, type: 'customer' }) : undefined} 
+            />
           ) : (
             <ProductsTable 
               data={filteredProducts} 
               isLoading={loadingP} 
-              onEdit={handleEditProduct} 
-              onDelete={canDelete ? handleDeleteProduct : undefined}
-              onMerge={canDelete ? (p) => setMergeData({ entity: p, type: 'product' }) : undefined}
+              onEdit={isAdmin && catalogView === 'active' ? handleEditProduct : undefined} 
+              onDelete={canDelete && catalogView === 'active' ? handleDeleteProduct : undefined}
+              onMerge={canDelete && catalogView === 'active' ? (p) => setMergeData({ entity: p, type: 'product' }) : undefined}
               selectedProducts={selectedProducts}
               onToggleSelect={toggleProductSelection}
               onToggleSelectAll={toggleSelectAll}
@@ -478,7 +573,7 @@ export default function MasterData() {
       {showCustomerModal && (
         <CustomerModal
           customer={editingCustomer}
-          customers={customers}
+          customers={displayedCustomers}
           onClose={() => { setShowCustomerModal(false); setEditingCustomer(null); }}
           onSuccess={() => { setShowCustomerModal(false); setEditingCustomer(null); qc.invalidateQueries({ queryKey: ['customers'] }); }}
         />
@@ -486,9 +581,9 @@ export default function MasterData() {
       {showProductModal && (
         <ProductModal
           product={editingProduct}
-          customers={customers}
+          customers={activeCustomers}
           onClose={() => { setShowProductModal(false); setEditingProduct(null); }}
-          onSuccess={() => { setShowProductModal(false); setEditingProduct(null); qc.invalidateQueries({ queryKey: ['products'] }); }}
+          onSuccess={() => { setShowProductModal(false); setEditingProduct(null); qc.invalidateQueries({ queryKey: ['products'] }); qc.invalidateQueries({ queryKey: ['customers'] }); }}
         />
       )}
       {showTradingModal && (
@@ -818,7 +913,7 @@ function ProductsTable({
 }
 
 // ─── Customer Modal ───────────────────────────────────────────────────────────
-function CustomerModal({ customer, customers, onClose, onSuccess }: { customer: Customer | null; customers: Customer[]; onClose: () => void; onSuccess: () => void }) {
+export function CustomerModal({ customer, customers, onClose, onSuccess }: { customer: Customer | null; customers: Customer[]; onClose: () => void; onSuccess: (newId?: string) => void }) {
   const { user } = useAuth();
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<{ name: string }>({
     defaultValues: customer ? { name: customer.name } : {}
@@ -840,12 +935,13 @@ function CustomerModal({ customer, customers, onClose, onSuccess }: { customer: 
         }
       }
 
+      let savedId = customer?.id;
       if (customer?.id) {
         await updateCustomer(customer.id, data.name, user?.name);
       } else {
-        await createCustomer(data.name, user?.name);
+        savedId = await createCustomer(data.name, user?.name);
       }
-      onSuccess();
+      onSuccess(savedId);
     } catch (err: any) {
       alert(err.message || 'Failed to save customer');
     }
@@ -890,9 +986,16 @@ function CustomerModal({ customer, customers, onClose, onSuccess }: { customer: 
 // ─── Product Modal ─────────────────────────────────────────────────────────────
 type ProductForm = Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy' | 'isArchived'>;
 
-function ProductModal({ product, customers, onClose, onSuccess }: { product: Product | null; customers: Customer[]; onClose: () => void; onSuccess: () => void }) {
+export function ProductModal({ product, customers, onClose, onSuccess }: { product: Product | null; customers: Customer[]; onClose: () => void; onSuccess: (newId?: string) => void }) {
   const { user } = useAuth();
-  const { register, handleSubmit, control, watch, formState: { errors, isSubmitting } } = useForm<ProductForm>({
+  const [showInlineCustomerModal, setShowInlineCustomerModal] = useState(false);
+  const [modalCustomers, setModalCustomers] = useState<Customer[]>(customers);
+
+  React.useEffect(() => {
+    setModalCustomers(customers);
+  }, [customers]);
+
+  const { register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProductForm>({
     defaultValues: product ? { ...product } : { ply: 3, ups: 1, pinQty: 0, layers: [] }
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'layers' });
@@ -928,8 +1031,8 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
   const onSubmit = async (data: ProductForm) => {
     try {
       // Find customer name to denormalize
-      const customer = customers.find(c => c.id === data.customerId);
-      if (!customer) throw new Error("Customer not found");
+      const customer = modalCustomers.find(c => c.id === data.customerId);
+      if (!customer) throw new Error("Customer not found. Please select or create a customer.");
 
       const enrichedData = {
         ...data,
@@ -938,15 +1041,24 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
         ply: Number(data.ply), reelSize: Number(data.reelSize), cutSize: Number(data.cutSize),
         pinQty: Number(data.pinQty), ups: Number(data.ups),
         actualCosting: data.actualCosting ? Number(data.actualCosting) : undefined,
-        layers: data.layers.map(l => ({ ...l, gsm: l.gsm ? Number(l.gsm) : undefined }))
+        layers: data.layers.map(l => {
+          const isHdpe = l.paperType === 'HDPE';
+          return {
+            ...l,
+            bf: isHdpe ? '' : l.bf,
+            gsm: isHdpe ? 90 : (l.gsm ? Number(l.gsm) : undefined),
+            unit: isHdpe ? 'Mtr' : 'Kg'
+          };
+        })
       };
 
+      let savedId = product?.id;
       if (product?.id) {
         await updateProduct(product.id, enrichedData, user?.name);
       } else {
-        await createProduct(enrichedData, user?.name);
+        savedId = await createProduct(enrichedData, user?.name);
       }
-      onSuccess();
+      onSuccess(savedId);
     } catch (err: any) {
       alert(err.message || 'Failed to save product');
     }
@@ -956,165 +1068,223 @@ function ProductModal({ product, customers, onClose, onSuccess }: { product: Pro
   const labelCls = "text-sm font-medium text-foreground";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-auto">
-      <div className="bg-card w-full max-w-4xl rounded-xl shadow-2xl my-4 flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-border">
-          <h2 className="text-xl font-bold text-foreground flex items-center">
-            <Package className="w-5 h-5 mr-2 text-primary" /> {product ? 'Edit Product' : 'Add New Product'}
-          </h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form id="product-form" onSubmit={handleSubmit(onSubmit)} className="flex-1 overflow-y-auto">
-          <div className="p-6 space-y-8">
-
-            {/* Basic Info */}
-            <div className="bg-secondary/20 p-5 rounded-xl border border-border/50">
-              <h3 className="text-sm font-semibold text-primary uppercase tracking-wider mb-4 flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Basic Information</h3>
-              <div className="grid grid-cols-2 gap-5">
-                <div className="space-y-1.5">
-                  <label className={labelCls}>Artwork No <span className="text-destructive">*</span></label>
-                  <input {...register('artworkNo', { required: true })} className={inputCls} placeholder="e.g. ART-001" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelCls}>Item Name <span className="text-destructive">*</span></label>
-                  <input {...register('itemName', { required: true })} className={inputCls} placeholder="e.g. 5 Ply Printed Box" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelCls}>Customer <span className="text-destructive">*</span></label>
-                  <select {...register('customerId', { required: true })} className={inputCls}>
-                    <option value="">-- Select Customer --</option>
-                    {customers.map(c => <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, customers)}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className={labelCls}>Actual Costing (₹)</label>
-                  <input type="number" step="0.01" {...register('actualCosting')} className={inputCls} placeholder="e.g. 15.50" />
-                </div>
-              </div>
-            </div>
-
-            {/* Dimensions & Specs */}
-            <div className="grid grid-cols-2 gap-6">
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Dimensions (mm)</h3>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1.5"><label className={labelCls}>Length *</label><input type="number" step="0.01" {...register('length', { required: true })} className={inputCls} placeholder="0" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Width *</label><input type="number" step="0.01" {...register('width', { required: true })} className={inputCls} placeholder="0" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Height *</label><input type="number" step="0.01" {...register('height', { required: true })} className={inputCls} placeholder="0" /></div>
-                </div>
-              </div>
-              <div className="space-y-4">
-                 <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Reel / Cut</h3>
-                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5"><label className={labelCls}>Reel Size (in) *</label><input type="number" step="0.1" {...register('reelSize', { required: true })} className={inputCls} placeholder="0" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Cut Size (in) *</label><input type="number" step="0.1" {...register('cutSize', { required: true })} className={inputCls} placeholder="0" /></div>
-                 </div>
-              </div>
-            </div>
-
-            {/* Structure & Finishing */}
-            <div className="grid grid-cols-2 gap-6">
-               <div className="space-y-4">
-                  <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Structure</h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className={labelCls}>Ply *</label>
-                      <select {...register('ply', { required: true })} className={inputCls}>
-                        {[2, 3, 5, 7, 9].map(n => <option key={n} value={n}>{n} Ply</option>)}
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className={labelCls}>Flute</label>
-                      <select {...register('flute')} className={inputCls}>
-                        <option value="">-- Select --</option>
-                        {['A', 'B', 'C', 'E', 'F', 'BC', 'AB'].map(f => <option key={f} value={f}>{f} Flute</option>)}
-                      </select>
-                    </div>
-                    <div className="space-y-1.5"><label className={labelCls}>UPS</label><input type="number" step="0.1" {...register('ups')} className={inputCls} placeholder="1" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Creasing</label><input {...register('creasing')} className={inputCls} placeholder="e.g. 2 Lines" /></div>
-                    <div className="space-y-1.5 col-span-2"><label className={labelCls}>Die Number</label><input {...register('dieNumber')} className={inputCls} placeholder="e.g. DIE-102" /></div>
-                  </div>
-               </div>
-               <div className="space-y-4">
-                 <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Finishing</h3>
-                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5"><label className={labelCls}>Color</label><input {...register('color')} className={inputCls} placeholder="e.g. Brown" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Packing</label><input {...register('packing')} className={inputCls} placeholder="e.g. Bundle of 25" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Pin Qty</label><input type="number" {...register('pinQty')} className={inputCls} placeholder="0" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Pin/Pasting</label><input {...register('pinPasting')} className={inputCls} placeholder="e.g. Stitching" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Pin Type</label><input {...register('pinType')} className={inputCls} placeholder="e.g. Heavy Duty" /></div>
-                  <div className="space-y-1.5"><label className={labelCls}>Box Type</label><input {...register('boxType')} className={inputCls} placeholder="e.g. Universal" /></div>
-                 </div>
-               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className={labelCls}>Special Requirements</label>
-              <input {...register('specialRequirement')} className={inputCls} placeholder="Any special instructions for production..." />
-            </div>
-
-            {/* Layers */}
-            <div>
-              <div className="flex items-center justify-between mb-3 border-b border-border/50 pb-2">
-                <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Paper Layers</h3>
-                <button type="button" onClick={() => append({ layerName: (fields.length % 2 !== 0 ? 'Fluting Medium' : 'Liner'), paperType: (fields.length % 2 === 0 ? 'VK' : 'SK'), bf: '', gsm: 0 })} className="text-xs flex items-center text-primary hover:underline bg-primary/10 px-3 py-1.5 rounded-full">
-                  <Plus className="w-3.5 h-3.5 mr-1" /> Add Layer
-                </button>
-              </div>
-              {fields.length === 0 && (
-                <div className="text-xs text-muted-foreground bg-secondary/30 rounded-md p-6 border border-dashed border-border text-center">
-                  No paper layers added. Click "Add Layer" to define the box's paper specifications.
-                </div>
-              )}
-              <div className="space-y-3">
-                {fields.map((field, idx) => (
-                  <div key={field.id} className="grid grid-cols-[2fr_2fr_1fr_1fr_auto] gap-3 items-end bg-secondary/20 p-4 rounded-xl border border-border/50 hover:border-border transition-colors">
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-muted-foreground">Layer Name (e.g. Top Liner/Fluting Medium)</label>
-                      <input {...register(`layers.${idx}.layerName` as const, { required: true })} className={inputCls} placeholder="Layer Name" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-muted-foreground">Paper Type</label>
-                      <select {...register(`layers.${idx}.paperType` as const)} className={inputCls}>
-                        <option value="SK">SK</option>
-                        <option value="VK">VK</option>
-                        <option value="DUPLEX">DUPLEX</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-muted-foreground">BF</label>
-                      <input {...register(`layers.${idx}.bf` as const)} className={inputCls} placeholder="16" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-semibold text-muted-foreground">GSM</label>
-                      <input type="number" {...register(`layers.${idx}.gsm` as const)} className={inputCls} placeholder="100" />
-                    </div>
-                    <button type="button" onClick={() => remove(idx)} className="p-2 mb-0.5 text-destructive bg-destructive/10 hover:bg-destructive/20 rounded-md transition-colors self-end border border-destructive/20">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-auto">
+        <div className="bg-card w-full max-w-4xl rounded-xl shadow-2xl my-4 flex flex-col max-h-[90vh]">
+          {/* Header */}
+          <div className="flex items-center justify-between p-6 border-b border-border">
+            <h2 className="text-xl font-bold text-foreground flex items-center">
+              <Package className="w-5 h-5 mr-2 text-primary" /> {product ? 'Edit Product' : 'Add New Product'}
+            </h2>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+              <X className="w-5 h-5" />
+            </button>
           </div>
-        </form>
 
-        {/* Footer */}
-        <div className="p-6 border-t border-border flex justify-end gap-3 bg-card rounded-b-xl shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-secondary transition-colors">
-            Cancel
-          </button>
-          <button type="submit" form="product-form" disabled={isSubmitting} className="px-6 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center">
-            {isSubmitting && <CircleDashed className="w-4 h-4 mr-2 animate-spin" />}
-            {product ? 'Update' : 'Save'} Product
-          </button>
+          <form id="product-form" onSubmit={handleSubmit(onSubmit)} className="flex-1 overflow-y-auto">
+            <div className="p-6 space-y-8">
+
+              {/* Basic Info */}
+              <div className="bg-secondary/20 p-5 rounded-xl border border-border/50">
+                <h3 className="text-sm font-semibold text-primary uppercase tracking-wider mb-4 flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Basic Information</h3>
+                <div className="grid grid-cols-2 gap-5">
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>Artwork No <span className="text-destructive">*</span></label>
+                    <input {...register('artworkNo', { required: true })} className={inputCls} placeholder="e.g. ART-001" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>Item Name <span className="text-destructive">*</span></label>
+                    <input {...register('itemName', { required: true })} className={inputCls} placeholder="e.g. 5 Ply Printed Box" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className={labelCls}>Customer <span className="text-destructive">*</span></label>
+                      <button
+                        type="button"
+                        onClick={() => setShowInlineCustomerModal(true)}
+                        className="text-xs text-primary hover:underline font-bold flex items-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> + New Customer
+                      </button>
+                    </div>
+                    <select {...register('customerId', { required: true })} className={inputCls}>
+                      <option value="">-- Select Customer --</option>
+                      {modalCustomers.map(c => <option key={c.id} value={c.id!}>{getCustomerDisplayLabel(c, modalCustomers)}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className={labelCls}>Actual Costing (₹)</label>
+                    <input type="number" step="0.01" {...register('actualCosting')} className={inputCls} placeholder="e.g. 15.50" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Dimensions & Specs */}
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Dimensions (mm)</h3>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1.5"><label className={labelCls}>Length *</label><input type="number" step="0.01" {...register('length', { required: true })} className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Width *</label><input type="number" step="0.01" {...register('width', { required: true })} className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Height *</label><input type="number" step="0.01" {...register('height', { required: true })} className={inputCls} placeholder="0" /></div>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                   <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Reel / Cut</h3>
+                   <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5"><label className={labelCls}>Reel Size (in) *</label><input type="number" step="0.1" {...register('reelSize', { required: true })} className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Cut Size (in) *</label><input type="number" step="0.1" {...register('cutSize', { required: true })} className={inputCls} placeholder="0" /></div>
+                   </div>
+                </div>
+              </div>
+
+              {/* Structure & Finishing */}
+              <div className="grid grid-cols-2 gap-6">
+                 <div className="space-y-4">
+                    <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Structure</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className={labelCls}>Ply *</label>
+                        <select {...register('ply', { required: true })} className={inputCls}>
+                          {[2, 3, 5, 7, 9].map(n => <option key={n} value={n}>{n} Ply</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={labelCls}>Flute</label>
+                        <select {...register('flute')} className={inputCls}>
+                          <option value="">-- Select --</option>
+                          {['A', 'B', 'C', 'E', 'F', 'BC', 'AB'].map(f => <option key={f} value={f}>{f} Flute</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5"><label className={labelCls}>UPS</label><input type="number" step="0.1" {...register('ups')} className={inputCls} placeholder="1" /></div>
+                      <div className="space-y-1.5"><label className={labelCls}>Creasing</label><input {...register('creasing')} className={inputCls} placeholder="e.g. 2 Lines" /></div>
+                      <div className="space-y-1.5 col-span-2"><label className={labelCls}>Die Number</label><input {...register('dieNumber')} className={inputCls} placeholder="e.g. DIE-102" /></div>
+                    </div>
+                 </div>
+                 <div className="space-y-4">
+                   <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Finishing</h3>
+                   <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5"><label className={labelCls}>Color</label><input {...register('color')} className={inputCls} placeholder="e.g. Brown" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Packing</label><input {...register('packing')} className={inputCls} placeholder="e.g. Bundle of 25" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Pin Qty</label><input type="number" {...register('pinQty')} className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Pin/Pasting</label><input {...register('pinPasting')} className={inputCls} placeholder="e.g. Stitching" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Pin Type</label><input {...register('pinType')} className={inputCls} placeholder="e.g. Heavy Duty" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Box Type</label><input {...register('boxType')} className={inputCls} placeholder="e.g. Universal" /></div>
+                   </div>
+                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className={labelCls}>Special Requirements</label>
+                <input {...register('specialRequirement')} className={inputCls} placeholder="Any special instructions for production..." />
+              </div>
+
+              {/* Layers */}
+              <div>
+                <div className="flex items-center justify-between mb-3 border-b border-border/50 pb-2">
+                  <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Paper Layers</h3>
+                  <button type="button" onClick={() => append({ layerName: (fields.length % 2 !== 0 ? 'Fluting Medium' : 'Liner'), paperType: (fields.length % 2 === 0 ? 'VK' : 'SK'), bf: '', gsm: 0 })} className="text-xs flex items-center text-primary hover:underline bg-primary/10 px-3 py-1.5 rounded-full">
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Layer
+                  </button>
+                </div>
+                {fields.length === 0 && (
+                  <div className="text-xs text-muted-foreground bg-secondary/30 rounded-md p-6 border border-dashed border-border text-center">
+                    No paper layers added. Click "Add Layer" to define the box's paper specifications.
+                  </div>
+                )}
+                <div className="space-y-3">
+                  {fields.map((field, idx) => {
+                    const currentPaperType = watch(`layers.${idx}.paperType` as const);
+                    const isHdpe = currentPaperType === 'HDPE';
+                    return (
+                      <div key={field.id} className="grid grid-cols-[2fr_2fr_1fr_1fr_auto] gap-3 items-end bg-secondary/20 p-4 rounded-xl border border-border/50 hover:border-border transition-colors">
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-muted-foreground">Layer Name</label>
+                          <input {...register(`layers.${idx}.layerName` as const, { required: true })} className={inputCls} placeholder="Layer Name" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-muted-foreground">Paper Type</label>
+                          <select 
+                            {...register(`layers.${idx}.paperType` as const)} 
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setValue(`layers.${idx}.paperType`, val);
+                              if (val === 'HDPE') {
+                                setValue(`layers.${idx}.bf`, '');
+                                setValue(`layers.${idx}.gsm`, 90);
+                              }
+                            }}
+                            className={inputCls}
+                          >
+                            <option value="SK">SK</option>
+                            <option value="VK">VK</option>
+                            <option value="DUPLEX">DUPLEX</option>
+                            <option value="HDPE">HDPE (Mtr)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-muted-foreground">
+                            {isHdpe ? 'BF (N/A for HDPE)' : 'BF'}
+                          </label>
+                          <input 
+                            {...register(`layers.${idx}.bf` as const)} 
+                            disabled={isHdpe}
+                            placeholder={isHdpe ? 'N/A' : '16'}
+                            className={cn(inputCls, isHdpe && 'bg-muted cursor-not-allowed opacity-60')} 
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-muted-foreground">
+                            {isHdpe ? 'GSM (90 Fixed)' : 'GSM'}
+                          </label>
+                          <input 
+                            type="number" 
+                            {...register(`layers.${idx}.gsm` as const)} 
+                            className={inputCls} 
+                            placeholder="100" 
+                          />
+                        </div>
+                        <button type="button" onClick={() => remove(idx)} className="p-2 mb-0.5 text-destructive bg-destructive/10 hover:bg-destructive/20 rounded-md transition-colors self-end border border-destructive/20">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </form>
+
+          {/* Footer */}
+          <div className="p-6 border-t border-border flex justify-end gap-3 bg-card rounded-b-xl shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-secondary transition-colors">
+              Cancel
+            </button>
+            <button type="submit" form="product-form" disabled={isSubmitting} className="px-6 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center">
+              {isSubmitting && <CircleDashed className="w-4 h-4 mr-2 animate-spin" />}
+              {product ? 'Update' : 'Save'} Product
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+
+      {showInlineCustomerModal && (
+        <CustomerModal
+          customer={null}
+          customers={modalCustomers}
+          onClose={() => setShowInlineCustomerModal(false)}
+          onSuccess={async (newId) => {
+            setShowInlineCustomerModal(false);
+            if (newId) {
+              const freshCustomers = await getCustomers() as unknown as Customer[];
+              const activeOnly = freshCustomers.filter(c => !c.isLegacy);
+              setModalCustomers(activeOnly);
+              setValue('customerId', newId);
+            }
+          }}
+        />
+      )}
+    </>
   );
 }
 

@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, CheckCircle2, CircleDashed, FileText, X, Edit, Printer, AlertTriangle, Layers, Play, Trash2, AlertCircle, Calculator } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { cn } from '../lib/utils';
 import { getAllJobCards, getNextJobCardNumber, updateJobCard, executeJobCardTransaction, deleteJobCardSoft, parseJobCardSerial, formatJobCardDateSuffix } from '../lib/supabase/jobCardService';
 import { getProducts } from '../lib/supabase/productService';
+import { getCustomers } from '../lib/supabase/customerService';
 import { getPurchaseOrders } from '../lib/supabase/purchaseOrderService';
 import { useAuth } from '../contexts/AuthContext';
 import { exportToExcel, exportToPDF } from '../lib/exportUtils';
@@ -16,12 +17,13 @@ import html2canvas from 'html2canvas';
 import IssueJobCardModal from './job-cards/IssueJobCardModal';
 import ReelAllocationWizard from './job-cards/ReelAllocationWizard';
 import ExportButtons from '../components/ExportButtons';
-import { calculateLayerWeight } from '../lib/corrugationUtils';
+import { calculateLayerWeight, isHdpeLayer, calculateHdpeConsumption } from '../lib/corrugationUtils';
+import { ProductModal } from './MasterData';
 
 export const isJobCardAllocationComplete = (jc: any) => {
   if (!jc || !jc.productSnapshot || !jc.productSnapshot.layers) return false;
   if (jc.reelAllocationSkipped) return true;
-  const requiredLayers = jc.productSnapshot.layers.filter((l: any) => Number(l.gsm) > 0);
+  const requiredLayers = jc.productSnapshot.layers.filter((l: any) => Number(l.gsm) > 0 || isHdpeLayer(l));
   if (requiredLayers.length === 0) return true;
   return requiredLayers.every((layer: any) => {
     // Legacy support
@@ -630,6 +632,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
     } : {}
   });
   
+  const qc = useQueryClient();
   const { data: products = [], isLoading: loadingProducts } = useQuery({
     queryKey: ['products'],
     queryFn: async () => {
@@ -637,6 +640,19 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
       return data;
     },
   });
+
+  const { data: customers = [] } = useQuery({
+    queryKey: ['customers'],
+    queryFn: async () => {
+      const data = await getCustomers() as any[];
+      return data;
+    },
+  });
+
+  const activeCustomers = useMemo(() => customers.filter((c: any) => !c.isLegacy), [customers]);
+  const activeProducts = useMemo(() => products.filter((p: any) => !p.isLegacy), [products]);
+
+  const [showCreateProductModal, setShowCreateProductModal] = useState(false);
 
   const { data: purchaseOrders = [], isLoading: loadingPos } = useQuery({
     queryKey: ['purchaseOrders'],
@@ -681,7 +697,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
         setValue('jobCardNo', await getNextJobCardNumber());
       } catch (err) {
         console.error(err);
-        setValue('jobCardNo', `1${formatJobCardDateSuffix()}`);
+        setValue('jobCardNo', `1-${formatJobCardDateSuffix()}`);
       } finally {
         setLoadingNextNo(false);
       }
@@ -694,16 +710,19 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
   const currentOrderQty = watch('orderQty');
 
   // Progressive Filtering: If Customer is selected, narrow products
-  const uniqueCustomers = Array.from(new Set(products.map((p: any) => p.customerId)))
+  // When creating a new Job Card, strictly show active (26/11/2026+) products only
+  const baseProductList = isEditMode ? products : activeProducts;
+
+  const uniqueCustomers = Array.from(new Set(baseProductList.map((p: any) => p.customerId)))
     .map(id => {
-      const prod = products.find((p: any) => p.customerId === id);
+      const prod = baseProductList.find((p: any) => p.customerId === id);
       return { id, name: prod?.customerName };
     })
     .filter(c => c.name);
 
   const availableProducts = selectedCustomerId 
-    ? products.filter((p: any) => p.customerId === selectedCustomerId)
-    : products;
+    ? baseProductList.filter((p: any) => p.customerId === selectedCustomerId)
+    : baseProductList;
 
   const isProductChanged = isEditMode && selectedProductId !== initialData?.productId;
   const activeProductData = (!isEditMode || isProductChanged) 
@@ -737,6 +756,28 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
     const layers = (activeProductData.layers || []).map((layer: any, idx: number) => {
       let gsm = Number(layer.gsm) || 0;
       let layerWeight = 0;
+      const isHdpe = isHdpeLayer(layer);
+
+      if (isHdpe) {
+        const hdpeCalc = calculateHdpeConsumption(activeProductData.cutSize, ups, orderQtyVal);
+        layerWeight = hdpeCalc.totalMtr;
+        const cleanLayer = { ...layer };
+        if (!isEditMode || isProductChanged) {
+          delete cleanLayer.allocatedReelNumber;
+          delete cleanLayer.allocatedReelWeight;
+          delete cleanLayer.allocatedReels;
+        }
+        return {
+          ...cleanLayer,
+          gsm: 90,
+          bf: '',
+          unit: 'Mtr',
+          perBoxConsumption: hdpeCalc.perBoxMtr,
+          calculatedWeight: layerWeight,
+          requiredWeight: layerWeight,
+        };
+      }
+
       if (gsm > 0 && activeProductData.reelSize > 0 && activeProductData.cutSize > 0) {
         layerWeight = calculateLayerWeight(
           activeProductData.reelSize,
@@ -754,7 +795,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
         delete cleanLayer.allocatedReelWeight;
         delete cleanLayer.allocatedReels;
       }
-      return { ...cleanLayer, calculatedWeight: layerWeight, requiredWeight: layerWeight };
+      return { ...cleanLayer, unit: 'Kg', calculatedWeight: layerWeight, requiredWeight: layerWeight };
     });
     
     totalWeight = Math.round(totalWeight * 100) / 100;
@@ -766,7 +807,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
       totalWeight,
       oneBoxWeight
     };
-  }, [activeProductData, orderQtyVal]);
+  }, [activeProductData, orderQtyVal, isEditMode, isProductChanged]);
 
   const [step, setStep] = useState<1 | 2>(1);
   const [draftPayload, setDraftPayload] = useState<any>(null);
@@ -889,7 +930,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
         </div>
 
         <div className="p-6 overflow-y-auto flex-1">
-          <form id="jc-form" onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+          <form id="jc-form" onSubmit={handleSubmit(onSubmit)} className="space-y-8 pb-32">
             <input type="hidden" {...register('jobCardNo')} />
             <input type="hidden" {...register('targetDate')} />
             
@@ -1012,7 +1053,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
             </div>
 
             {/* Row 2: Manual Inputs (Product & Quantity) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-30">
               <div className="space-y-2 relative">
                 <label className="text-sm font-semibold text-foreground">Select Product <span className="text-destructive">*</span></label>
                 <div className="relative">
@@ -1034,8 +1075,8 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                   <input type="hidden" {...register('productId', { required: true })} />
                   
                   {showProductDropdown && (
-                    <div className="absolute z-[100] mt-1 w-full bg-white border border-gray-300 rounded-md shadow-xl max-h-64 overflow-y-auto">
-                      {isEditMode && !products.find((p:any) => p.id === initialData.productId) && (
+                    <div className="absolute bottom-full mb-1.5 z-[100] w-full bg-white border border-gray-300 rounded-md shadow-2xl max-h-64 overflow-y-auto">
+                      {isEditMode && !baseProductList.find((p:any) => p.id === initialData.productId) && (
                         <div 
                           className="px-4 py-3 cursor-pointer hover:bg-gray-100 border-b border-gray-100"
                           onMouseDown={() => {
@@ -1049,36 +1090,70 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                         </div>
                       )}
                       
-                      {products.filter((p: any) => {
+                      {(() => {
                         const searchLower = productSearchText.toLowerCase();
-                        return !productSearchText || 
-                               (p.itemName && p.itemName.toLowerCase().includes(searchLower)) || 
-                               (p.artworkNo && p.artworkNo.toLowerCase().includes(searchLower));
-                      }).map((p: any) => (
-                        <div 
-                          key={p.id}
-                          className="px-4 py-3 cursor-pointer hover:bg-gray-100 border-b border-gray-100 last:border-0"
-                          onMouseDown={() => {
-                            setValue('productId', p.id);
-                            setProductSearchText(`${p.itemName} / ${p.artworkNo}`);
-                            setShowProductDropdown(false);
-                          }}
-                        >
-                          <div className="font-bold text-sm text-black">{p.itemName}</div>
-                          <div className="text-xs text-gray-600">Artwork: {p.artworkNo}</div>
-                        </div>
-                      ))}
-                      
-                      {products.filter((p: any) => {
-                        const searchLower = productSearchText.toLowerCase();
-                        return !productSearchText || 
-                               (p.itemName && p.itemName.toLowerCase().includes(searchLower)) || 
-                               (p.artworkNo && p.artworkNo.toLowerCase().includes(searchLower));
-                      }).length === 0 && (
-                        <div className="px-4 py-4 text-sm text-gray-500 italic text-center">
-                          No matching products found.
-                        </div>
-                      )}
+                        const matching = availableProducts.filter((p: any) => {
+                          return !productSearchText || 
+                                 (p.itemName && p.itemName.toLowerCase().includes(searchLower)) || 
+                                 (p.artworkNo && p.artworkNo.toLowerCase().includes(searchLower));
+                        });
+
+                        return (
+                          <>
+                            {matching.map((p: any) => (
+                              <div 
+                                key={p.id}
+                                className="px-4 py-3 cursor-pointer hover:bg-gray-100 border-b border-gray-100 last:border-0"
+                                onMouseDown={() => {
+                                  setValue('productId', p.id);
+                                  setProductSearchText(`${p.itemName} / ${p.artworkNo}`);
+                                  setShowProductDropdown(false);
+                                }}
+                              >
+                                <div className="font-bold text-sm text-black">{p.itemName}</div>
+                                <div className="text-xs text-gray-600">Artwork: {p.artworkNo} {p.customerName ? `| ${p.customerName}` : ''}</div>
+                              </div>
+                            ))}
+
+                            {matching.length === 0 && (
+                              <div className="p-4 text-center space-y-2.5 bg-amber-50/80 border border-amber-200/80 rounded-md m-2">
+                                <p className="text-sm font-bold text-amber-900">
+                                  {productSearchText ? `"${productSearchText}" naam se koi item nahi mila.` : 'Master Data me koi item nahi mila.'}
+                                </p>
+                                <p className="text-xs text-amber-700">
+                                  26/11/2026 se naye job cards me verified Master Data link hai. Aap naya item abhi create kar sakte hain:
+                                </p>
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    setShowCreateProductModal(true);
+                                    setShowProductDropdown(false);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold rounded-md hover:bg-primary/90 shadow transition-colors"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                  + Create New Item in Master Data
+                                </button>
+                              </div>
+                            )}
+
+                            {matching.length > 0 && (
+                              <div 
+                                className="p-2.5 bg-muted/50 hover:bg-muted cursor-pointer border-t border-border flex items-center justify-between text-xs font-bold text-primary"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setShowCreateProductModal(true);
+                                  setShowProductDropdown(false);
+                                }}
+                              >
+                                <span>+ Create New Item in Master Data</span>
+                                <Plus className="w-3.5 h-3.5" />
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -1124,16 +1199,28 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                 <div className="mt-5 pt-5 border-t border-border">
                   <span className="text-muted-foreground block text-[10px] uppercase tracking-wider font-bold mb-3">Paper Layers Configuration (Live Calculation)</span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {(liveCalculations?.layers || []).map((layer: any, idx: number) => (
-                      <div key={idx} className="bg-background border border-border rounded-md p-3 flex justify-between items-center shadow-sm">
-                        <span className="text-xs font-bold text-muted-foreground uppercase">{layer.layerName}</span>
-                        <div className="text-right">
-                          <span className="block text-sm text-foreground font-bold leading-none mb-1">{layer.paperType}</span>
-                          <span className="text-[10px] text-muted-foreground font-medium block">{layer.bf} BF | {layer.gsm} GSM</span>
-                          <span className="text-xs font-bold text-primary block mt-1">{layer.calculatedWeight || 0} Kg</span>
+                    {(liveCalculations?.layers || []).map((layer: any, idx: number) => {
+                      const isHdpe = isHdpeLayer(layer);
+                      return (
+                        <div key={idx} className="bg-background border border-border rounded-md p-3 flex justify-between items-center shadow-sm">
+                          <span className="text-xs font-bold text-muted-foreground uppercase">{layer.layerName}</span>
+                          <div className="text-right">
+                            <span className="block text-sm text-foreground font-bold leading-none mb-1">{layer.paperType}</span>
+                            <span className="text-[10px] text-muted-foreground font-medium block">
+                              {isHdpe ? 'HDPE Film | 90 GSM' : `${layer.bf || '-'} BF | ${layer.gsm || '-'} GSM`}
+                            </span>
+                            <span className="text-xs font-bold text-primary block mt-1">
+                              {layer.calculatedWeight || 0} {isHdpe ? 'Mtr' : 'Kg'}
+                            </span>
+                            {isHdpe && layer.perBoxConsumption && (
+                              <span className="text-[10px] text-muted-foreground block">
+                                ({layer.perBoxConsumption} Mtr/box)
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4 mt-4 bg-primary/5 p-4 rounded-md border border-primary/10">
@@ -1215,6 +1302,27 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
           </div>
         </div>
       </div>
+
+      {showCreateProductModal && (
+        <ProductModal
+          product={null}
+          customers={activeCustomers}
+          onClose={() => setShowCreateProductModal(false)}
+          onSuccess={async (newId) => {
+            setShowCreateProductModal(false);
+            await qc.invalidateQueries({ queryKey: ['products'] });
+            await qc.invalidateQueries({ queryKey: ['customers'] });
+            if (newId) {
+              setValue('productId', newId);
+              const all = await getProducts();
+              const created = all.find(p => p.id === newId);
+              if (created) {
+                setProductSearchText(`${created.itemName} / ${created.artworkNo}`);
+              }
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

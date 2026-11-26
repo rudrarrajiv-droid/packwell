@@ -85,7 +85,7 @@ export default function Inventory() {
       
       const pt = (r.paperType || '').toUpperCase();
       if (paperTypeFilter === 'ALL') return true;
-      if (paperTypeFilter === 'OTHERS') return !['SK', 'VK', 'DUPLEX', 'HWC'].includes(pt);
+      if (paperTypeFilter === 'OTHERS') return !['SK', 'VK', 'DUPLEX', 'HWC', 'HDPE'].includes(pt);
       return pt === paperTypeFilter;
     });
 
@@ -155,7 +155,7 @@ export default function Inventory() {
         
         const pt = (r.paperType || '').toUpperCase();
         if (paperTypeFilter === 'ALL') return true;
-        if (paperTypeFilter === 'OTHERS') return !['SK', 'VK', 'DUPLEX', 'HWC'].includes(pt);
+        if (paperTypeFilter === 'OTHERS') return !['SK', 'VK', 'DUPLEX', 'HWC', 'HDPE'].includes(pt);
         return pt === paperTypeFilter;
       });
 
@@ -765,6 +765,7 @@ export default function Inventory() {
                   <option value="SK">SK</option>
                   <option value="VK">VK</option>
                   <option value="DUPLEX">DUPLEX</option>
+                  <option value="HDPE">HDPE (Mtr)</option>
                   <option value="OTHERS">Others</option>
                 </select>
 
@@ -1241,9 +1242,15 @@ export default function Inventory() {
                           reel.rate ? `₹${Number(reel.rate).toFixed(2)}` : '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-blue-600 font-bold">{Math.round(reel.weight)} Kg</td>
-                      <td className="px-6 py-4 text-red-600">{consumed > 0 ? `${Math.round(consumed)} Kg` : '-'}</td>
-                      <td className="px-6 py-4 font-bold text-green-600">{Math.round(reel.currentBalance)} Kg</td>
+                      <td className="px-6 py-4 text-blue-600 font-bold">
+                        {Math.round(reel.weight)} {reel.paperType === 'HDPE' ? 'Mtr' : 'Kg'}
+                      </td>
+                      <td className="px-6 py-4 text-red-600">
+                        {consumed > 0 ? `${Math.round(consumed)} ${reel.paperType === 'HDPE' ? 'Mtr' : 'Kg'}` : '-'}
+                      </td>
+                      <td className="px-6 py-4 font-bold text-green-600">
+                        {Math.round(reel.currentBalance)} {reel.paperType === 'HDPE' ? 'Mtr' : 'Kg'}
+                      </td>
                       <td className="px-6 py-4 text-muted-foreground">
                         {reel.inwardDate ? new Date(reel.inwardDate).toLocaleDateString('en-IN') : '-'}
                       </td>
@@ -1423,9 +1430,15 @@ export default function Inventory() {
                           reel.rate ? `₹${Number(reel.rate).toFixed(2)}` : '-'
                         )}
                       </td>
-                      <td className="px-6 py-4 text-blue-600">{Math.round(reel.weight)} Kg</td>
-                      <td className="px-6 py-4 text-red-600">{consumed > 0 ? `${Math.round(consumed)} Kg` : '-'}</td>
-                      <td className="px-6 py-4 font-bold text-green-600">{Math.round(reel.currentBalance)} Kg</td>
+                      <td className="px-6 py-4 text-blue-600">
+                        {Math.round(reel.weight)} {reel.paperType === 'HDPE' ? 'Mtr' : 'Kg'}
+                      </td>
+                      <td className="px-6 py-4 text-red-600">
+                        {consumed > 0 ? `${Math.round(consumed)} ${reel.paperType === 'HDPE' ? 'Mtr' : 'Kg'}` : '-'}
+                      </td>
+                      <td className="px-6 py-4 font-bold text-green-600">
+                        {Math.round(reel.currentBalance)} {reel.paperType === 'HDPE' ? 'Mtr' : 'Kg'}
+                      </td>
                       <td className="px-6 py-4 text-muted-foreground">
                         {reel.inwardDate ? new Date(reel.inwardDate).toLocaleDateString('en-IN') : '-'}
                       </td>

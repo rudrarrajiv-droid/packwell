@@ -34,9 +34,12 @@ export default function ReverseCalculatorTab() {
   }, [products, selectedProductId]);
 
   const filteredProducts = useMemo(() => {
-    if (!searchQuery.trim()) return products;
+    // Show active products only for current estimates
+    const activeList = products.filter((p: any) => !p.isLegacy);
+    const sourceList = activeList.length > 0 ? activeList : products;
+    if (!searchQuery.trim()) return sourceList;
     const q = searchQuery.toLowerCase();
-    return products.filter(p => {
+    return sourceList.filter(p => {
       const nameStr = (p.name || p.itemName || '').toLowerCase();
       const artStr = (p.artworkNo || '').toLowerCase();
       return nameStr.includes(q) || artStr.includes(q);

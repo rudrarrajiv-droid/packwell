@@ -5,7 +5,7 @@ import { Zap, CircleDashed, CheckCircle2, AlertTriangle, Search, X, Plus, Trash2
 import { cn } from '../../lib/utils';
 import { isJobCardAllocationComplete } from '../JobCards';
 import { getConcurrentPartnerIndices, getLayerStandDescription } from '../../lib/corrugatorPairing';
-import { calculateLayerWeight } from '../../lib/corrugationUtils';
+import { calculateLayerWeight, isHdpeLayer, calculateHdpeConsumption } from '../../lib/corrugationUtils';
 
 interface ReelAllocationWizardProps {
   jobCard: any;
@@ -79,6 +79,20 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
     return (snapshot.layers || []).map((layer: any, idx: number) => {
       let gsm = Number(layer.gsm) || 0;
       let reqWeight = 0;
+      const isHdpe = isHdpeLayer(layer);
+
+      if (isHdpe) {
+        reqWeight = calculateHdpeConsumption(snapshot.cutSize, ups, orderQty).totalMtr;
+        return {
+          ...layer,
+          originalIndex: idx,
+          unit: 'Mtr',
+          requiredWeight: reqWeight,
+          calculatedWeight: reqWeight,
+          reqSize: snapshot.reelSize
+        };
+      }
+
       if (gsm > 0 && snapshot.reelSize > 0 && snapshot.cutSize > 0) {
         reqWeight = calculateLayerWeight(
           snapshot.reelSize,
@@ -92,6 +106,7 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
       return {
         ...layer,
         originalIndex: idx,
+        unit: 'Kg',
         requiredWeight: reqWeight,
         calculatedWeight: reqWeight,
         reqSize: snapshot.reelSize
@@ -575,12 +590,16 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground uppercase tracking-wider font-semibold">
-                        {layer.paperType} | Size: {layer.reqSize}" | BF: {layer.bf} | GSM: {layer.gsm}
+                        {isHdpeLayer(layer) ? 'HDPE Film | 90 GSM' : `${layer.paperType} | Size: ${layer.reqSize}" | BF: ${layer.bf || '-'} | GSM: ${layer.gsm}`}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-muted-foreground font-bold uppercase mb-1">Required Weight</p>
-                      <p className="text-2xl font-black text-primary">{layer.requiredWeight} Kg</p>
+                      <p className="text-xs text-muted-foreground font-bold uppercase mb-1">
+                        {isHdpeLayer(layer) ? 'Required Length' : 'Required Weight'}
+                      </p>
+                      <p className="text-2xl font-black text-primary">
+                        {layer.requiredWeight} {isHdpeLayer(layer) ? 'Mtr' : 'Kg'}
+                      </p>
                     </div>
                   </div>
 
@@ -628,7 +647,7 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
                                 onChange={(e) => updateAllocationWeight(layer.originalIndex, r.reelId, parseFloat(e.target.value) || 0)}
                                 className="w-24 px-2 py-1 border rounded text-right font-bold text-green-700 bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500"
                               />
-                              <span className="text-xs font-bold text-gray-500">Kg</span>
+                              <span className="text-xs font-bold text-gray-500">{isHdpeLayer(layer) ? 'Mtr' : 'Kg'}</span>
                             </div>
                           </div>
                         ))}
@@ -643,7 +662,7 @@ export default function ReelAllocationWizard({ jobCard, onBack, onConfirm, isAdm
                       <div className="bg-red-50 px-4 py-2 rounded-md border border-red-200 flex-1 mr-4 flex items-center justify-between">
                         <div className="flex items-center text-red-800 font-bold">
                           <AlertTriangle className="w-4 h-4 mr-2" />
-                          SHORT WEIGHT: {Math.round(remaining * 100) / 100} Kg
+                          SHORT: {Math.round(remaining * 100) / 100} {isHdpeLayer(layer) ? 'Mtr' : 'Kg'}
                         </div>
                         <button 
                           onClick={() => openManualMatch(layer.originalIndex)}

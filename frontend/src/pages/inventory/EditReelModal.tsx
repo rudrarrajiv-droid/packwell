@@ -232,6 +232,7 @@ export default function EditReelModal({ reel, onClose, onSuccess }: EditReelModa
                   <option value="VK">VK</option>
                   <option value="HWC">HWC</option>
                   <option value="DUPLEX">DUPLEX</option>
+                  <option value="HDPE">HDPE (Mtr)</option>
                   <option value="OTHERS">OTHERS</option>
                 </select>
               </div>

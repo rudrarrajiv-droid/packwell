@@ -13,6 +13,22 @@ import { logActivity } from './activityLogService';
 //   created_at            -> createdAt
 //   updated_at            -> updatedAt
 
+export const MASTER_DATA_CUTOFF_DATE = '2026-11-26T00:00:00';
+
+export const isLegacyMasterRecord = (row: { catalogVersion?: string; isLegacy?: boolean; createdAt?: string | null }): boolean => {
+  if (row.catalogVersion === '2026_NEW') return false;
+  if (row.isLegacy === false) return false;
+  if (row.isLegacy === true) return true;
+  if (!row.createdAt) return true;
+  try {
+    const createdTime = new Date(row.createdAt).getTime();
+    const cutoffTime = new Date('2026-11-26T00:00:00').getTime();
+    return createdTime < cutoffTime;
+  } catch {
+    return true;
+  }
+};
+
 export interface SupabaseCustomer {
   id: string;
   name: string;
@@ -21,19 +37,30 @@ export interface SupabaseCustomer {
   updatedBy: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  isLegacy?: boolean;
+  catalogVersion?: string;
 }
 
-const SELECT_COLUMNS = 'firestore_document_id, name, is_archived, created_by, updated_by, created_at, updated_at';
+const SELECT_COLUMNS = 'firestore_document_id, name, is_archived, created_by, updated_by, created_at, updated_at, raw_data';
 
-const mapRow = (row: any): SupabaseCustomer => ({
-  id: row.firestore_document_id,
-  name: row.name,
-  isArchived: row.is_archived,
-  createdBy: row.created_by,
-  updatedBy: row.updated_by,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-});
+const mapRow = (row: any): SupabaseCustomer => {
+  const isLegacy = isLegacyMasterRecord({
+    catalogVersion: row.raw_data?.catalogVersion,
+    isLegacy: row.raw_data?.isLegacy,
+    createdAt: row.created_at,
+  });
+  return {
+    id: row.firestore_document_id,
+    name: row.name,
+    isArchived: row.is_archived,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    isLegacy,
+    catalogVersion: row.raw_data?.catalogVersion ?? (isLegacy ? 'LEGACY' : '2026_NEW'),
+  };
+};
 
 /**
  * Fetches all non-archived customers, preserving the current app behavior
@@ -70,6 +97,22 @@ export const getCustomers = async (): Promise<SupabaseCustomer[]> => {
 };
 
 /**
+ * Fetches active customers (created on/after 2026-11-26 or tagged 2026_NEW).
+ */
+export const getActiveCustomers = async (): Promise<SupabaseCustomer[]> => {
+  const all = await getCustomers();
+  return all.filter(c => !c.isLegacy);
+};
+
+/**
+ * Fetches legacy customers (created before 2026-11-26, preserved for historical viewing).
+ */
+export const getLegacyCustomers = async (): Promise<SupabaseCustomer[]> => {
+  const all = await getCustomers();
+  return all.filter(c => c.isLegacy);
+};
+
+/**
  * Creates a new customer. Mirrors the previous generic `createDocument`
  * behavior: audit fields (createdBy/updatedBy/createdAt/updatedAt/isArchived)
  * are populated, and the same 'Created' activity log entry is written.
@@ -91,9 +134,15 @@ export const createCustomer = async (name: string, user: string = 'System'): Pro
     updated_at: now,
   };
 
+  const rawData = {
+    ...record,
+    catalogVersion: '2026_NEW',
+    isLegacy: false,
+  };
+
   const { error } = await supabase.from('customers').insert({
     ...record,
-    raw_data: record,
+    raw_data: rawData,
   });
 
   if (error) {

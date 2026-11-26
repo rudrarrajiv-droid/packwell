@@ -39,7 +39,24 @@ export interface SupabaseProductLayer {
   paperType?: string;
   bf?: string;
   gsm?: number;
+  unit?: string;
 }
+
+export const MASTER_DATA_CUTOFF_DATE = '2026-11-26T00:00:00';
+
+export const isLegacyMasterRecord = (row: { catalogVersion?: string; isLegacy?: boolean; createdAt?: string | null }): boolean => {
+  if (row.catalogVersion === '2026_NEW') return false;
+  if (row.isLegacy === false) return false;
+  if (row.isLegacy === true) return true;
+  if (!row.createdAt) return true;
+  try {
+    const createdTime = new Date(row.createdAt).getTime();
+    const cutoffTime = new Date('2026-11-26T00:00:00').getTime();
+    return createdTime < cutoffTime;
+  } catch {
+    return true;
+  }
+};
 
 export interface SupabaseProduct {
   id: string;
@@ -74,6 +91,8 @@ export interface SupabaseProduct {
   updatedBy: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  isLegacy?: boolean;
+  catalogVersion?: string;
 }
 
 const SELECT_COLUMNS = [
@@ -107,40 +126,49 @@ const SELECT_COLUMNS = [
   'raw_data',
 ].join(', ');
 
-const mapRow = (row: any): SupabaseProduct => ({
-  id: row.firestore_document_id,
-  customerId: row.customer_id,
-  customerName: row.customer_name,
-  artworkNo: row.artwork_no,
-  itemName: row.item_name,
-  length: row.length,
-  width: row.width,
-  height: row.height,
-  ply: row.ply,
-  flute: row.flute ?? undefined,
-  reelSize: row.reel_size,
-  cutSize: row.cut_size,
-  pinQty: row.pin_qty ?? undefined,
-  pinPasting: row.pin_pasting ?? undefined,
-  ups: row.ups ?? undefined,
-  creasing: row.creasing ?? undefined,
-  dieNumber: row.raw_data?.dieNumber ?? undefined,
-  color: row.color ?? undefined,
-  packing: row.packing ?? undefined,
-  pinType: row.pin_type ?? undefined,
-  boxType: row.raw_data?.boxType ?? undefined,
-  specialRequirement: row.special_requirement ?? undefined,
-  actualCosting: row.actual_costing != null ? Number(row.actual_costing) : undefined,
-  customerRate: row.raw_data?.customerRate != null ? Number(row.raw_data.customerRate) : undefined,
-  rate: row.raw_data?.rate != null ? Number(row.raw_data.rate) : undefined,
-  rateHistory: Array.isArray(row.raw_data?.rateHistory) ? row.raw_data.rateHistory : undefined,
-  layers: row.layers ?? [],
-  isArchived: row.is_archived,
-  createdBy: row.created_by,
-  updatedBy: row.updated_by,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-});
+const mapRow = (row: any): SupabaseProduct => {
+  const isLegacy = isLegacyMasterRecord({
+    catalogVersion: row.raw_data?.catalogVersion,
+    isLegacy: row.raw_data?.isLegacy,
+    createdAt: row.created_at,
+  });
+  return {
+    id: row.firestore_document_id,
+    customerId: row.customer_id,
+    customerName: row.customer_name,
+    artworkNo: row.artwork_no,
+    itemName: row.item_name,
+    length: row.length,
+    width: row.width,
+    height: row.height,
+    ply: row.ply,
+    flute: row.flute ?? undefined,
+    reelSize: row.reel_size,
+    cutSize: row.cut_size,
+    pinQty: row.pin_qty ?? undefined,
+    pinPasting: row.pin_pasting ?? undefined,
+    ups: row.ups ?? undefined,
+    creasing: row.creasing ?? undefined,
+    dieNumber: row.raw_data?.dieNumber ?? undefined,
+    color: row.color ?? undefined,
+    packing: row.packing ?? undefined,
+    pinType: row.pin_type ?? undefined,
+    boxType: row.raw_data?.boxType ?? undefined,
+    specialRequirement: row.special_requirement ?? undefined,
+    actualCosting: row.actual_costing != null ? Number(row.actual_costing) : undefined,
+    customerRate: row.raw_data?.customerRate != null ? Number(row.raw_data.customerRate) : undefined,
+    rate: row.raw_data?.rate != null ? Number(row.raw_data.rate) : undefined,
+    rateHistory: Array.isArray(row.raw_data?.rateHistory) ? row.raw_data.rateHistory : undefined,
+    layers: row.layers ?? [],
+    isArchived: row.is_archived,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    isLegacy,
+    catalogVersion: row.raw_data?.catalogVersion ?? (isLegacy ? 'LEGACY' : '2026_NEW'),
+  };
+};
 
 /**
  * Fetches all non-archived products, preserving the current app behavior
@@ -174,6 +202,16 @@ export const getProducts = async (): Promise<SupabaseProduct[]> => {
   }
 
   return allData.map(mapRow);
+};
+
+export const getActiveProducts = async (): Promise<SupabaseProduct[]> => {
+  const all = await getProducts();
+  return all.filter(p => !p.isLegacy);
+};
+
+export const getLegacyProducts = async (): Promise<SupabaseProduct[]> => {
+  const all = await getProducts();
+  return all.filter(p => p.isLegacy);
 };
 
 // Maps whatever product-shaped fields are present on the input object to the
@@ -230,7 +268,18 @@ export const createProduct = async (data: Record<string, any>, user: string = 'S
     updated_at: now,
   };
 
-  const rawData = { ...data, ...columns, id, isArchived: false, createdBy: user, updatedBy: user, createdAt: now, updatedAt: now };
+  const rawData = { 
+    ...data, 
+    ...columns, 
+    id, 
+    catalogVersion: '2026_NEW',
+    isLegacy: false,
+    isArchived: false, 
+    createdBy: user, 
+    updatedBy: user, 
+    createdAt: now, 
+    updatedAt: now 
+  };
 
   const { error } = await supabase.from('products').insert({ ...row, raw_data: rawData });
 

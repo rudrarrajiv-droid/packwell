@@ -57,3 +57,30 @@ export function calculateLayerWeight(
   return Math.round(weight * 100) / 100;
 }
 
+export function isHdpeLayer(layer?: any): boolean {
+  const paperType = (layer?.paperType || '').toUpperCase().trim();
+  const layerName = (layer?.layerName || layer?.name || layer?.standDescription || '').toUpperCase().trim();
+  return paperType === 'HDPE' || layerName.includes('HDPE');
+}
+
+/**
+ * Calculates HDPE consumption in Meters based on Cut Size (inches), UPS, and Order Box Qty.
+ * Formula as specified:
+ * 1 sheet length (mtr) = cutSize * 0.0254
+ * 1 box consumption (mtr) = (cutSize * 0.0254) / ups
+ * total consumption (mtr) = boxQty * (1 box consumption)
+ */
+export function calculateHdpeConsumption(cutSize: number, ups: number = 1, boxQty: number = 1): {
+  perBoxMtr: number;
+  totalMtr: number;
+} {
+  const safeUps = ups > 0 ? ups : 1;
+  const safeCut = cutSize > 0 ? cutSize : 0;
+  const perBoxMtr = (safeCut * 0.0254) / safeUps;
+  const totalMtr = boxQty > 0 ? boxQty * perBoxMtr : 0;
+  return {
+    perBoxMtr: Math.round(perBoxMtr * 1000) / 1000,
+    totalMtr: Math.round(totalMtr * 100) / 100,
+  };
+}
+

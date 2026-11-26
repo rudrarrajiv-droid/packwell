@@ -8,6 +8,8 @@ export interface BaseModel {
   createdBy?: string;
   updatedBy?: string;
   isArchived?: boolean;
+  catalogVersion?: string;
+  isLegacy?: boolean;
 }
 
 export interface Customer extends BaseModel {
@@ -20,6 +22,7 @@ export interface ProductLayer {
   paperType?: string;
   bf?: string;
   gsm?: number;
+  unit?: string; // 'Kg' | 'Mtr'
 }
 
 export interface Product extends BaseModel {
