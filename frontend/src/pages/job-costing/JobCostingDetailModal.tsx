@@ -25,6 +25,7 @@ interface JobCostingDetailModalProps {
   onSaved: (updated: JobCostingData) => void;
   currentStandardRate: number;
   rateLookupContext: SaleRateLookupContext;
+  onViewJobCard?: () => void;
 }
 
 const SOURCE_BADGE: Record<SaleRateSource, { label: string; cls: string }> = {
@@ -42,6 +43,7 @@ export default function JobCostingDetailModal({
   onSaved,
   currentStandardRate,
   rateLookupContext,
+  onViewJobCard,
 }: JobCostingDetailModalProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -454,6 +456,17 @@ export default function JobCostingDetailModal({
           </div>
 
           <div className="flex items-center gap-2">
+            {onViewJobCard && (
+              <button
+                type="button"
+                onClick={onViewJobCard}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-blue-50 text-blue-800 border border-blue-300 rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-xs"
+                title="View Original Production Job Card"
+              >
+                <FileText className="w-3.5 h-3.5 text-blue-600" />
+                <span className="hidden sm:inline">Job Card</span>
+              </button>
+            )}
             <button
               onClick={copyWhatsApp}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-xs"
