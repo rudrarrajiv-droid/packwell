@@ -121,7 +121,8 @@ export default function BulkInModal({ onClose, onSuccess, initialItem, initialIt
   
   useEffect(() => {
     getProducts().then(data => {
-      setProducts(data);
+      const active = (data || []).filter((p: any) => p.catalogVersion === '2026_NEW' || (!p.isLegacy && p.createdAt && new Date(p.createdAt).getTime() >= new Date('2026-11-26T00:00:00').getTime()));
+      setProducts(active);
     });
     getFinishGoods().then(data => {
       setFinishGoods(data);

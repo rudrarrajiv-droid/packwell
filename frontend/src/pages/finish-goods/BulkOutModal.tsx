@@ -57,7 +57,8 @@ export default function BulkOutModal({ onClose, onSuccess }: { onClose: () => vo
   
   const loadData = () => {
     void Promise.all([getProducts(), getFinishGoods(), getFinishGoodTransactions(), getPurchaseOrders()]).then(([prodData, fgData, txData, poData]) => {
-      setProducts(prodData || []);
+      const activeProds = (prodData || []).filter((p: any) => p.catalogVersion === '2026_NEW' || (!p.isLegacy && p.createdAt && new Date(p.createdAt).getTime() >= new Date('2026-11-26T00:00:00').getTime()));
+      setProducts(activeProds);
       setFinishGoods(fgData || []);
       setHistoryDocs(txData || []);
       const activePOs = (poData || []).filter(po => {

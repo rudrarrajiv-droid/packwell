@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, CheckCircle2, CircleDashed, FileText, X, Edit, Printer, AlertTriangle, Layers, Play, Trash2, AlertCircle, Calculator } from 'lucide-react';
+import { Plus, Search, CheckCircle2, CircleDashed, FileText, X, Edit, Printer, AlertTriangle, Layers, Play, Trash2, AlertCircle, Calculator, Users } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { cn } from '../lib/utils';
 import { getAllJobCards, getNextJobCardNumber, updateJobCard, executeJobCardTransaction, deleteJobCardSoft, parseJobCardSerial, formatJobCardDateSuffix } from '../lib/supabase/jobCardService';
@@ -18,7 +18,7 @@ import IssueJobCardModal from './job-cards/IssueJobCardModal';
 import ReelAllocationWizard from './job-cards/ReelAllocationWizard';
 import ExportButtons from '../components/ExportButtons';
 import { calculateLayerWeight, isHdpeLayer, calculateHdpeConsumption } from '../lib/corrugationUtils';
-import { ProductModal } from './MasterData';
+import { ProductModal, CustomerModal } from './MasterData';
 
 export const isJobCardAllocationComplete = (jc: any) => {
   if (!jc || !jc.productSnapshot || !jc.productSnapshot.layers) return false;
@@ -679,6 +679,14 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
   });
   const [showProductDropdown, setShowProductDropdown] = useState(false);
 
+  // Customer State
+  const [customerSearchText, setCustomerSearchText] = useState(() => {
+    if (isEditMode && initialData?.customerName) return initialData.customerName;
+    return '';
+  });
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [showCreateCustomerModal, setShowCreateCustomerModal] = useState(false);
+
   // PO State
   const [poSearchText, setPoSearchText] = useState(() => {
     if (isEditMode && initialData?.poNo) return initialData.poNo;
@@ -717,20 +725,31 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
   const selectedProductId = watch('productId');
   const currentOrderQty = watch('orderQty');
 
-  // Progressive Filtering: If Customer is selected, narrow products
+  // Progressive Filtering: When Customer is selected, show strictly that customer's products
   // When creating a new Job Card, strictly show active (26/11/2026+) products only
   const baseProductList = isEditMode ? products : activeProducts;
 
-  const uniqueCustomers = Array.from(new Set(baseProductList.map((p: any) => p.customerId)))
-    .map(id => {
-      const prod = baseProductList.find((p: any) => p.customerId === id);
-      return { id, name: prod?.customerName };
-    })
-    .filter(c => c.name);
+  const availableProducts = useMemo(() => {
+    if (isEditMode) {
+      if (selectedCustomerId) {
+        const cust = customers.find(c => c.id === selectedCustomerId);
+        return baseProductList.filter((p: any) => 
+          p.customerId === selectedCustomerId || 
+          (cust?.name && p.customerName && p.customerName.trim().toLowerCase() === cust.name.trim().toLowerCase())
+        );
+      }
+      return baseProductList;
+    }
+    if (!selectedCustomerId && !customerSearchText.trim()) return [];
+    
+    const cust = selectedCustomerId ? customers.find(c => c.id === selectedCustomerId) : null;
+    const targetName = (cust?.name || customerSearchText).trim().toLowerCase();
 
-  const availableProducts = selectedCustomerId 
-    ? baseProductList.filter((p: any) => p.customerId === selectedCustomerId)
-    : baseProductList;
+    return baseProductList.filter((p: any) => 
+      (selectedCustomerId && p.customerId === selectedCustomerId) ||
+      (targetName && p.customerName && p.customerName.trim().toLowerCase() === targetName)
+    );
+  }, [baseProductList, selectedCustomerId, customerSearchText, customers, isEditMode]);
 
   const isProductChanged = isEditMode && selectedProductId !== initialData?.productId;
   const activeProductData = (!isEditMode || isProductChanged) 
@@ -974,6 +993,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
               <div className="relative">
                 <input
                   type="text"
+                  autoComplete="off"
                   placeholder="Search by PO No, Customer, Artwork, Item..."
                   className={inputCls + " font-medium text-base h-11 w-full border-purple-200 focus:ring-purple-200 bg-white"}
                   disabled={loadingPos}
@@ -1005,6 +1025,18 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                             setSelectedPo(p);
                             setPoSearchText(p.poNo);
                             setShowPoDropdown(false);
+                            if (p.customerId) {
+                              setValue('customerId', p.customerId);
+                              const cust = customers.find(c => c.id === p.customerId);
+                              setCustomerSearchText(p.customerName || cust?.name || '');
+                            }
+                            if (p.productId) {
+                              const prod = activeProducts.find(pr => pr.id === p.productId);
+                              if (prod) {
+                                setValue('productId', prod.id);
+                                setProductSearchText(`${prod.itemName} / ${prod.artworkNo}`);
+                              }
+                            }
                           }}
                         >
                           <div className="font-bold text-foreground">{p.poNo} <span className="font-normal text-muted-foreground text-xs ml-2">({p.customerName})</span></div>
@@ -1060,41 +1092,144 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
               })()}
             </div>
 
-            {/* Row 2: Manual Inputs (Product & Quantity) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-30">
+            {/* Row 2: Customer Selection First */}
+            <div className="bg-secondary/20 p-5 rounded-lg border border-border space-y-3 relative z-30">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-foreground flex items-center">
+                  <Users className="w-4 h-4 mr-2 text-primary" />
+                  1. Select Customer <span className="text-destructive">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateCustomerModal(true)}
+                  className="text-xs text-primary hover:underline font-bold flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> + New Customer
+                </button>
+              </div>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  autoComplete="off"
+                  placeholder="Search Customer Name..."
+                  className={inputCls + " font-medium text-base h-11 w-full bg-background"}
+                  value={customerSearchText}
+                  onChange={(e) => {
+                    const text = e.target.value;
+                    setCustomerSearchText(text);
+                    setShowCustomerDropdown(true);
+                    const matchedCustomer = activeCustomers.find(
+                      c => (c.name || '').trim().toLowerCase() === text.trim().toLowerCase()
+                    );
+                    if (matchedCustomer) {
+                      setValue('customerId', matchedCustomer.id);
+                    } else {
+                      setValue('customerId', '');
+                    }
+                    setValue('productId', '');
+                    setProductSearchText('');
+                  }}
+                  onFocus={() => setShowCustomerDropdown(true)}
+                  onClick={() => setShowCustomerDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 250)}
+                />
+                <input type="hidden" {...register('customerId', { required: true })} />
+
+                {showCustomerDropdown && (
+                  <div className="absolute z-50 mt-1 w-full bg-white dark:bg-card border border-border rounded-md shadow-2xl max-h-60 overflow-y-auto">
+                    {activeCustomers
+                      .filter(c => !customerSearchText.trim() || (c.name || '').toLowerCase().includes(customerSearchText.trim().toLowerCase()))
+                      .map(c => (
+                        <div
+                          key={c.id}
+                          className="px-4 py-3 hover:bg-muted cursor-pointer border-b border-border last:border-0"
+                          onMouseDown={() => {
+                            setValue('customerId', c.id);
+                            setCustomerSearchText(c.name);
+                            setShowCustomerDropdown(false);
+                            setValue('productId', '');
+                            setProductSearchText('');
+                          }}
+                        >
+                          <div className="font-bold text-sm text-foreground">{c.name}</div>
+                        </div>
+                      ))}
+
+                    {activeCustomers.filter(c => !customerSearchText.trim() || (c.name || '').toLowerCase().includes(customerSearchText.trim().toLowerCase())).length === 0 && (
+                      <div className="p-4 text-center space-y-2.5 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800 rounded-md m-2">
+                        <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                          {customerSearchText ? `"${customerSearchText}" naam se koi customer nahi mila.` : 'Active Master Data me koi customer nahi mila.'}
+                        </p>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setShowCreateCustomerModal(true);
+                            setShowCustomerDropdown(false);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold rounded-md hover:bg-primary/90 shadow transition-colors"
+                        >
+                          <Plus className="w-4 h-4" /> + Create New Customer
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Row 3: Product Selection (Filtered by Customer) & Quantity */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-20">
               <div className="space-y-2 relative">
-                <label className="text-sm font-semibold text-foreground">Select Product <span className="text-destructive">*</span></label>
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-semibold text-foreground">
+                    2. Select Product <span className="text-destructive">*</span>
+                  </label>
+                  {(selectedCustomerId || customerSearchText) && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary font-bold truncate max-w-[200px]" title={customerSearchText}>
+                      For: {customerSearchText || 'Selected Customer'}
+                    </span>
+                  )}
+                </div>
+
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="Search Product / Artwork..."
-                    className={inputCls + " font-medium text-base h-11 w-full"}
-                    disabled={loadingProducts}
+                    autoComplete="off"
+                    placeholder={selectedCustomerId || customerSearchText.trim() ? `Search items for ${customerSearchText}...` : "Pehle upar Customer select karein..."}
+                    className={cn(inputCls + " font-medium text-base h-11 w-full", !selectedCustomerId && !customerSearchText.trim() && "opacity-60 bg-muted cursor-not-allowed")}
+                    disabled={loadingProducts || (!selectedCustomerId && !customerSearchText.trim())}
                     value={productSearchText}
                     onChange={(e) => {
                       setProductSearchText(e.target.value);
                       setShowProductDropdown(true);
                       setValue('productId', ''); // Clear underlying form value
                     }}
-                    onFocus={() => setShowProductDropdown(true)}
-                    onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
+                    onFocus={() => {
+                      if (selectedCustomerId || customerSearchText.trim()) setShowProductDropdown(true);
+                    }}
+                    onClick={() => {
+                      if (selectedCustomerId || customerSearchText.trim()) setShowProductDropdown(true);
+                    }}
+                    onBlur={() => setTimeout(() => setShowProductDropdown(false), 250)}
                   />
                   {/* Hidden input for react-hook-form */}
                   <input type="hidden" {...register('productId', { required: true })} />
                   
-                  {showProductDropdown && (
-                    <div className="absolute bottom-full mb-1.5 z-[100] w-full bg-white border border-gray-300 rounded-md shadow-2xl max-h-64 overflow-y-auto">
+                  {showProductDropdown && (selectedCustomerId || customerSearchText.trim()) && (
+                    <div className="absolute top-full mt-1.5 z-50 w-full bg-white dark:bg-card border border-border rounded-md shadow-2xl max-h-64 overflow-y-auto">
                       {isEditMode && !baseProductList.find((p:any) => p.id === initialData.productId) && (
                         <div 
-                          className="px-4 py-3 cursor-pointer hover:bg-gray-100 border-b border-gray-100"
+                          className="px-4 py-3 cursor-pointer hover:bg-muted border-b border-border"
                           onMouseDown={() => {
                             setValue('productId', initialData.productId);
                             setProductSearchText(`${initialData.productName} (Historical)`);
                             setShowProductDropdown(false);
                           }}
                         >
-                          <div className="font-bold text-sm text-black">{initialData.productName}</div>
-                          <div className="text-xs text-gray-500">Historical Record</div>
+                          <div className="font-bold text-sm text-foreground">{initialData.productName}</div>
+                          <div className="text-xs text-muted-foreground">Historical Record</div>
                         </div>
                       )}
                       
@@ -1111,25 +1246,31 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                             {matching.map((p: any) => (
                               <div 
                                 key={p.id}
-                                className="px-4 py-3 cursor-pointer hover:bg-gray-100 border-b border-gray-100 last:border-0"
+                                className="px-4 py-3 cursor-pointer hover:bg-muted border-b border-border last:border-0"
                                 onMouseDown={() => {
                                   setValue('productId', p.id);
+                                  if (p.customerId && !selectedCustomerId) {
+                                    setValue('customerId', p.customerId);
+                                    if (p.customerName) setCustomerSearchText(p.customerName);
+                                  }
                                   setProductSearchText(`${p.itemName} / ${p.artworkNo}`);
                                   setShowProductDropdown(false);
                                 }}
                               >
-                                <div className="font-bold text-sm text-black">{p.itemName}</div>
-                                <div className="text-xs text-gray-600">Artwork: {p.artworkNo} {p.customerName ? `| ${p.customerName}` : ''}</div>
+                                <div className="font-bold text-sm text-foreground">{p.itemName}</div>
+                                <div className="text-xs text-muted-foreground">Artwork: {p.artworkNo} {p.customerName ? `| ${p.customerName}` : ''}</div>
                               </div>
                             ))}
 
                             {matching.length === 0 && (
-                              <div className="p-4 text-center space-y-2.5 bg-amber-50/80 border border-amber-200/80 rounded-md m-2">
-                                <p className="text-sm font-bold text-amber-900">
-                                  {productSearchText ? `"${productSearchText}" naam se koi item nahi mila.` : 'Master Data me koi item nahi mila.'}
+                              <div className="p-4 text-center space-y-2.5 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800 rounded-md m-2">
+                                <p className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                                  {productSearchText 
+                                    ? `"${customerSearchText}" ke liye "${productSearchText}" naam se koi item nahi mila.` 
+                                    : `"${customerSearchText}" ke liye koi active item nahi hai.`}
                                 </p>
-                                <p className="text-xs text-amber-700">
-                                  26/11/2026 se naye job cards me verified Master Data link hai. Aap naya item abhi create kar sakte hain:
+                                <p className="text-xs text-amber-700 dark:text-amber-300">
+                                  Aap is customer ke liye naya item abhi create kar sakte hain:
                                 </p>
                                 <button
                                   type="button"
@@ -1141,7 +1282,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground text-xs font-bold rounded-md hover:bg-primary/90 shadow transition-colors"
                                 >
                                   <Plus className="w-4 h-4" />
-                                  + Create New Item in Master Data
+                                  + Create New Item for {customerSearchText}
                                 </button>
                               </div>
                             )}
@@ -1155,7 +1296,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
                                   setShowProductDropdown(false);
                                 }}
                               >
-                                <span>+ Create New Item in Master Data</span>
+                                <span>+ Create New Item for {customerSearchText}</span>
                                 <Plus className="w-3.5 h-3.5" />
                               </div>
                             )}
@@ -1313,8 +1454,9 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
 
       {showCreateProductModal && (
         <ProductModal
-          product={null}
+          product={selectedCustomerId ? ({ customerId: selectedCustomerId, customerName: customerSearchText } as any) : null}
           customers={activeCustomers}
+          activeProducts={activeProducts}
           onClose={() => setShowCreateProductModal(false)}
           onSuccess={async (newId) => {
             setShowCreateProductModal(false);
@@ -1326,6 +1468,30 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
               const created = all.find(p => p.id === newId);
               if (created) {
                 setProductSearchText(`${created.itemName} / ${created.artworkNo}`);
+                if (created.customerId && !selectedCustomerId) {
+                  setValue('customerId', created.customerId);
+                  setCustomerSearchText(created.customerName || '');
+                }
+              }
+            }
+          }}
+        />
+      )}
+
+      {showCreateCustomerModal && (
+        <CustomerModal
+          customer={null}
+          customers={activeCustomers}
+          onClose={() => setShowCreateCustomerModal(false)}
+          onSuccess={async (newId) => {
+            setShowCreateCustomerModal(false);
+            await qc.invalidateQueries({ queryKey: ['customers'] });
+            if (newId) {
+              setValue('customerId', newId);
+              const fresh = await getCustomers();
+              const created = fresh.find(c => c.id === newId);
+              if (created) {
+                setCustomerSearchText(created.name);
               }
             }
           }}

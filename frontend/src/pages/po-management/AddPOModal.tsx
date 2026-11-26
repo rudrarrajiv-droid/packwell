@@ -195,6 +195,7 @@ function SearchableCustomerSelect({ value, onChange, customers, hasError, onCust
               ref={searchRef}
               autoFocus
               type="text"
+              autoComplete="off"
               className="flex-1 bg-transparent text-sm outline-none text-foreground placeholder:text-muted-foreground font-medium"
               placeholder="Type customer name to search or create..."
               value={search}
@@ -533,6 +534,7 @@ function SearchableProductSelect({
             <input
               ref={searchRef}
               type="text"
+              autoComplete="off"
               className="flex-1 bg-transparent text-sm outline-none text-foreground placeholder:text-muted-foreground font-medium"
               placeholder="Search or type new item name..."
               value={search}
@@ -701,7 +703,7 @@ export default function AddPOModal({
 
   useEffect(() => {
     // Strictly use Active Master Data (26/11/2026+) for creating new POs
-    const active = dbCustomers.filter((c: any) => !c.isLegacy);
+    const active = dbCustomers.filter((c: any) => c.catalogVersion === '2026_NEW' || (!c.isLegacy && c.createdAt && new Date(c.createdAt).getTime() >= new Date('2026-11-26T00:00:00').getTime()));
     setLocalCustomers(active);
   }, [dbCustomers]);
 
@@ -722,7 +724,7 @@ export default function AddPOModal({
 
   useEffect(() => {
     // Strictly use Active Master Data (26/11/2026+) for creating new POs
-    const active = dbProducts.filter((p: any) => !p.isLegacy);
+    const active = dbProducts.filter((p: any) => p.catalogVersion === '2026_NEW' || (!p.isLegacy && p.createdAt && new Date(p.createdAt).getTime() >= new Date('2026-11-26T00:00:00').getTime()));
     setLocalProducts(active);
   }, [dbProducts]);
 

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Users, Package, X, CircleDashed, ChevronDown, ChevronUp, Trash2, Edit, FilterX, GitMerge, Lock, Sparkles } from 'lucide-react';
+import { Plus, Search, Users, Package, X, CircleDashed, ChevronDown, ChevronUp, Trash2, Edit, FilterX, GitMerge, Lock, Sparkles, Copy } from 'lucide-react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { cn, getCustomerDisplayLabel } from '../lib/utils';
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer, checkCustomerUsage, migrateCustomer } from '../lib/supabase/customerService';
@@ -198,6 +198,18 @@ export default function MasterData() {
 
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
+    setShowProductModal(true);
+  };
+
+  const handleCopyProduct = (product: Product) => {
+    // Clone all technical specs, reset id and customer so user can assign to another customer
+    setEditingProduct({
+      ...product,
+      id: undefined,
+      customerId: '',
+      customerName: '',
+      artworkNo: product.artworkNo ? `${product.artworkNo}` : '',
+    });
     setShowProductModal(true);
   };
 
@@ -558,6 +570,7 @@ export default function MasterData() {
               data={filteredProducts} 
               isLoading={loadingP} 
               onEdit={isAdmin && catalogView === 'active' ? handleEditProduct : undefined} 
+              onCopy={catalogView === 'active' ? handleCopyProduct : undefined}
               onDelete={canDelete && catalogView === 'active' ? handleDeleteProduct : undefined}
               onMerge={canDelete && catalogView === 'active' ? (p) => setMergeData({ entity: p, type: 'product' }) : undefined}
               selectedProducts={selectedProducts}
@@ -582,6 +595,7 @@ export default function MasterData() {
         <ProductModal
           product={editingProduct}
           customers={activeCustomers}
+          activeProducts={activeProducts}
           onClose={() => { setShowProductModal(false); setEditingProduct(null); }}
           onSuccess={() => { setShowProductModal(false); setEditingProduct(null); qc.invalidateQueries({ queryKey: ['products'] }); qc.invalidateQueries({ queryKey: ['customers'] }); }}
         />
@@ -764,10 +778,10 @@ function CustomersTable({ data, products, isLoading, onEdit, onDelete, onMerge }
 
 // ─── Products Table ───────────────────────────────────────────────────────────
 function ProductsTable({
-  data, isLoading, onEdit, onDelete, onMerge,
+  data, isLoading, onEdit, onCopy, onDelete, onMerge,
   selectedProducts, onToggleSelect, onToggleSelectAll, showCosting
 }: {
-  data: any[]; isLoading: boolean, onEdit?: (p: Product) => void, onDelete?: (p: Product) => void, onMerge?: (p: Product) => void,
+  data: any[]; isLoading: boolean, onEdit?: (p: Product) => void, onCopy?: (p: Product) => void, onDelete?: (p: Product) => void, onMerge?: (p: Product) => void,
   selectedProducts?: Set<string>, onToggleSelect?: (id: string) => void, onToggleSelectAll?: () => void, showCosting?: boolean
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -851,6 +865,15 @@ function ProductsTable({
                 </button>
               </td>
               <td className="px-6 py-4 text-right flex justify-end gap-2">
+                {onCopy && (
+                  <button 
+                    onClick={() => onCopy(p)} 
+                    className="text-blue-500 hover:bg-blue-500/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" 
+                    title="Copy specs to another customer"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                )}
                 <RoleGuard requireRole="ADMIN">
                   {onMerge && (
                     <button onClick={() => onMerge(p)} className="text-orange-500 hover:bg-orange-500/10 p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100" title="Merge">
@@ -986,7 +1009,19 @@ export function CustomerModal({ customer, customers, onClose, onSuccess }: { cus
 // ─── Product Modal ─────────────────────────────────────────────────────────────
 type ProductForm = Omit<Product, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy' | 'isArchived'>;
 
-export function ProductModal({ product, customers, onClose, onSuccess }: { product: Product | null; customers: Customer[]; onClose: () => void; onSuccess: (newId?: string) => void }) {
+export function ProductModal({
+  product,
+  customers,
+  activeProducts = [],
+  onClose,
+  onSuccess
+}: {
+  product: Product | null;
+  customers: Customer[];
+  activeProducts?: Product[];
+  onClose: () => void;
+  onSuccess: (newId?: string) => void;
+}) {
   const { user } = useAuth();
   const [showInlineCustomerModal, setShowInlineCustomerModal] = useState(false);
   const [modalCustomers, setModalCustomers] = useState<Customer[]>(customers);
@@ -994,6 +1029,23 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
   React.useEffect(() => {
     setModalCustomers(customers.filter(c => !c.isLegacy));
   }, [customers]);
+
+  // Extract strictly Active Master Data (26/11/2026+) suggestions for headers
+  const activeArtworkNos = useMemo(() => {
+    return Array.from(new Set((activeProducts || []).map(p => (p.artworkNo || '').trim()).filter(Boolean))).sort();
+  }, [activeProducts]);
+
+  const activeItemNames = useMemo(() => {
+    return Array.from(new Set((activeProducts || []).map(p => (p.itemName || '').trim()).filter(Boolean))).sort();
+  }, [activeProducts]);
+
+  const activeColors = useMemo(() => {
+    return Array.from(new Set((activeProducts || []).map(p => (p.color || '').trim()).filter(Boolean))).sort();
+  }, [activeProducts]);
+
+  const activePinTypes = useMemo(() => {
+    return Array.from(new Set((activeProducts || []).map(p => (p.pinType || '').trim()).filter(Boolean))).sort();
+  }, [activeProducts]);
 
   const { register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProductForm>({
     defaultValues: product ? { ...product } : { ply: 3, ups: 1, pinQty: 0, layers: [] }
@@ -1074,14 +1126,14 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-border">
             <h2 className="text-xl font-bold text-foreground flex items-center">
-              <Package className="w-5 h-5 mr-2 text-primary" /> {product ? 'Edit Product' : 'Add New Product'}
+              <Package className="w-5 h-5 mr-2 text-primary" /> {product?.id ? 'Edit Product' : 'Add New Product'}
             </h2>
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          <form id="product-form" onSubmit={handleSubmit(onSubmit)} className="flex-1 overflow-y-auto">
+          <form id="product-form" onSubmit={handleSubmit(onSubmit)} className="flex-1 overflow-y-auto" autoComplete="off">
             <div className="p-6 space-y-8">
 
               {/* Basic Info */}
@@ -1090,11 +1142,29 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
                 <div className="grid grid-cols-2 gap-5">
                   <div className="space-y-1.5">
                     <label className={labelCls}>Artwork No <span className="text-destructive">*</span></label>
-                    <input {...register('artworkNo', { required: true })} className={inputCls} placeholder="e.g. ART-001" />
+                    <input 
+                      {...register('artworkNo', { required: true })} 
+                      list="active-artworks-list"
+                      autoComplete="off"
+                      className={inputCls} 
+                      placeholder="e.g. ART-001" 
+                    />
+                    <datalist id="active-artworks-list">
+                      {activeArtworkNos.map(art => <option key={art} value={art} />)}
+                    </datalist>
                   </div>
                   <div className="space-y-1.5">
                     <label className={labelCls}>Item Name <span className="text-destructive">*</span></label>
-                    <input {...register('itemName', { required: true })} className={inputCls} placeholder="e.g. 5 Ply Printed Box" />
+                    <input 
+                      {...register('itemName', { required: true })} 
+                      list="active-itemnames-list"
+                      autoComplete="off"
+                      className={inputCls} 
+                      placeholder="e.g. 5 Ply Printed Box" 
+                    />
+                    <datalist id="active-itemnames-list">
+                      {activeItemNames.map(name => <option key={name} value={name} />)}
+                    </datalist>
                   </div>
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
@@ -1114,7 +1184,7 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
                   </div>
                   <div className="space-y-1.5">
                     <label className={labelCls}>Actual Costing (₹)</label>
-                    <input type="number" step="0.01" {...register('actualCosting')} className={inputCls} placeholder="e.g. 15.50" />
+                    <input type="number" step="0.01" {...register('actualCosting')} autoComplete="off" className={inputCls} placeholder="e.g. 15.50" />
                   </div>
                 </div>
               </div>
@@ -1124,16 +1194,16 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
                 <div className="space-y-4">
                   <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Dimensions (mm)</h3>
                   <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-1.5"><label className={labelCls}>Length *</label><input type="number" step="0.01" {...register('length', { required: true })} className={inputCls} placeholder="0" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Width *</label><input type="number" step="0.01" {...register('width', { required: true })} className={inputCls} placeholder="0" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Height *</label><input type="number" step="0.01" {...register('height', { required: true })} className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Length *</label><input type="number" step="0.01" {...register('length', { required: true })} autoComplete="off" className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Width *</label><input type="number" step="0.01" {...register('width', { required: true })} autoComplete="off" className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Height *</label><input type="number" step="0.01" {...register('height', { required: true })} autoComplete="off" className={inputCls} placeholder="0" /></div>
                   </div>
                 </div>
                 <div className="space-y-4">
                    <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Reel / Cut</h3>
                    <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5"><label className={labelCls}>Reel Size (in) *</label><input type="number" step="0.1" {...register('reelSize', { required: true })} className={inputCls} placeholder="0" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Cut Size (in) *</label><input type="number" step="0.1" {...register('cutSize', { required: true })} className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Reel Size (in) *</label><input type="number" step="0.1" {...register('reelSize', { required: true })} autoComplete="off" className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Cut Size (in) *</label><input type="number" step="0.1" {...register('cutSize', { required: true })} autoComplete="off" className={inputCls} placeholder="0" /></div>
                    </div>
                 </div>
               </div>
@@ -1156,27 +1226,51 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
                           {['A', 'B', 'C', 'E', 'F', 'BC', 'AB'].map(f => <option key={f} value={f}>{f} Flute</option>)}
                         </select>
                       </div>
-                      <div className="space-y-1.5"><label className={labelCls}>UPS</label><input type="number" step="0.1" {...register('ups')} className={inputCls} placeholder="1" /></div>
-                      <div className="space-y-1.5"><label className={labelCls}>Creasing</label><input {...register('creasing')} className={inputCls} placeholder="e.g. 2 Lines" /></div>
-                      <div className="space-y-1.5 col-span-2"><label className={labelCls}>Die Number</label><input {...register('dieNumber')} className={inputCls} placeholder="e.g. DIE-102" /></div>
+                      <div className="space-y-1.5"><label className={labelCls}>UPS</label><input type="number" step="0.1" {...register('ups')} autoComplete="off" className={inputCls} placeholder="1" /></div>
+                      <div className="space-y-1.5"><label className={labelCls}>Creasing</label><input {...register('creasing')} autoComplete="off" className={inputCls} placeholder="e.g. 2 Lines" /></div>
+                      <div className="space-y-1.5 col-span-2"><label className={labelCls}>Die Number</label><input {...register('dieNumber')} autoComplete="off" className={inputCls} placeholder="e.g. DIE-102" /></div>
                     </div>
                  </div>
                  <div className="space-y-4">
                    <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center"><div className="w-2 h-2 rounded-full bg-primary mr-2"/> Finishing</h3>
                    <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5"><label className={labelCls}>Color</label><input {...register('color')} className={inputCls} placeholder="e.g. Brown" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Packing</label><input {...register('packing')} className={inputCls} placeholder="e.g. Bundle of 25" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Pin Qty</label><input type="number" {...register('pinQty')} className={inputCls} placeholder="0" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Pin/Pasting</label><input {...register('pinPasting')} className={inputCls} placeholder="e.g. Stitching" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Pin Type</label><input {...register('pinType')} className={inputCls} placeholder="e.g. Heavy Duty" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Box Type</label><input {...register('boxType')} className={inputCls} placeholder="e.g. Universal" /></div>
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Color</label>
+                      <input 
+                        {...register('color')} 
+                        list="active-colors-list"
+                        autoComplete="off"
+                        className={inputCls} 
+                        placeholder="e.g. Brown" 
+                      />
+                      <datalist id="active-colors-list">
+                        {activeColors.map(c => <option key={c} value={c} />)}
+                      </datalist>
+                    </div>
+                    <div className="space-y-1.5"><label className={labelCls}>Packing</label><input {...register('packing')} autoComplete="off" className={inputCls} placeholder="e.g. Bundle of 25" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Pin Qty</label><input type="number" {...register('pinQty')} autoComplete="off" className={inputCls} placeholder="0" /></div>
+                    <div className="space-y-1.5"><label className={labelCls}>Pin/Pasting</label><input {...register('pinPasting')} autoComplete="off" className={inputCls} placeholder="e.g. Stitching" /></div>
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Pin Type</label>
+                      <input 
+                        {...register('pinType')} 
+                        list="active-pintypes-list"
+                        autoComplete="off"
+                        className={inputCls} 
+                        placeholder="e.g. Heavy Duty" 
+                      />
+                      <datalist id="active-pintypes-list">
+                        {activePinTypes.map(pt => <option key={pt} value={pt} />)}
+                      </datalist>
+                    </div>
+                    <div className="space-y-1.5"><label className={labelCls}>Box Type</label><input {...register('boxType')} autoComplete="off" className={inputCls} placeholder="e.g. Universal" /></div>
                    </div>
                  </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className={labelCls}>Special Requirements</label>
-                <input {...register('specialRequirement')} className={inputCls} placeholder="Any special instructions for production..." />
+                <input {...register('specialRequirement')} autoComplete="off" className={inputCls} placeholder="Any special instructions for production..." />
               </div>
 
               {/* Layers */}
@@ -1262,7 +1356,7 @@ export function ProductModal({ product, customers, onClose, onSuccess }: { produ
             </button>
             <button type="submit" form="product-form" disabled={isSubmitting} className="px-6 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center">
               {isSubmitting && <CircleDashed className="w-4 h-4 mr-2 animate-spin" />}
-              {product ? 'Update' : 'Save'} Product
+              {product?.id ? 'Update' : 'Save'} Product
             </button>
           </div>
         </div>
