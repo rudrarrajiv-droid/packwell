@@ -1040,11 +1040,41 @@ export function ProductModal({
   }, [activeProducts]);
 
   const activeColors = useMemo(() => {
-    return Array.from(new Set((activeProducts || []).map(p => (p.color || '').trim()).filter(Boolean))).sort();
+    const list = (activeProducts || []).map(p => (p.color || '').trim()).filter(Boolean);
+    const set = new Set(list);
+    if (set.size === 0) {
+      ['BLACK', 'BROWN', 'NATURAL', 'WHITE', 'YELLOW', 'PLAIN'].forEach(c => set.add(c));
+    }
+    return Array.from(set).sort();
   }, [activeProducts]);
 
-  const activePinTypes = useMemo(() => {
-    return Array.from(new Set((activeProducts || []).map(p => (p.pinType || '').trim()).filter(Boolean))).sort();
+  const activePackings = useMemo(() => {
+    const list = (activeProducts || []).map(p => (p.packing || '').trim()).filter(Boolean);
+    const set = new Set(list);
+    if (set.size === 0) {
+      ['Bundle of 25', 'Bundle of 50', 'Bundle of 100', 'Pallet', 'Strapping'].forEach(p => set.add(p));
+    }
+    return Array.from(set).sort();
+  }, [activeProducts]);
+
+  const activePinQtys = useMemo(() => {
+    const set = new Set<string>();
+    ['0', '2', '4', '6', '8', '10', '12'].forEach(v => set.add(v));
+    (activeProducts || []).forEach(p => {
+      if (p.pinQty !== undefined && p.pinQty !== null && String(p.pinQty).trim() !== '') {
+        set.add(String(p.pinQty));
+      }
+    });
+    return Array.from(set).sort((a, b) => Number(a) - Number(b));
+  }, [activeProducts]);
+
+  const activeBoxTypes = useMemo(() => {
+    const list = (activeProducts || []).map(p => (p.boxType || '').trim()).filter(Boolean);
+    const set = new Set(list);
+    if (set.size === 0) {
+      ['Universal', 'RSC', 'Die Cut', 'Lock Bottom', 'Telescopic', 'Tray'].forEach(b => set.add(b));
+    }
+    return Array.from(set).sort();
   }, [activeProducts]);
 
   const { register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting } } = useForm<ProductForm>({
@@ -1091,7 +1121,10 @@ export function ProductModal({
         customerName: customer.name,
         length: Number(data.length), width: Number(data.width), height: Number(data.height),
         ply: Number(data.ply), reelSize: Number(data.reelSize), cutSize: Number(data.cutSize),
-        pinQty: Number(data.pinQty), ups: Number(data.ups),
+        pinQty: Number(data.pinQty || 0), ups: Number(data.ups || 1),
+        creasing: data.creasing || '',
+        pinType: data.pinType || '',
+        pinPasting: data.pinType || data.pinPasting || '',
         actualCosting: data.actualCosting ? Number(data.actualCosting) : undefined,
         layers: data.layers.map(l => {
           const isHdpe = l.paperType === 'HDPE';
@@ -1227,8 +1260,23 @@ export function ProductModal({
                         </select>
                       </div>
                       <div className="space-y-1.5"><label className={labelCls}>UPS</label><input type="number" step="0.1" {...register('ups')} autoComplete="off" className={inputCls} placeholder="1" /></div>
-                      <div className="space-y-1.5"><label className={labelCls}>Creasing</label><input {...register('creasing')} autoComplete="off" className={inputCls} placeholder="e.g. 2 Lines" /></div>
-                      <div className="space-y-1.5 col-span-2"><label className={labelCls}>Die Number</label><input {...register('dieNumber')} autoComplete="off" className={inputCls} placeholder="e.g. DIE-102" /></div>
+                      <div className="space-y-1.5">
+                        <label className={labelCls}>Creasing *</label>
+                        <select {...register('creasing')} className={inputCls}>
+                          <option value="">-- Select Creasing --</option>
+                          <option value="ROTARY">ROTARY</option>
+                          <option value="DIE">DIE</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5 col-span-2">
+                        <label className={labelCls}>Die Number {watch('creasing') === 'DIE' && <span className="text-destructive">*</span>}</label>
+                        <input 
+                          {...register('dieNumber')} 
+                          autoComplete="off" 
+                          className={cn(inputCls, watch('creasing') !== 'DIE' && 'opacity-60 bg-muted/40')} 
+                          placeholder={watch('creasing') === 'DIE' ? "e.g. DIE-102" : "Only required for DIE creasing"} 
+                        />
+                      </div>
                     </div>
                  </div>
                  <div className="space-y-4">
@@ -1247,23 +1295,65 @@ export function ProductModal({
                         {activeColors.map(c => <option key={c} value={c} />)}
                       </datalist>
                     </div>
-                    <div className="space-y-1.5"><label className={labelCls}>Packing</label><input {...register('packing')} autoComplete="off" className={inputCls} placeholder="e.g. Bundle of 25" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Pin Qty</label><input type="number" {...register('pinQty')} autoComplete="off" className={inputCls} placeholder="0" /></div>
-                    <div className="space-y-1.5"><label className={labelCls}>Pin/Pasting</label><input {...register('pinPasting')} autoComplete="off" className={inputCls} placeholder="e.g. Stitching" /></div>
                     <div className="space-y-1.5">
-                      <label className={labelCls}>Pin Type</label>
+                      <label className={labelCls}>Packing</label>
                       <input 
-                        {...register('pinType')} 
-                        list="active-pintypes-list"
-                        autoComplete="off"
+                        {...register('packing')} 
+                        list="active-packings-list"
+                        autoComplete="off" 
                         className={inputCls} 
-                        placeholder="e.g. Heavy Duty" 
+                        placeholder="e.g. Bundle of 25" 
                       />
-                      <datalist id="active-pintypes-list">
-                        {activePinTypes.map(pt => <option key={pt} value={pt} />)}
+                      <datalist id="active-packings-list">
+                        {activePackings.map(pk => <option key={pk} value={pk} />)}
                       </datalist>
                     </div>
-                    <div className="space-y-1.5"><label className={labelCls}>Box Type</label><input {...register('boxType')} autoComplete="off" className={inputCls} placeholder="e.g. Universal" /></div>
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Pin Type (Joint) *</label>
+                      <select 
+                        {...register('pinType')} 
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setValue('pinType', val);
+                          setValue('pinPasting', val);
+                          if (val === 'PASTING') {
+                            setValue('pinQty', 0);
+                          }
+                        }}
+                        className={inputCls}
+                      >
+                        <option value="">-- Select --</option>
+                        <option value="PIN">PIN</option>
+                        <option value="PASTING">PASTING</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Pin Qty</label>
+                      <input 
+                        type="number" 
+                        {...register('pinQty')} 
+                        list="active-pinqtys-list"
+                        autoComplete="off" 
+                        className={inputCls} 
+                        placeholder="0" 
+                      />
+                      <datalist id="active-pinqtys-list">
+                        {activePinQtys.map(qty => <option key={qty} value={qty} />)}
+                      </datalist>
+                    </div>
+                    <div className="space-y-1.5 col-span-2">
+                      <label className={labelCls}>Box Type</label>
+                      <input 
+                        {...register('boxType')} 
+                        list="active-boxtypes-list"
+                        autoComplete="off" 
+                        className={inputCls} 
+                        placeholder="e.g. Universal" 
+                      />
+                      <datalist id="active-boxtypes-list">
+                        {activeBoxTypes.map(bt => <option key={bt} value={bt} />)}
+                      </datalist>
+                    </div>
                    </div>
                  </div>
               </div>

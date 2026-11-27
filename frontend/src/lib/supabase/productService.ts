@@ -351,11 +351,61 @@ export const updateProduct = async (id: string, data: Record<string, any>, user:
   if (jcs) {
     for (const jc of jcs) {
       const raw = jc.raw_data || {};
+      const existingSnapshot = jc.product_snapshot || raw.productSnapshot || {};
+
+      // Merge new product specifications into the snapshot
+      const mergedLayers = (data.layers || []).map((newLayer: any, idx: number) => {
+        const existingLayer = (existingSnapshot.layers || [])[idx] || {};
+        return {
+          ...newLayer,
+          allocatedReels: existingLayer.allocatedReels ?? newLayer.allocatedReels,
+          allocatedReelNumber: existingLayer.allocatedReelNumber ?? newLayer.allocatedReelNumber,
+          allocatedReelWeight: existingLayer.allocatedReelWeight ?? newLayer.allocatedReelWeight,
+        };
+      });
+
+      const updatedSnapshot = {
+        ...existingSnapshot,
+        ...data,
+        id,
+        productId: id,
+        itemName: newName || existingSnapshot.itemName,
+        productName: newName || existingSnapshot.productName,
+        artworkNo: newArtwork || existingSnapshot.artworkNo,
+        customerName: data.customerName || existingSnapshot.customerName,
+        customerId: data.customerId || existingSnapshot.customerId,
+        length: data.length !== undefined ? data.length : existingSnapshot.length,
+        width: data.width !== undefined ? data.width : existingSnapshot.width,
+        height: data.height !== undefined ? data.height : existingSnapshot.height,
+        ply: data.ply !== undefined ? data.ply : existingSnapshot.ply,
+        flute: data.flute !== undefined ? data.flute : existingSnapshot.flute,
+        ups: data.ups !== undefined ? data.ups : existingSnapshot.ups,
+        reelSize: data.reelSize !== undefined ? data.reelSize : existingSnapshot.reelSize,
+        cutSize: data.cutSize !== undefined ? data.cutSize : existingSnapshot.cutSize,
+        creasing: data.creasing !== undefined ? data.creasing : existingSnapshot.creasing,
+        dieNumber: data.dieNumber !== undefined ? data.dieNumber : existingSnapshot.dieNumber,
+        dieNo: data.dieNumber || data.dieNo || existingSnapshot.dieNo,
+        color: data.color !== undefined ? data.color : existingSnapshot.color,
+        packing: data.packing !== undefined ? data.packing : existingSnapshot.packing,
+        pinQty: data.pinQty !== undefined ? data.pinQty : existingSnapshot.pinQty,
+        pinType: data.pinType !== undefined ? data.pinType : existingSnapshot.pinType,
+        pinPasting: data.pinPasting !== undefined ? data.pinPasting : existingSnapshot.pinPasting,
+        jointType: data.pinType || existingSnapshot.jointType,
+        boxType: data.boxType !== undefined ? data.boxType : existingSnapshot.boxType,
+        specialRequirement: data.specialRequirement !== undefined ? data.specialRequirement : existingSnapshot.specialRequirement,
+        layers: mergedLayers.length > 0 ? mergedLayers : (existingSnapshot.layers || []),
+      };
+
+      raw.productSnapshot = updatedSnapshot;
       if (newName) raw.itemName = newName;
+      if (newName) raw.productName = newName;
       if (newArtwork) raw.artworkNo = newArtwork;
       if (newSize) raw.size = newSize;
 
-      const updatePayload: any = { raw_data: raw };
+      const updatePayload: any = { 
+        raw_data: raw,
+        product_snapshot: updatedSnapshot
+      };
       if (newName) updatePayload.product_name = newName;
       if (newArtwork) updatePayload.artwork_no = newArtwork;
       if (newSize) updatePayload.size = newSize;
