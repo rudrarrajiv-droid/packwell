@@ -617,9 +617,17 @@ export default function JobCards() {
   );
 }
 
-function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: { initialData?: any, onClose: () => void, onSuccess: (createdJobCard?: any) => void, onValidationFailed?: () => void }) {
+export function JobCardModal({ initialData, initialPo, onClose, onSuccess, onValidationFailed }: { 
+  initialData?: any;
+  initialPo?: any;
+  onClose: () => void;
+  onSuccess: (createdJobCard?: any) => void;
+  onValidationFailed?: () => void;
+}) {
   const { user, hasRole } = useAuth();
   const isEditMode = !!initialData;
+  const initialQty = initialData?.orderQty || (initialPo ? ((initialPo.orderQty - (initialPo.outQty || 0)) > 0 ? (initialPo.orderQty - (initialPo.outQty || 0)) : initialPo.orderQty) : undefined);
+
   const { register, handleSubmit, watch, setValue, formState: { isSubmitting } } = useForm({
     defaultValues: isEditMode ? {
       jobCardNo: initialData.jobCardNo,
@@ -629,7 +637,13 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
       orderQty: initialData.orderQty,
       priority: initialData.priority || 'Normal',
       remarks: initialData.remarks || ''
-    } : {}
+    } : {
+      customerId: initialPo?.customerId || '',
+      productId: initialPo?.productId || '',
+      orderQty: initialQty || '',
+      priority: 'Normal',
+      remarks: initialPo ? `Created against PO: ${initialPo.poNo}` : ''
+    }
   });
   
   const qc = useQueryClient();
@@ -675,6 +689,9 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
     if (isEditMode && initialData) {
       return initialData.productName || '';
     }
+    if (initialPo) {
+      return initialPo.productName || '';
+    }
     return '';
   });
   const [showProductDropdown, setShowProductDropdown] = useState(false);
@@ -682,6 +699,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
   // Customer State
   const [customerSearchText, setCustomerSearchText] = useState(() => {
     if (isEditMode && initialData?.customerName) return initialData.customerName;
+    if (initialPo) return initialPo.customerName || '';
     return '';
   });
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
@@ -690,12 +708,16 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
   // PO State
   const [poSearchText, setPoSearchText] = useState(() => {
     if (isEditMode && initialData?.poNo) return initialData.poNo;
+    if (initialPo) return initialPo.poNo || '';
     return '';
   });
   const [showPoDropdown, setShowPoDropdown] = useState(false);
   const [selectedPo, setSelectedPo] = useState<any>(() => {
     if (isEditMode && initialData?.poId) {
        return { id: initialData.poId, poNo: initialData.poNo };
+    }
+    if (initialPo) {
+      return { id: initialPo.id, poNo: initialPo.poNo, ...initialPo };
     }
     return null;
   });
@@ -706,6 +728,11 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
     // Set default date to today
     const today = new Date().toISOString().split('T')[0];
     setValue('targetDate', today);
+    if (initialPo) {
+      if (initialPo.customerId) setValue('customerId', initialPo.customerId);
+      if (initialPo.productId) setValue('productId', initialPo.productId);
+      if (initialQty) setValue('orderQty', initialQty);
+    }
     
     // Fetch next job card number natively from Firestore
     const fetchNextNo = async () => {
@@ -844,6 +871,8 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
     
     const orderQty = Number(data.orderQty);
     
+    const poResolution = selectedPo?.raw_data?.rmResolution || selectedPo?.rawData?.rmResolution || initialPo?.raw_data?.rmResolution || initialPo?.rawData?.rmResolution || null;
+
     // Construct final payload
     const jobCardPayload = {
       jobCardNo: data.jobCardNo,
@@ -865,6 +894,7 @@ function JobCardModal({ initialData, onClose, onSuccess, onValidationFailed }: {
       
       priority: data.priority || 'Normal',
       remarks: data.remarks || '',
+      rmResolution: poResolution,
       
       productSnapshot: {
         ...activeProductData,

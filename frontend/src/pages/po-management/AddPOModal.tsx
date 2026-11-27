@@ -8,6 +8,7 @@ import { createPurchaseOrders, purchaseOrderNumberExists, getExistingPOInfo, typ
 import { useAuth } from '../../contexts/AuthContext';
 import { cn, getCustomerDisplayLabel } from '../../lib/utils';
 import RMStatusPanel from './RMStatusPanel';
+import { ProductModal } from '../MasterData';
 
 // ── Searchable Customer Dropdown with Inline Auto-Create ────────────────────────
 interface SearchableCustomerSelectProps {
@@ -283,6 +284,7 @@ interface SearchableProductSelectProps {
   hasError?: boolean;
   triggerDataId?: string;
   onProductCreated: (newProduct: ProductOption) => void;
+  onRequestCreateProduct: (searchName: string) => void;
 }
 
 function SearchableProductSelect({
@@ -293,7 +295,8 @@ function SearchableProductSelect({
   selectedCustomerName,
   hasError,
   triggerDataId,
-  onProductCreated
+  onProductCreated,
+  onRequestCreateProduct
 }: SearchableProductSelectProps) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -440,44 +443,9 @@ function SearchableProductSelect({
     }
   }, [highlightIdx, open]);
 
-  const handleCreateNewProduct = async () => {
-    if (!search.trim() || isCreating) return;
-    setIsCreating(true);
-    try {
-      const trimmedName = search.trim();
-      const payload: Record<string, any> = {
-        itemName: trimmedName,
-        customerId: selectedCustomerId || null,
-        customerName: selectedCustomerName || null,
-        artworkNo: '',
-        length: 0,
-        width: 0,
-        height: 0,
-        ply: 3,
-        reelSize: 0,
-        cutSize: 0,
-        layers: []
-      };
-
-      const newId = await createProduct(payload, user?.name || 'System');
-      const newProd: ProductOption = {
-        id: newId,
-        name: trimmedName,
-        itemName: trimmedName,
-        customerId: selectedCustomerId,
-        customerName: selectedCustomerName,
-        artworkNo: '',
-      };
-
-      onProductCreated(newProd);
-      onChange(newId, newProd);
-      setOpen(false);
-    } catch (err: any) {
-      console.error('Failed to create product:', err);
-      alert('Failed to create item: ' + err.message);
-    } finally {
-      setIsCreating(false);
-    }
+  const handleOpenCreateModal = () => {
+    onRequestCreateProduct(search.trim());
+    setOpen(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -490,7 +458,7 @@ function SearchableProductSelect({
         onChange(filteredList[highlightIdx].id, filteredList[highlightIdx]);
         setOpen(false);
       } else if (canCreateNew) {
-        handleCreateNewProduct();
+        handleOpenCreateModal();
       }
     }
     else if (e.key === 'Escape') { setOpen(false); }
@@ -622,12 +590,11 @@ function SearchableProductSelect({
             {canCreateNew && (
               <button
                 type="button"
-                onClick={handleCreateNewProduct}
-                disabled={isCreating}
+                onClick={handleOpenCreateModal}
                 className="w-full text-left px-3.5 py-2.5 text-sm bg-emerald-50 dark:bg-emerald-950/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/90 text-emerald-800 dark:text-emerald-300 font-bold flex items-center gap-2 transition-colors border-t border-emerald-300 dark:border-emerald-800 sticky bottom-0 z-10"
               >
-                {isCreating ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : <Sparkles className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />}
-                <span>+ Create New Item: <b>"{search.trim()}"</b> {selectedCustomerName ? `for ${selectedCustomerName}` : ''}</span>
+                <Sparkles className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span>+ Create New Product with Full Specs: <b>"{search.trim()}"</b> {selectedCustomerName ? `for ${selectedCustomerName}` : ''}</span>
               </button>
             )}
 
@@ -685,6 +652,11 @@ export default function AddPOModal({
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [pendingNewProduct, setPendingNewProduct] = useState<{
+    itemName: string;
+    targetItemId: string;
+  } | null>(null);
 
   const [pendingOldPOs, setPendingOldPOs] = useState<PurchaseOrder[]>([]);
   const [showConfirmNil, setShowConfirmNil] = useState(false);
@@ -1158,6 +1130,12 @@ export default function AddPOModal({
                               hasError={!!errors[`productId-${item.id}`]}
                               triggerDataId={item.id}
                               onProductCreated={handleProductCreated}
+                              onRequestCreateProduct={(searchName) => {
+                                setPendingNewProduct({
+                                  itemName: searchName,
+                                  targetItemId: item.id
+                                });
+                              }}
                             />
                             {errors[`productId-${item.id}`] && <span className="text-red-500 text-[10px] font-bold block mt-0.5">{errors[`productId-${item.id}`]}</span>}
                           </td>
@@ -1301,6 +1279,46 @@ export default function AddPOModal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Full Master Data Product Modal for adding new items with 100% complete specifications */}
+      {pendingNewProduct && (
+        <ProductModal
+          product={{
+            itemName: pendingNewProduct.itemName,
+            customerId: commonData.customerId || undefined,
+            customerName: commonData.customerName || undefined,
+            ply: 3,
+            ups: 1,
+            pinQty: 0,
+            layers: []
+          } as any}
+          customers={localCustomers}
+          activeProducts={localProducts}
+          onClose={() => setPendingNewProduct(null)}
+          onSuccess={async (newId?: string) => {
+            const targetId = pendingNewProduct.targetItemId;
+            setPendingNewProduct(null);
+            const queryResult = await queryClient.fetchQuery({
+              queryKey: ['products'],
+              queryFn: async () => {
+                const data = await getProducts() as any[];
+                return data.map((product: any) => ({
+                  ...product,
+                  name: product.itemName || product.name,
+                  size: `${product.length || ''}x${product.width || ''}x${product.height || ''}`.trim()
+                }));
+              }
+            });
+            if (newId && targetId) {
+              const created = (queryResult || []).find((p: any) => p.id === newId);
+              if (created) {
+                handleProductCreated(created);
+                handleItemChange(targetId, 'productId', newId, created);
+              }
+            }
+          }}
+        />
       )}
     </div>
   );

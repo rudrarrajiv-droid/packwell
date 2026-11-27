@@ -24,6 +24,8 @@ export interface PurchaseOrder {
   createdBy?: string | null;
   updatedBy?: string | null;
   isArchived: boolean;
+  raw_data?: Record<string, any> | null;
+  rawData?: Record<string, any> | null;
 }
 
 export const getPurchaseOrderBalance = (po: PurchaseOrder): number => {
@@ -193,6 +195,8 @@ function mapPurchaseOrderRow(row: PurchaseOrderRow): PurchaseOrder {
     updatedBy: row.updated_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    raw_data: rawData,
+    rawData: rawData,
   };
 }
 
@@ -613,8 +617,10 @@ export const updatePurchaseOrder = async (
     updatedBy: user,
   };
 
+  const incomingRawData = (updates as any).raw_data || (updates as any).rawData || {};
   const rawData = {
     ...(existing.raw_data ?? {}),
+    ...incomingRawData,
     ...(Object.prototype.hasOwnProperty.call(updates, 'poNo') ? { poNo: nextPurchaseOrder.poNo } : {}),
     ...(Object.prototype.hasOwnProperty.call(updates, 'poDate') ? { poDate: nextPurchaseOrder.poDate } : {}),
     ...(Object.prototype.hasOwnProperty.call(updates, 'deliveryDate') ? { deliveryDate: nextPurchaseOrder.deliveryDate } : {}),
@@ -635,6 +641,15 @@ export const updatePurchaseOrder = async (
     updatedAt: now,
     updatedBy: user,
   };
+
+  // Explicit check for rmResolution deletion or assignment
+  if (Object.prototype.hasOwnProperty.call(incomingRawData, 'rmResolution')) {
+    if (incomingRawData.rmResolution === undefined || incomingRawData.rmResolution === null) {
+      delete rawData.rmResolution;
+    } else {
+      rawData.rmResolution = incomingRawData.rmResolution;
+    }
+  }
 
   const updatePayload: Record<string, any> = {
     updated_by: user,
@@ -931,6 +946,148 @@ export const adjustPurchaseOrderStock = async ({
   await logActivity({
     user,
     action: `Adjusted PO ${po.poNo} balance from ${currentBal} to ${targetBalance} (Diff: ${difference})`,
+    entity: 'purchaseOrders',
+    referenceId: poId
+  });
+
+  return true;
+};
+
+export interface POQuickDispatchPayload {
+  poId: string;
+  quantity: number;
+  dcNo?: string;
+  invoiceNo?: string;
+  date?: string;
+  dispatchDate?: string;
+  remarks?: string;
+  vehicleNo?: string;
+  transporterName?: string;
+  freight?: number;
+  user?: string;
+}
+
+export const executePOQuickDispatch = async (
+  payload: POQuickDispatchPayload,
+  user: string = 'System'
+): Promise<boolean> => {
+  const { poId, quantity, dcNo, invoiceNo, remarks, vehicleNo, transporterName, freight } = payload;
+  const dispatchDate = payload.dispatchDate || payload.date || new Date().toISOString().split('T')[0];
+  const activeUser = payload.user || user || 'System';
+  const ref = invoiceNo || dcNo || 'QUICK_DISPATCH';
+
+  // 1. Fetch the PO
+  const { data: poRows, error: poErr } = await supabase
+    .from('purchase_orders')
+    .select('*')
+    .eq('firestore_document_id', poId);
+
+  if (poErr || !poRows || poRows.length === 0) {
+    throw new Error('Purchase Order not found.');
+  }
+
+  const po = poRows[0];
+  const orderQty = Number(po.order_qty) || 0;
+  const inQty = Number(po.in_qty) || 0;
+  const outQty = Number(po.out_qty) || 0;
+  const newOutQty = outQty + quantity;
+  const newBal = orderQty + inQty - newOutQty;
+  const newStatus = (newBal <= 0 || po.status === 'CLOSED') ? 'CLOSED' : 'PARTIAL';
+
+  // 2. Update PO record
+  const { error: updateErr } = await supabase.from('purchase_orders').update({
+    out_qty: newOutQty,
+    status: newStatus,
+    updated_at: new Date().toISOString(),
+    updated_by: user,
+    raw_data: { ...(po.raw_data || {}), outQty: newOutQty, status: newStatus }
+  }).eq('firestore_document_id', poId);
+
+  if (updateErr) throw updateErr;
+
+  // 3. Log PO transaction
+  const logRemarks = remarks || `Quick Dispatch (Inv: ${invoiceNo || '-'}, Vehicle: ${vehicleNo || '-'}, Transporter: ${transporterName || '-'})`;
+  await supabase.from('po_transactions').insert({
+    firestore_document_id: crypto.randomUUID(),
+    po_id: poId,
+    type: 'OUT',
+    quantity: quantity,
+    transaction_date: dispatchDate,
+    remarks: logRemarks,
+    reference_id: ref,
+    performed_by: user,
+    created_at: new Date().toISOString(),
+    raw_data: {
+      invoiceNo,
+      dcNo,
+      vehicleNo,
+      transporterName,
+      freight
+    }
+  });
+
+  // 4. Automatically synchronize to Finish Goods (zero double entry!)
+  try {
+    const prodId = po.resolved_product_id || po.product_id_raw;
+    const prodName = po.product_name;
+
+    let fgQuery = supabase.from('finish_goods').select('*').eq('is_archived', false);
+    if (prodId) {
+      fgQuery = fgQuery.eq('product_id', prodId);
+    } else if (prodName) {
+      fgQuery = fgQuery.eq('product_name', prodName);
+    }
+
+    const { data: fgRows } = await fgQuery;
+    if (fgRows && fgRows.length > 0) {
+      const fg = fgRows[0];
+      const curOut = Number(fg.out_qty) || 0;
+      const curIn = Number(fg.in_qty) || 0;
+      const curOp = Number(fg.opening_qty) || 0;
+      const updatedOut = curOut + quantity;
+      const updatedClose = curOp + curIn - updatedOut;
+
+      await supabase.from('finish_goods').update({
+        out_qty: updatedOut,
+        closing_balance: updatedClose,
+        updated_at: new Date().toISOString(),
+        updated_by: user,
+        raw_data: { ...(fg.raw_data || {}), outQty: updatedOut, closingBalance: updatedClose }
+      }).eq('firestore_document_id', fg.firestore_document_id);
+
+      await supabase.from('finish_good_transactions').insert({
+        firestore_document_id: crypto.randomUUID(),
+        finish_good_id: fg.firestore_document_id,
+        type: 'OUT',
+        category: 'DISPATCH',
+        quantity: quantity,
+        transaction_date: dispatchDate,
+        invoice_no: invoiceNo || null,
+        reference_no: dcNo || null,
+        vehicle_no: vehicleNo || null,
+        transporter_name: transporterName || null,
+        freight: freight || 0,
+        performed_by: user,
+        created_at: new Date().toISOString(),
+        raw_data: {
+          poId,
+          poNo: po.po_no,
+          customerName: po.customer_name,
+          productName: po.product_name,
+          dcNo,
+          invoiceNo,
+          transporterName,
+          freight
+        }
+      });
+    }
+  } catch (fgErr) {
+    console.error('Note: Auto-sync to FG notice:', fgErr);
+  }
+
+  await logActivity({
+    user,
+    action: `Quick Dispatch of ${quantity} boxes for PO ${po.po_no}`,
     entity: 'purchaseOrders',
     referenceId: poId
   });
