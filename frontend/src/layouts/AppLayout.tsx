@@ -64,7 +64,6 @@ export default function AppLayout() {
     { name: 'Reel Inventory', path: '/inventory', icon: PackageSearch },
     { name: 'Finish Goods', path: '/finish-goods', icon: PackageCheck },
     { name: 'Freight Charges', path: '/freight', icon: Truck },
-    { name: 'Production', path: '/production', icon: Activity },
     { name: 'Salary & Wages', path: '/salary', icon: Users },
     { name: 'Conversion Report', path: '/dc', icon: FileSpreadsheet },
     { name: 'Profit & Loss', path: '/profit-and-loss', icon: Box },

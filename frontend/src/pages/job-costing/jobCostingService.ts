@@ -1,5 +1,6 @@
 import type { JobCostingData, JobCostingLayer, SaleRateSource } from './jobCostingTypes';
 import { updateJobCard } from '../../lib/supabase/jobCardService';
+import { unreserveAllReelsForJobCard } from '../../lib/supabase/reelService';
 import { DEFAULT_STANDARD_CONVERSION_COST } from '../../lib/conversionCostService';
 import { isFluteLayer } from '../../lib/corrugationUtils';
 
@@ -18,7 +19,8 @@ export const getStoredCostingData = (jobCardId: string): JobCostingData | null =
 
 export const saveCostingData = async (
   jobCardId: string,
-  costingData: JobCostingData
+  costingData: JobCostingData,
+  user: string = 'System'
 ): Promise<void> => {
   const lockedPayload: JobCostingData = {
     ...costingData,
@@ -41,11 +43,23 @@ export const saveCostingData = async (
     await updateJobCard(
       jobCardId,
       { costingData: lockedPayload },
-      'System',
+      user,
       { log: true, logAction: 'SAVE_JOB_COSTING' }
     );
   } catch (e) {
     console.warn('Could not sync costing to Supabase, local cache retained:', e);
+  }
+
+  // 3. Automatically unreserve all reels when DPR weight is filled for layers
+  const hasDpr = costingData.layers.some(
+    (l) => l.dprWeight !== null && Number(l.dprWeight) > 0
+  );
+  if (hasDpr) {
+    try {
+      await unreserveAllReelsForJobCard(jobCardId, costingData.jobCardNo, user);
+    } catch (unresErr) {
+      console.warn('Could not auto-unreserve reels on costing save:', unresErr);
+    }
   }
 };
 

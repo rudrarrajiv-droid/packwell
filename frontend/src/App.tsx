@@ -5,7 +5,6 @@ import Dashboard from './pages/Dashboard';
 import JobCards from './pages/JobCards';
 import MasterData from './pages/MasterData';
 import Inventory from './pages/Inventory';
-import ProductionTracker from './pages/ProductionTracker';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import FinishGoods from './pages/FinishGoods';
@@ -55,7 +54,7 @@ function App() {
                 <Route path="purchase-orders" element={<PurchaseOrders />} />
                 <Route path="master-data" element={<MasterData />} />
                 <Route path="inventory" element={<Inventory />} />
-                <Route path="production" element={<ProductionTracker />} />
+                <Route path="production" element={<Navigate to="/job-costing" replace />} />
                 <Route path="finish-goods" element={<FinishGoods />} />
                 <Route path="freight" element={<FreightCharge />} />
                 <Route path="salary" element={<Salary />} />

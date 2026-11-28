@@ -1271,4 +1271,103 @@ export const clearOrphanedReelReservation = async (
   });
 };
 
+/**
+ * Automatically releases all reel reservations for a Job Card when DPR weights are filled and saved.
+ * Sets the Job Card status to COMPLETED and recomputes all active reel reservations across the system.
+ */
+export const unreserveAllReelsForJobCard = async (
+  jobCardId: string,
+  jobCardNo?: string,
+  user: string = 'System'
+): Promise<void> => {
+  const { data: jcRow, error: jcErr } = await supabase
+    .from('job_cards')
+    .select('firestore_document_id, job_card_no, status, raw_data')
+    .eq('firestore_document_id', jobCardId)
+    .single();
+
+  if (jcErr || !jcRow) {
+    console.warn('Target Job Card not found for unreserving reels:', jcErr);
+    return;
+  }
+
+  const rawData = (jcRow.raw_data || {}) as Record<string, any>;
+  const now = new Date().toISOString();
+
+  // 1. Mark Job Card as COMPLETED if active
+  if (jcRow.status !== 'COMPLETED') {
+    await supabase
+      .from('job_cards')
+      .update({
+        status: 'COMPLETED',
+        completed_at: now,
+        completed_by: user,
+        completion_status: 'COMPLETED',
+        updated_at: now,
+        updated_by: user,
+        raw_data: {
+          ...rawData,
+          status: 'COMPLETED',
+          completedAt: now,
+          completedBy: user,
+          completionStatus: 'COMPLETED',
+          updatedAt: now,
+          updatedBy: user,
+        },
+      })
+      .eq('firestore_document_id', jobCardId);
+  }
+
+  // 2. Reconcile active reel reservations (COMPLETED job cards are automatically excluded)
+  try {
+    await reconcileActiveReelReservations();
+  } catch (recErr) {
+    console.warn('Reconcile RPC warning during auto-unreserve:', recErr);
+  }
+
+  // 3. Clear any direct reserved_for_jc matching this job card
+  const jcNumber = jobCardNo || jcRow.job_card_no;
+  if (jcNumber) {
+    try {
+      const { data: matchedReels } = await supabase
+        .from('reels')
+        .select('firestore_document_id, reel_number, raw_data')
+        .or(`reserved_for_jc.eq.${jcNumber},reserved_for_jc.eq.${jobCardId}`);
+
+      if (matchedReels && matchedReels.length > 0) {
+        for (const r of matchedReels) {
+          const rRaw = r.raw_data || {};
+          await supabase
+            .from('reels')
+            .update({
+              reserved_for_jc: null,
+              active_reserved_weight: 0,
+              updated_at: now,
+              updated_by: user,
+              raw_data: {
+                ...rRaw,
+                reservedForJC: null,
+                activeReservedWeight: 0,
+                updatedAt: now,
+                updatedBy: user,
+              },
+            })
+            .eq('firestore_document_id', r.firestore_document_id);
+        }
+      }
+    } catch (e) {
+      console.warn('Error clearing reel reserved_for_jc:', e);
+    }
+  }
+
+  await logActivity({
+    user,
+    action: 'Auto-Unreserved Job Card Reels',
+    entity: 'reels',
+    referenceId: jobCardId,
+    details: `Reels unreserved for Job Card #${jcNumber} upon DPR weight entry in Job Costing.`,
+  });
+};
+
+
 

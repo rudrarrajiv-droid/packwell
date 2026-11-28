@@ -182,6 +182,47 @@ export default function JobCosting() {
     });
   }, [costingRows, filterType, search]);
 
+  // 6. Automatic 3-Tier Sequence:
+  // Tier 1 (Top): Pending DPR jobs -> Date-wise oldest date at the top, descending to newer
+  // Tier 2 (Middle): Loss jobs -> Largest loss at the top, sequence decreasing downwards
+  // Tier 3 (Bottom/Depth): Profit jobs -> Lowest profit at the top, sequence increasing downwards
+  const sortedRows = useMemo(() => {
+    const getTier = (row: JobCostingData): number => {
+      if (row.netProfitLoss === null) return 1; // Tier 1: Pending DPR
+      if (row.netProfitLoss < 0) return 2;      // Tier 2: Loss
+      return 3;                                // Tier 3: Profit
+    };
+
+    return [...filteredRows].sort((a, b) => {
+      const tierA = getTier(a);
+      const tierB = getTier(b);
+
+      if (tierA !== tierB) {
+        return tierA - tierB;
+      }
+
+      // Tier 1: Pending DPR -> Oldest date first (Ascending order)
+      if (tierA === 1) {
+        const dateA = parseDateToIso(a.jobCardDate) || '9999-99-99';
+        const dateB = parseDateToIso(b.jobCardDate) || '9999-99-99';
+        const dateComp = dateA.localeCompare(dateB);
+        if (dateComp !== 0) return dateComp;
+        return (a.jobCardNo || '').localeCompare(b.jobCardNo || '');
+      }
+
+      // Tier 2 (Loss) & Tier 3 (Profit):
+      // For Loss: Largest loss first (e.g. -50000 before -500) -> a.netProfitLoss - b.netProfitLoss
+      // For Profit: Lowest profit first, increasing down to depth (e.g. +100 before +50000) -> a.netProfitLoss - b.netProfitLoss
+      const plA = a.netProfitLoss ?? 0;
+      const plB = b.netProfitLoss ?? 0;
+      if (plA !== plB) {
+        return plA - plB;
+      }
+
+      return (a.jobCardNo || '').localeCompare(b.jobCardNo || '');
+    });
+  }, [filteredRows]);
+
   // Executive Top Aggregates
   const summary = useMemo(() => {
     let totalProfit = 0;
@@ -192,7 +233,7 @@ export default function JobCosting() {
     let lossCount = 0;
     let pendingCount = 0;
 
-    filteredRows.forEach((r) => {
+    sortedRows.forEach((r) => {
       if (r.netProfitLoss === null) {
         pendingCount++;
       } else {
@@ -211,7 +252,7 @@ export default function JobCosting() {
     const netOverall = totalProfit - totalLoss;
 
     return {
-      totalCards: filteredRows.length,
+      totalCards: sortedRows.length,
       profitCount,
       lossCount,
       pendingCount,
@@ -221,15 +262,17 @@ export default function JobCosting() {
       totalMfgCost,
       netOverall,
     };
-  }, [filteredRows]);
+  }, [sortedRows]);
 
   const handleModalSaved = (updated: JobCostingData) => {
     setSelectedCosting(updated);
     queryClient.invalidateQueries({ queryKey: ['jobCards'] });
+    queryClient.invalidateQueries({ queryKey: ['reels-all'] });
+    queryClient.invalidateQueries({ queryKey: ['reels'] });
   };
 
   const handleExportExcel = () => {
-    const exportData = filteredRows.map((r) => ({
+    const exportData = sortedRows.map((r) => ({
       'Job Card No': r.jobCardNo,
       'Job Card Date': r.jobCardDate,
       Customer: r.customerName || '',
@@ -497,7 +540,7 @@ export default function JobCosting() {
                     </div>
                   </td>
                 </tr>
-              ) : filteredRows.length === 0 ? (
+              ) : sortedRows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-muted-foreground">
                     <div className="flex flex-col items-center justify-center gap-2">
@@ -510,7 +553,7 @@ export default function JobCosting() {
                   </td>
                 </tr>
               ) : (
-                filteredRows.map((row) => {
+                sortedRows.map((row) => {
                   const isProfit = row.netProfitLoss !== null && row.netProfitLoss >= 0;
                   const isPending = row.netProfitLoss === null;
                   const hasDpr = row.layers.some((l) => l.dprWeight !== null);

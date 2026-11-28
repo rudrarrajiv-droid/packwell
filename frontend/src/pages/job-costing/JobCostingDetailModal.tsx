@@ -370,7 +370,7 @@ export default function JobCostingDetailModal({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await saveCostingData(data.jobCardId, data);
+      await saveCostingData(data.jobCardId, data, user?.name || 'System');
       onSaved({ ...data, isConversionRateLocked: true });
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 2500);
