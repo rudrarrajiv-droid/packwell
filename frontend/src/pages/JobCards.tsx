@@ -11,8 +11,7 @@ import { getPurchaseOrders } from '../lib/supabase/purchaseOrderService';
 import { useAuth } from '../contexts/AuthContext';
 import { exportToExcel, exportToPDF } from '../lib/exportUtils';
 import PrintableJobCard from './job-cards/PrintableJobCard';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import { downloadJobCardPDF } from '../lib/jobCardPdfService';
 
 import IssueJobCardModal from './job-cards/IssueJobCardModal';
 import ReelAllocationWizard from './job-cards/ReelAllocationWizard';
@@ -183,40 +182,24 @@ export default function JobCards() {
     return Array.from(new Set(list.map(j => j.jobCardNo))).filter(Boolean) as string[];
   }, [jobCards, searchCustomer, searchProduct]);
 
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const handleDownloadPDF = async () => {
     if (!isJobCardAllocationComplete(printingJobCard)) {
       setShowValidationDialog(true);
       return;
     }
-    const element = document.getElementById('job-card-print-area');
-    if (!element) return;
-    
-    // Optional: Add a loading state here if generation is slow
-    const originalStyle = element.style.cssText;
-    
     try {
-      const canvas = await html2canvas(element, { 
-        scale: 2,
-        useCORS: true,
-        logging: false
+      setIsGeneratingPdf(true);
+      await downloadJobCardPDF({
+        elementId: 'job-card-print-area',
+        jobCardNo: printingJobCard?.jobCardNo,
+        customerName: printingJobCard?.customerName,
       });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-      
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`JobCard_${printingJobCard?.jobCardNo}.pdf`);
     } catch (err) {
       console.error('PDF generation failed', err);
-      alert('Failed to generate PDF automatically. You can still use Print -> Save as PDF.');
+      window.print();
     } finally {
-      element.style.cssText = originalStyle;
+      setIsGeneratingPdf(false);
     }
   };
 
@@ -233,9 +216,10 @@ export default function JobCards() {
             <div className="flex gap-3">
               <button 
                 onClick={handleDownloadPDF} 
-                className="px-4 py-2 bg-primary hover:bg-primary/90 rounded-md text-sm font-bold flex items-center shadow transition-colors text-primary-foreground"
+                disabled={isGeneratingPdf}
+                className="px-4 py-2 bg-primary hover:bg-primary/90 rounded-md text-sm font-bold flex items-center shadow transition-colors text-primary-foreground disabled:opacity-50"
               >
-                Download as PDF
+                {isGeneratingPdf ? 'Generating PDF...' : 'Download as PDF'}
               </button>
               <button 
                 onClick={() => {
@@ -259,7 +243,7 @@ export default function JobCards() {
           </div>
           
           <div className="flex-1 p-8 overflow-y-auto flex justify-center pb-20 no-print-bg print:p-0 print:m-0 print:overflow-visible print:block print:h-auto">
-            <div className="bg-white shadow-2xl overflow-hidden print-view-container min-h-[297mm] print:shadow-none print:m-0 print:p-0">
+            <div className="bg-white shadow-2xl overflow-hidden print-view-container max-w-[210mm] w-full p-4 print:shadow-none print:m-0 print:p-0">
               <PrintableJobCard jobCard={printingJobCard} />
             </div>
           </div>

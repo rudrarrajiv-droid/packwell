@@ -17,6 +17,7 @@ import type { JobCostingData } from './job-costing/jobCostingTypes';
 import { buildJobCostingData } from './job-costing/jobCostingService';
 import JobCostingDetailModal from './job-costing/JobCostingDetailModal';
 import PrintableJobCard from './job-cards/PrintableJobCard';
+import { downloadJobCardPDF } from '../lib/jobCardPdfService';
 import { exportToExcel } from '../lib/exportUtils';
 import { cn } from '../lib/utils';
 
@@ -695,39 +696,21 @@ export default function JobCosting() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    const printContent = document.getElementById('print-job-card-modal');
-                    if (printContent) {
-                      const printWindow = window.open('', '', 'width=900,height=650');
-                      if (printWindow) {
-                        printWindow.document.write(`
-                          <html>
-                            <head>
-                              <title>Print Job Card - ${viewingJobCard.jobCardNo}</title>
-                              <style>
-                                body { font-family: sans-serif; padding: 20px; }
-                                table { width: 100%; border-collapse: collapse; }
-                                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                                @media print {
-                                  body { padding: 0; }
-                                }
-                              </style>
-                            </head>
-                            <body>
-                              ${printContent.innerHTML}
-                              <script>
-                                setTimeout(() => {
-                                  window.print();
-                                  window.close();
-                                }, 500);
-                              </script>
-                            </body>
-                          </html>
-                        `);
-                        printWindow.document.close();
-                      }
-                    }
+                  onClick={async () => {
+                    await downloadJobCardPDF({
+                      elementId: 'job-card-print-area',
+                      jobCardNo: viewingJobCard.jobCardNo,
+                      customerName: viewingJobCard.customerName,
+                    });
                   }}
+                  className="flex items-center px-3.5 py-1.5 text-xs font-bold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors shadow-sm cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 mr-1.5" />
+                  Download PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
                   className="flex items-center px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5 mr-1.5" />
@@ -742,8 +725,10 @@ export default function JobCosting() {
                 </button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-6 bg-gray-100" id="print-job-card-modal">
-              <PrintableJobCard jobCard={viewingJobCard} />
+            <div className="flex-1 overflow-y-auto p-6 bg-gray-100 flex justify-center" id="print-job-card-modal">
+              <div className="max-w-[210mm] w-full bg-white p-4 rounded-lg shadow-sm">
+                <PrintableJobCard jobCard={viewingJobCard} />
+              </div>
             </div>
           </div>
         </div>

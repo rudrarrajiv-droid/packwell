@@ -4,7 +4,6 @@ import { calculateLayerWeight, isHdpeLayer, calculateHdpeConsumption } from '../
 export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
   if (!jobCard) return null;
   const product = jobCard.productSnapshot;
-  const loggedInUser = jobCard.createdBy || 'System';
   const roundWeight = (w: any) => Math.round(Number(w) || 0);
 
   const getLayerWeight = (layer: any, idx: number) => {
@@ -30,13 +29,63 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
     return acc + getLayerWeight(layer, idx);
   }, 0);
 
+  // ── DYNAMIC DENSITY & FIT-TO-PAGE CALCULATION ──
+  const layers = product?.layers || [];
+  const layerCount = layers.length;
+
+  const hasAltDeckle = !!(
+    jobCard.rmResolution?.type === 'ALTERNATE_DECKLE' ||
+    (jobCard.rmResolution?.type === 'COMBINED_RESOLUTION' &&
+      jobCard.rmResolution.layers?.some((l: any) => l.resolutionType === 'ALT_DECKLE'))
+  );
+
+  const hasMillOrder = !!(
+    jobCard.rmResolution?.type === 'RM_ORDERED' ||
+    (jobCard.rmResolution?.type === 'COMBINED_RESOLUTION' &&
+      (jobCard.rmResolution.orders?.length > 0 ||
+        jobCard.rmResolution.layers?.some((l: any) => l.resolutionType === 'MILL_ORDER')))
+  );
+
+  // Process remarks
+  const formatRemark = (r: any): string => {
+    if (!r) return '';
+    if (typeof r === 'string') return r;
+    if (typeof r === 'object') {
+      if (r.text) {
+        const meta = [r.by, r.date ? new Date(r.date).toLocaleDateString('en-GB') : null].filter(Boolean).join(' - ');
+        return meta ? `${r.text} (${meta})` : r.text;
+      }
+      return JSON.stringify(r);
+    }
+    return String(r);
+  };
+
+  let remarkList: string[] = [];
+  if (Array.isArray(jobCard.remarks)) {
+    remarkList = jobCard.remarks.map(formatRemark).filter(Boolean);
+  } else if (jobCard.remarks) {
+    remarkList = [formatRemark(jobCard.remarks)];
+  }
+  if (Array.isArray(jobCard.specialInstructions)) {
+    remarkList.push(...jobCard.specialInstructions.map(formatRemark).filter(Boolean));
+  } else if (jobCard.specialInstructions) {
+    remarkList.push(formatRemark(jobCard.specialInstructions));
+  }
+  const hasRemarks = remarkList.length > 0;
+
+  // Dense vs Standard content detection
+  const isDense = layerCount >= 6 || (layerCount >= 5 && (hasAltDeckle || hasMillOrder)) || (hasAltDeckle && hasMillOrder) || (hasRemarks && (hasAltDeckle || hasMillOrder));
+
   return (
-    <div id="job-card-print-area" className="print-view-container w-full max-w-[200mm] sm:w-[200mm] min-h-[275mm] max-h-[285mm] flex flex-col mx-auto bg-white text-black p-2 sm:p-2.5 text-[11px] font-sans leading-tight box-border relative">
+    <div 
+      id="job-card-print-area" 
+      className="print-view-container w-full max-w-[200mm] sm:w-[200mm] flex flex-col mx-auto bg-white text-black p-2 sm:p-2.5 font-sans leading-tight box-border relative print:w-full print:max-w-full print:p-0 print:m-0"
+    >
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
           @page {
             size: A4 portrait;
-            margin: 4mm 5mm 4mm 5mm;
+            margin: 5mm 6mm 5mm 6mm;
           }
           body {
             margin: 0 !important;
@@ -48,7 +97,6 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
             width: 100% !important;
             max-width: 100% !important;
             min-height: auto !important;
-            max-height: 288mm !important;
             padding: 0 !important;
             margin: 0 auto !important;
             box-shadow: none !important;
@@ -60,11 +108,21 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
         }
       `}} />
 
-      {/* HEADER */}
-      <div className="grid grid-cols-3 items-center border-b-2 border-black pb-1 mb-1">
+      {/* HEADER WITH FIXED-DIMENSION LOGO TO PREVENT PDF BLOW-UP */}
+      <div className="grid grid-cols-3 items-center border-b-2 border-black pb-1 mb-1.5">
         <div className="flex justify-start">
-          <div className="w-12 h-12 bg-white flex items-center justify-center">
-            <img src="/logo.gif" alt="Packwell India Logo" className="w-full h-full object-contain grayscale invert bg-white" />
+          <div 
+            className="w-12 h-12 bg-white flex items-center justify-center shrink-0" 
+            style={{ width: '48px', height: '48px', minWidth: '48px', minHeight: '48px' }}
+          >
+            <img 
+              src="/logo.gif" 
+              alt="Packwell India Logo" 
+              width="48" 
+              height="48" 
+              style={{ width: '48px', height: '48px', maxWidth: '48px', maxHeight: '48px', objectFit: 'contain' }}
+              className="w-12 h-12 object-contain grayscale invert bg-white block" 
+            />
           </div>
         </div>
         <div className="text-center">
@@ -76,23 +134,30 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
         </div>
       </div>
 
-      {/* PRODUCT + DIMENSIONS */}
-      <div className="mb-1 bg-gray-100 border border-black p-1.5 text-center relative">
+      {/* CUSTOMER + PRODUCT + DIMENSIONS BANNER */}
+      <div className={`mb-1.5 bg-gray-100 border border-black p-1.5 text-center relative ${isDense ? 'text-[10px]' : 'text-xs'}`}>
         <div className="absolute top-1 left-1.5 text-[10px] font-bold text-gray-800 uppercase text-left">
-          Job Card No. : {jobCard.jobCardNo}
+          Job Card No. : <span className="font-extrabold">{jobCard.jobCardNo}</span>
         </div>
         <div className="absolute top-1 right-1.5 text-[10px] font-bold text-gray-800 uppercase text-right">
           Date : {new Date(jobCard.targetDate || jobCard.createdAt).toLocaleDateString('en-GB')}
         </div>
-        <div className="text-xs mb-0.5 uppercase mt-0.5"><span className="text-gray-500 font-semibold mr-1">CUSTOMER NAME:</span><span className="font-extrabold text-gray-900">{jobCard.customerName || '-'}</span></div>
-        <div className="text-xs mb-0.5 uppercase"><span className="text-gray-500 font-semibold mr-1">ITEM NAME:</span><span className="font-extrabold text-gray-900">{jobCard.productName}</span></div>
-        <div className="text-xs uppercase">
-          <span className="text-gray-500 font-semibold mr-1">DIMENSIONS:</span><span className="font-extrabold text-gray-900">{product?.length}(L) X {product?.width}(W) X {product?.height}(H) MM</span>
+        <div className="mb-0.5 uppercase mt-0.5">
+          <span className="text-gray-500 font-semibold mr-1">CUSTOMER NAME:</span>
+          <span className="font-extrabold text-gray-900">{jobCard.customerName || '-'}</span>
+        </div>
+        <div className="mb-0.5 uppercase">
+          <span className="text-gray-500 font-semibold mr-1">ITEM NAME:</span>
+          <span className="font-extrabold text-gray-900">{jobCard.productName}</span>
+        </div>
+        <div className="uppercase">
+          <span className="text-gray-500 font-semibold mr-1">DIMENSIONS:</span>
+          <span className="font-extrabold text-gray-900">{product?.length}(L) X {product?.width}(W) X {product?.height}(H) MM</span>
         </div>
       </div>
 
       {/* REQUIRED PRINT SEQUENCE (14 POINTS) */}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 mb-1 border border-black p-1.5 text-[10.5px]">
+      <div className={`grid grid-cols-2 gap-x-6 mb-1.5 border border-black p-1.5 ${isDense ? 'gap-y-0.5 text-[10px]' : 'gap-y-1 text-[10.5px]'}`}>
         <div className="flex justify-between border-b border-gray-200 pb-0.5">
           <span className="font-bold text-gray-600">1. No of Boxes:</span>
           <span className="font-bold uppercase">{jobCard.orderQty ? `${jobCard.orderQty} BOXES` : '-'}</span>
@@ -192,9 +257,9 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
         </div>
       </div>
 
-      {/* ALTERNATE DECKLE AUDIT / MILL PURCHASE ORDER AUDIT BANNER */}
-      {(jobCard.rmResolution?.type === 'ALTERNATE_DECKLE' || (jobCard.rmResolution?.type === 'COMBINED_RESOLUTION' && jobCard.rmResolution.layers?.some((l: any) => l.resolutionType === 'ALT_DECKLE'))) && (
-        <div className="mb-1 p-1 border border-black bg-yellow-50 text-[9.5px] font-bold">
+      {/* ALTERNATE DECKLE AUDIT BANNER */}
+      {hasAltDeckle && (
+        <div className={`mb-1 p-1 border border-black bg-yellow-50 font-bold ${isDense ? 'text-[8.5px]' : 'text-[9.5px]'}`}>
           <div className="flex justify-between items-center border-b border-black/30 pb-0.5 mb-0.5">
             <span className="uppercase text-amber-950 font-black flex items-center gap-1">
               ⚠️ ALTERNATE DECKLE PLANNED & APPROVED (TRIM WASTAGE RECORDED)
@@ -213,15 +278,16 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
             ))}
           </div>
           {jobCard.rmResolution.generalNote && (
-            <div className="text-[8.5px] text-gray-600 italic mt-0.5">
+            <div className="text-[8px] text-gray-600 italic mt-0.5">
               Note: {jobCard.rmResolution.generalNote}
             </div>
           )}
         </div>
       )}
 
-      {(jobCard.rmResolution?.type === 'RM_ORDERED' || (jobCard.rmResolution?.type === 'COMBINED_RESOLUTION' && (jobCard.rmResolution.orders?.length > 0 || jobCard.rmResolution.layers?.some((l: any) => l.resolutionType === 'MILL_ORDER')))) && (
-        <div className="mb-1 p-1 border border-black bg-blue-50 text-[9.5px] font-bold">
+      {/* MILL PURCHASE ORDER AUDIT BANNER */}
+      {hasMillOrder && (
+        <div className={`mb-1 p-1 border border-black bg-blue-50 font-bold ${isDense ? 'text-[8.5px]' : 'text-[9.5px]'}`}>
           <div className="flex justify-between items-center border-b border-black/30 pb-0.5 mb-0.5">
             <span className="uppercase text-blue-950 font-black">
               📦 RAW MATERIAL PURCHASE ORDER PLACED WITH MILL
@@ -238,7 +304,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
             ))}
           </div>
           {(jobCard.rmResolution.remarks || jobCard.rmResolution.generalNote) && (
-            <div className="text-[8.5px] text-gray-600 italic mt-0.5">
+            <div className="text-[8px] text-gray-600 italic mt-0.5">
               Remarks: {jobCard.rmResolution.remarks || jobCard.rmResolution.generalNote}
             </div>
           )}
@@ -246,9 +312,11 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
       )}
 
       {/* PAPER SPECIFICATIONS WITH ALLOCATED REELS */}
-      <div className="mb-1">
-        <h3 className="font-bold text-[10.5px] uppercase mb-0.5 bg-gray-100 p-0.5 border-y border-black text-center">Paper Specification With Allocated Reels</h3>
-        <table className="w-full text-center align-middle border-collapse border border-black text-[9.5px] table-auto">
+      <div className="mb-1.5">
+        <h3 className="font-bold text-[10.5px] uppercase mb-0.5 bg-gray-100 p-0.5 border-y border-black text-center">
+          Paper Specification With Allocated Reels
+        </h3>
+        <table className={`w-full text-center align-middle border-collapse border border-black table-auto ${isDense ? 'text-[9px]' : 'text-[9.5px]'}`}>
           <thead>
             <tr className="bg-gray-50">
               <th className="border border-black p-0.5 text-center align-middle">Layer</th>
@@ -285,23 +353,23 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
                 }
                 return (
                   <div className="flex flex-col gap-0.5 items-center">
-                    <span className="line-through text-gray-400 text-[8.5px]">{origVal}</span>
+                    <span className="line-through text-gray-400 text-[8px]">{origVal}</span>
                     {vals.map((v: any, vi: number) => (
-                      <span key={vi} className="font-bold text-red-700 text-[9.5px]">{v}</span>
+                      <span key={vi} className="font-bold text-red-700 text-[9px]">{v}</span>
                     ))}
                   </div>
                 );
               };
 
               return (
-                <tr key={idx}>
+                <tr key={idx} className={isDense ? '' : 'h-6'}>
                   <td className="border border-black p-0.5 font-bold text-center align-middle">
                     <div className="flex flex-col items-center justify-center">
                       <span>{layer.layerName}</span>
                       {isAllocated ? (
-                        <span className="bg-green-100 text-green-800 border border-green-200 px-1 rounded text-[8px] font-bold uppercase">Allocated</span>
+                        <span className="bg-green-100 text-green-800 border border-green-200 px-1 rounded text-[7.5px] font-bold uppercase">Allocated</span>
                       ) : (
-                        <span className="bg-red-100 text-red-800 border border-red-200 px-1 rounded text-[8px] font-bold uppercase">Not Allocated</span>
+                        <span className="bg-red-100 text-red-800 border border-red-200 px-1 rounded text-[7.5px] font-bold uppercase">Not Allocated</span>
                       )}
                     </div>
                   </td>
@@ -352,7 +420,7 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
                         {layer.allocatedReels.map((r: any, i: number) => (
                           <div key={i} className="flex flex-col items-center border-b border-gray-200 last:border-0 w-full">
                             <span className="font-bold text-[9px]">{r.reelNumber}</span>
-                            <span className="text-[8px] text-gray-600 font-semibold leading-tight">
+                            <span className="text-[7.5px] text-gray-600 font-semibold leading-tight">
                               {r.reelSize ? `${r.reelSize}" ` : ''}{r.bf ? `BF${r.bf} ` : ''}{r.gsm ? `GSM${r.gsm}` : ''}
                             </span>
                           </div>
@@ -415,9 +483,11 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
         </table>
       </div>
 
-      {/* LINE CLEARANCE & SIGNATURES */}
-      <div className="mb-1">
-        <h3 className="font-bold text-[10.5px] uppercase mb-0.5 bg-gray-100 p-0.5 border-y border-black">Line Clearance</h3>
+      {/* LINE CLEARANCE - COMFORTABLE WORKING HEIGHT WHEN SPACE ALLOWS */}
+      <div className="mb-1.5">
+        <h3 className="font-bold text-[10.5px] uppercase mb-0.5 bg-gray-100 p-0.5 border-y border-black">
+          Line Clearance
+        </h3>
         <table className="w-full text-left border-collapse border border-black text-[9px]">
           <thead>
             <tr className="bg-gray-50">
@@ -429,8 +499,8 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
           </thead>
           <tbody>
             {['CORRUGATION M/C', 'PAPER CUTTING M/C', 'PASTING M/C', 'ROTARY / DIE M/C', 'RS4 M/C', 'FG'].map((dept, i) => (
-              <tr key={i} className="h-4">
-                <td className="border border-black px-1 py-0.5 font-bold whitespace-nowrap">{dept}</td>
+              <tr key={i} className={isDense ? 'h-5' : 'h-7 sm:h-8'}>
+                <td className="border border-black px-1.5 py-0.5 font-bold whitespace-nowrap align-middle">{dept}</td>
                 <td className="border border-black p-0.5"></td>
                 <td className="border border-black p-0.5"></td>
                 <td className="border border-black p-0.5"></td>
@@ -440,59 +510,29 @@ export default function PrintableJobCard({ jobCard }: { jobCard: any }) {
         </table>
       </div>
 
-      {/* INSTRUCTIONS */}
-      {(() => {
-        const formatRemark = (r: any): string => {
-          if (!r) return '';
-          if (typeof r === 'string') return r;
-          if (typeof r === 'object') {
-            if (r.text) {
-              const meta = [r.by, r.date ? new Date(r.date).toLocaleDateString('en-GB') : null].filter(Boolean).join(' - ');
-              return meta ? `${r.text} (${meta})` : r.text;
-            }
-            return JSON.stringify(r);
-          }
-          return String(r);
-        };
-
-        let remarkList: string[] = [];
-        if (Array.isArray(jobCard.remarks)) {
-          remarkList = jobCard.remarks.map(formatRemark).filter(Boolean);
-        } else if (jobCard.remarks) {
-          remarkList = [formatRemark(jobCard.remarks)];
-        }
-
-        if (Array.isArray(jobCard.specialInstructions)) {
-          remarkList.push(...jobCard.specialInstructions.map(formatRemark).filter(Boolean));
-        } else if (jobCard.specialInstructions) {
-          remarkList.push(formatRemark(jobCard.specialInstructions));
-        }
-
-        if (remarkList.length === 0) return null;
-
-        return (
-          <div className="mb-1 p-1 border border-black min-h-[25px]">
-            <h3 className="font-bold text-[10px] mb-0.5">Remarks / Special Instructions:</h3>
-            <div className="text-[9px] whitespace-pre-wrap space-y-0.5 leading-tight">
-              {remarkList.map((text, idx) => (
-                <p key={idx}>{text}</p>
-              ))}
-            </div>
+      {/* INSTRUCTIONS / REMARKS */}
+      {hasRemarks && (
+        <div className="mb-1.5 p-1 border border-black min-h-[22px]">
+          <h3 className="font-bold text-[9.5px] mb-0.5">Remarks / Special Instructions:</h3>
+          <div className="text-[8.5px] whitespace-pre-wrap space-y-0.5 leading-tight">
+            {remarkList.map((text, idx) => (
+              <p key={idx}>{text}</p>
+            ))}
           </div>
-        );
-      })()}
+        </div>
+      )}
 
-      {/* PREPARED / CHECKED / PRODUCTION HEAD */}
-      <div className="grid grid-cols-3 gap-6 mt-auto pt-1 text-center text-gray-800 font-bold uppercase text-[9.5px] break-inside-avoid relative bottom-0">
-        <div className="border-t border-black pt-0.5">
+      {/* PREPARED / CHECKED / PRODUCTION HEAD - NATURALLY PLACED WITHOUT THE 11CM VOID */}
+      <div className={`grid grid-cols-3 gap-6 text-center text-gray-800 font-bold uppercase text-[9.5px] break-inside-avoid ${isDense ? 'mt-2 pt-1' : 'mt-4 sm:mt-6 pt-2'}`}>
+        <div className="border-t border-black pt-1">
           Prepared By<br />
           <span className="font-normal text-[10px] uppercase">MR. SHUBHAM CHAUHAN</span>
         </div>
-        <div className="border-t border-black pt-0.5">
+        <div className="border-t border-black pt-1">
           Checked By<br />
           <span className="font-normal text-[10px] uppercase">MR. JITENDER BALHARA</span>
         </div>
-        <div className="border-t border-black pt-0.5">
+        <div className="border-t border-black pt-1">
           Production Head<br />
           <span className="font-normal text-[10px] uppercase">MR. RAJ KUMAR</span>
         </div>

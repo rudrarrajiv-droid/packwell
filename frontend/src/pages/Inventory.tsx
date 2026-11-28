@@ -7,6 +7,7 @@ import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInw
 import { getAllJobCards } from '../lib/supabase/jobCardService';
 import ReservedJobCardDetailModal, { type ReelReservationInfo } from './inventory/ReservedJobCardDetailModal';
 import PrintableJobCard from './job-cards/PrintableJobCard';
+import { downloadJobCardPDF } from '../lib/jobCardPdfService';
 import BulkInwardModal from './inventory/BulkInwardModal';
 import OutwardModal from './inventory/OutwardModal';
 import ReelHistoryModal from './inventory/ReelHistoryModal';
@@ -1995,16 +1996,42 @@ export default function Inventory() {
                   Job Card #{viewingJobCard.jobCardNo}
                 </h3>
               </div>
-              <button
-                type="button"
-                onClick={() => setViewingJobCard(null)}
-                className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-muted"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await downloadJobCardPDF({
+                      elementId: 'job-card-print-area',
+                      jobCardNo: viewingJobCard.jobCardNo,
+                      customerName: viewingJobCard.customerName,
+                    });
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs flex items-center gap-1.5 transition-all"
+                >
+                  <ArrowDownToLine className="w-3.5 h-3.5" />
+                  Download PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1.5 transition-all"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Document
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingJobCard(null)}
+                  className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-muted ml-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
-            <div className="p-6 overflow-y-auto flex-1 bg-white text-black">
-              <PrintableJobCard jobCard={viewingJobCard} />
+            <div className="p-6 overflow-y-auto flex-1 bg-gray-100 flex justify-center">
+              <div className="max-w-[210mm] w-full bg-white p-4 rounded-lg shadow-sm">
+                <PrintableJobCard jobCard={viewingJobCard} />
+              </div>
             </div>
           </div>
         </div>

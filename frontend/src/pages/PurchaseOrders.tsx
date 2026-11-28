@@ -28,8 +28,7 @@ import RMStatusModal from './po-management/RMStatusModal';
 import { JobCardModal } from './JobCards';
 import ReelAllocationWizard from './job-cards/ReelAllocationWizard';
 import PrintableJobCard from './job-cards/PrintableJobCard';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import { downloadJobCardPDF } from '../lib/jobCardPdfService';
 
 // Delivery Alert calculation helper
 export interface DeliveryAlertInfo {
@@ -339,20 +338,21 @@ export default function PurchaseOrders() {
   };
 
   // PDF Download Helper for Job Card
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const handleDownloadPDF = async () => {
-    const input = document.getElementById('job-card-print-area') || document.getElementById('printable-job-card');
-    if (!input || !printingJobCard) return;
+    if (!printingJobCard) return;
     try {
-      const canvas = await html2canvas(input, { scale: 2 });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`JobCard-${printingJobCard.jobCardNo || 'Document'}.pdf`);
+      setIsGeneratingPdf(true);
+      await downloadJobCardPDF({
+        elementId: 'job-card-print-area',
+        jobCardNo: printingJobCard.jobCardNo,
+        customerName: printingJobCard.customerName,
+      });
     } catch (err) {
       console.error('Error generating PDF:', err);
       window.print();
+    } finally {
+      setIsGeneratingPdf(false);
     }
   };
 
@@ -902,10 +902,11 @@ export default function PurchaseOrders() {
             <div className="flex items-center gap-2.5">
               <button 
                 onClick={handleDownloadPDF} 
-                className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all"
+                disabled={isGeneratingPdf}
+                className="px-4 py-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
               >
                 <Download className="w-4 h-4" />
-                Download PDF
+                {isGeneratingPdf ? 'Generating PDF...' : 'Download PDF'}
               </button>
               <button 
                 onClick={() => window.print()} 
@@ -924,7 +925,7 @@ export default function PurchaseOrders() {
           </div>
           
           <div className="flex-1 p-6 overflow-y-auto flex justify-center pb-16 no-print-bg print:p-0 print:m-0 print:overflow-visible print:block print:h-auto">
-            <div className="bg-white text-black shadow-2xl rounded-lg overflow-hidden max-w-[210mm] w-full min-h-[297mm] p-6 print:shadow-none print:m-0 print:p-0">
+            <div className="bg-white text-black shadow-2xl rounded-lg overflow-hidden max-w-[210mm] w-full p-4 print:shadow-none print:m-0 print:p-0">
               <PrintableJobCard jobCard={printingJobCard} />
             </div>
           </div>
