@@ -1116,3 +1116,159 @@ export const updateMultipleReelsRate = async (
   return { success: true, updatedCount: updates.length };
 };
 
+/**
+ * Reconciles active_reserved_weight on all reels against all active job cards
+ * ('PENDING', 'PENDING APPROVAL', 'IN_PROCESS').
+ */
+export const reconcileActiveReelReservations = async (): Promise<number> => {
+  const { data, error } = await supabase.rpc('reconcile_active_reel_reservations');
+  if (error) {
+    console.error('Error reconciling reel reservations:', error);
+    throw error;
+  }
+  return Number(data) || 0;
+};
+
+/**
+ * Admin action: Releases the reservation of a specific reel from a Job Card.
+ * Removes the reel from the Job Card's layer allocation and recomputes active reservations.
+ */
+export const unreserveReelFromJobCard = async (
+  reelId: string,
+  reelNumber: string,
+  jobCardId: string,
+  user: string = 'System'
+): Promise<void> => {
+  // 1. Fetch current job card
+  const { data: jcRow, error: jcErr } = await supabase
+    .from('job_cards')
+    .select('firestore_document_id, job_card_no, status, is_archived, product_snapshot, raw_data')
+    .eq('firestore_document_id', jobCardId)
+    .single();
+
+  if (jcErr || !jcRow) {
+    throw new Error('Target Job Card not found: ' + (jcErr?.message || ''));
+  }
+
+  const rawData = (jcRow.raw_data || {}) as Record<string, any>;
+  const currentSnapshot = (jcRow.product_snapshot || rawData.productSnapshot || {}) as Record<string, any>;
+  const layers = Array.isArray(currentSnapshot.layers) ? currentSnapshot.layers : [];
+
+  let releasedWeight = 0;
+  const updatedLayers = layers.map((layer: any) => {
+    const layerAllocReels = Array.isArray(layer.allocatedReels) ? layer.allocatedReels : [];
+
+    // Filter out matching allocated reel
+    const remainingReels = layerAllocReels.filter((r: any) => {
+      const matchId = reelId && r.reelId === reelId;
+      const matchNum = reelNumber && String(r.reelNumber).trim().toUpperCase() === String(reelNumber).trim().toUpperCase();
+      if (matchId || matchNum) {
+        releasedWeight += Number(r.allocatedWeight) || 0;
+        return false;
+      }
+      return true;
+    });
+
+    const newLayer = { ...layer, allocatedReels: remainingReels };
+
+    // Also check and clear legacy fields
+    const legMatchId = reelId && layer.allocatedReelId === reelId;
+    const legMatchNum = reelNumber && String(layer.allocatedReelNumber).trim().toUpperCase() === String(reelNumber).trim().toUpperCase();
+    if (legMatchId || legMatchNum) {
+      releasedWeight += Number(layer.allocatedReelWeight) || 0;
+      delete newLayer.allocatedReelId;
+      delete newLayer.allocatedReelNumber;
+      delete newLayer.allocatedReelWeight;
+    }
+
+    return newLayer;
+  });
+
+  const updatedSnapshot = {
+    ...currentSnapshot,
+    layers: updatedLayers,
+  };
+
+  // 2. Call execute_job_card_transaction RPC to atomically update job card and adjust reel active_reserved_weight
+  const { error: rpcError } = await supabase.rpc('execute_job_card_transaction', {
+    p_job_id: jobCardId,
+    p_new_payload: { productSnapshot: updatedSnapshot },
+    p_user: user || 'System',
+    p_is_create: false,
+  });
+
+  if (rpcError) {
+    console.error('Error executing job card unreserve transaction:', rpcError);
+    throw rpcError;
+  }
+
+  // 3. Reconcile to ensure 100% database consistency
+  try {
+    await reconcileActiveReelReservations();
+  } catch (recErr) {
+    console.warn('Reconcile RPC warning after unreserve:', recErr);
+  }
+
+  // 4. Log activity
+  await logActivity({
+    user: user || 'System',
+    action: 'Unreserved Reel',
+    entity: 'reels',
+    referenceId: reelId || reelNumber,
+    details: `Admin released reservation of reel #${reelNumber} (${Math.round(releasedWeight)} Kg) from Job Card #${jcRow.job_card_no}`,
+  });
+};
+
+/**
+ * Admin action: Clears orphaned reservation on a reel where active_reserved_weight > 0
+ * but no active Job Card references it.
+ */
+export const clearOrphanedReelReservation = async (
+  reelId: string,
+  reelNumber: string,
+  user: string = 'System'
+): Promise<void> => {
+  // First run reconcile
+  try {
+    await reconcileActiveReelReservations();
+  } catch (err) {
+    console.warn('Reconcile RPC failed, proceeding to direct update:', err);
+  }
+
+  // Fetch current state
+  const { data: reelRow } = await supabase
+    .from('reels')
+    .select('firestore_document_id, reel_number, active_reserved_weight, raw_data')
+    .eq('firestore_document_id', reelId)
+    .single();
+
+  if (reelRow && Number(reelRow.active_reserved_weight) > 0) {
+    const now = new Date().toISOString();
+    const updatedRaw = {
+      ...((reelRow.raw_data || {}) as Record<string, any>),
+      activeReservedWeight: 0,
+      updatedBy: user,
+      updatedAt: now,
+    };
+
+    await supabase
+      .from('reels')
+      .update({
+        active_reserved_weight: 0,
+        updated_by: user,
+        updated_at: now,
+        raw_data: updatedRaw,
+      })
+      .eq('firestore_document_id', reelId);
+  }
+
+  await logActivity({
+    user: user || 'System',
+    action: 'Cleared Orphaned Reel Lock',
+    entity: 'reels',
+    referenceId: reelId,
+    details: `Admin cleared orphaned lock on reel #${reelNumber}`,
+  });
+};
+
+

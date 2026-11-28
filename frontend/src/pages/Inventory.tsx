@@ -1,9 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer, Trash2, AlertTriangle, Save, CheckSquare, CheckCircle2, X } from 'lucide-react';
+import { Search, Package, ArrowDownToLine, ArrowUpFromLine, History, Calendar, Edit2, ListFilter, FileSpreadsheet, Printer, Trash2, AlertTriangle, Save, CheckSquare, CheckCircle2, X, RefreshCw, Lock } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../contexts/AuthContext';
-import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInwardDate, deleteReel, deleteMultipleReels, updateMultipleReelsRate, type Reel } from '../lib/supabase/reelService';
+import { getReels, getReelTransactions, updateReelTransactionDate, updateReelInwardDate, deleteReel, deleteMultipleReels, updateMultipleReelsRate, reconcileActiveReelReservations, type Reel } from '../lib/supabase/reelService';
+import { getAllJobCards } from '../lib/supabase/jobCardService';
+import ReservedJobCardDetailModal, { type ReelReservationInfo } from './inventory/ReservedJobCardDetailModal';
+import PrintableJobCard from './job-cards/PrintableJobCard';
 import BulkInwardModal from './inventory/BulkInwardModal';
 import OutwardModal from './inventory/OutwardModal';
 import ReelHistoryModal from './inventory/ReelHistoryModal';
@@ -28,6 +31,15 @@ export default function Inventory() {
   const [editingReel, setEditingReel] = useState<Reel | null>(null);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isAuditHistoryOpen, setIsAuditHistoryOpen] = useState(false);
+
+  // Reservation details modal state
+  const [selectedReservationModal, setSelectedReservationModal] = useState<{
+    reel: any;
+    reservations: ReelReservationInfo[];
+    initialSelectedJobCardId?: string;
+  } | null>(null);
+  const [viewingJobCard, setViewingJobCard] = useState<any | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
 
   const handleViewHistory = (reel: Reel) => {
     setHistorySelectedReel(reel);
@@ -67,6 +79,123 @@ export default function Inventory() {
     queryFn: () => getReelTransactions() as Promise<any[]>,
     enabled: activeTab === 'ISSUED_REPORT' || activeTab === 'PURCHASE_REPORT' || activeTab === 'MONTHLY_SUMMARY' || metricFilter !== 'CLOSING'
   });
+
+  const { data: jobCards = [], refetch: refetchJobCards } = useQuery({
+    queryKey: ['jobcards'],
+    queryFn: () => getAllJobCards(),
+  });
+
+  const handleReconcileReservations = async () => {
+    try {
+      setIsReconciling(true);
+      const updatedCount = await reconcileActiveReelReservations();
+      await Promise.all([refetch(), refetchJobCards()]);
+      alert(`Successfully synchronized reservations! Checked & updated ${updatedCount} reel(s).`);
+    } catch (err: any) {
+      console.error('Reconciliation error:', err);
+      alert(err.message || 'Failed to reconcile reservations');
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  // Map reelId and reelNumber to list of active reservations from active job cards
+  const reelReservationsMap = useMemo(() => {
+    const map: Record<string, ReelReservationInfo[]> = {};
+
+    (jobCards || []).forEach((jc: any) => {
+      // Active reservations exist for PENDING, PENDING APPROVAL, IN_PROCESS (non-archived)
+      const isCandidate = ['PENDING', 'PENDING APPROVAL', 'IN_PROCESS'].includes(jc.status) && !jc.isArchived;
+      if (!isCandidate) return;
+
+      const layers = jc.productSnapshot?.layers;
+      if (!Array.isArray(layers)) return;
+
+      layers.forEach((layer: any, idx: number) => {
+        const layerName = layer.layerName || layer.paperType || `Layer ${idx + 1}`;
+
+        // 1. Array format: allocatedReels
+        if (Array.isArray(layer.allocatedReels)) {
+          layer.allocatedReels.forEach((alloc: any) => {
+            const w = Number(alloc.allocatedWeight) || 0;
+            if (w <= 0) return;
+
+            const info: ReelReservationInfo = {
+              jobCardId: jc.id,
+              jobCardNo: jc.jobCardNo || '',
+              customerName: jc.customerName || 'N/A',
+              productName: jc.productName || 'N/A',
+              targetDate: jc.targetDate,
+              createdAt: jc.createdAt,
+              status: jc.status,
+              layerIndex: idx,
+              layerName,
+              allocatedWeight: w,
+              jobCard: jc,
+            };
+
+            if (alloc.reelId) {
+              map[alloc.reelId] = map[alloc.reelId] || [];
+              map[alloc.reelId].push(info);
+            }
+            if (alloc.reelNumber) {
+              const numKey = String(alloc.reelNumber).trim().toUpperCase();
+              map[numKey] = map[numKey] || [];
+              map[numKey].push(info);
+            }
+          });
+        }
+
+        // 2. Legacy format: allocatedReelNumber / allocatedReelId
+        const legW = Number(layer.allocatedReelWeight) || 0;
+        if (legW > 0) {
+          const info: ReelReservationInfo = {
+            jobCardId: jc.id,
+            jobCardNo: jc.jobCardNo || '',
+            customerName: jc.customerName || 'N/A',
+            productName: jc.productName || 'N/A',
+            targetDate: jc.targetDate,
+            createdAt: jc.createdAt,
+            status: jc.status,
+            layerIndex: idx,
+            layerName,
+            allocatedWeight: legW,
+            jobCard: jc,
+          };
+
+          if (layer.allocatedReelId) {
+            map[layer.allocatedReelId] = map[layer.allocatedReelId] || [];
+            map[layer.allocatedReelId].push(info);
+          }
+          if (layer.allocatedReelNumber) {
+            const numKey = String(layer.allocatedReelNumber).trim().toUpperCase();
+            map[numKey] = map[numKey] || [];
+            map[numKey].push(info);
+          }
+        }
+      });
+    });
+
+    return map;
+  }, [jobCards]);
+
+  const getReservationsForReel = (reel: any): ReelReservationInfo[] => {
+    const fromId = reel.id ? (reelReservationsMap[reel.id] || []) : [];
+    const fromNo = reel.reelNumber ? (reelReservationsMap[String(reel.reelNumber).trim().toUpperCase()] || []) : [];
+
+    const combined = [...fromId, ...fromNo];
+    const seen = new Set<string>();
+    const unique: ReelReservationInfo[] = [];
+
+    for (const item of combined) {
+      const key = `${item.jobCardId}_${item.layerIndex}_${item.allocatedWeight}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(item);
+      }
+    }
+    return unique;
+  };
 
   const sortedAndFilteredReels = useMemo(() => {
     let result = reels.filter(r => {
@@ -794,15 +923,30 @@ export default function Inventory() {
                 )}
                 
                 {activeTab === 'ACTIVE' && (
-                  <label className="flex items-center space-x-2 text-sm font-medium bg-blue-50 text-blue-800 px-3 py-2 rounded-md border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors">
-                    <input 
-                      type="checkbox" 
-                      checked={showReservedOnly} 
-                      onChange={e => setShowReservedOnly(e.target.checked)} 
-                      className="rounded border-blue-400 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer" 
-                    />
-                    <span>Show Reserved Only</span>
-                  </label>
+                  <>
+                    <label className="flex items-center space-x-2 text-sm font-medium bg-blue-50 text-blue-800 px-3 py-2 rounded-md border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors">
+                      <input 
+                        type="checkbox" 
+                        checked={showReservedOnly} 
+                        onChange={e => setShowReservedOnly(e.target.checked)} 
+                        className="rounded border-blue-400 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer" 
+                      />
+                      <span>Show Reserved Only</span>
+                    </label>
+
+                    {hasRole('ADMIN') && (
+                      <button
+                        type="button"
+                        onClick={handleReconcileReservations}
+                        disabled={isReconciling}
+                        className="flex items-center gap-1.5 text-xs font-semibold bg-secondary hover:bg-secondary/80 text-foreground px-3 py-2 rounded-md border border-border transition-colors shadow-xs"
+                        title="Recalculate and synchronize all reel active reservations against active Job Cards"
+                      >
+                        <RefreshCw className={cn("w-3.5 h-3.5", isReconciling && "animate-spin text-primary")} />
+                        <span>Sync Reservations</span>
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
               
@@ -1379,6 +1523,11 @@ export default function Inventory() {
                   <th className="px-6 py-3 font-medium text-blue-600">Initial Wt</th>
                   <th className="px-6 py-3 font-medium text-red-600">Consumed</th>
                   <th className="px-6 py-3 font-medium text-green-600">Balance</th>
+                  {activeTab === 'ACTIVE' && (
+                    <th className="px-6 py-3 font-medium text-amber-700 bg-amber-50/50">
+                      Reserved For (JC)
+                    </th>
+                  )}
                   <th className="px-6 py-3 font-medium">Date</th>
                   <th className="px-6 py-3 font-medium text-right">Action</th>
                 </tr>
@@ -1386,6 +1535,8 @@ export default function Inventory() {
               <tbody className="divide-y divide-border">
                 {sortedAndFilteredReels.map((reel: any) => {
                   const consumed = (Number(reel.weight) || 0) - (Number(reel.currentBalance) || 0);
+                  const resList = activeTab === 'ACTIVE' ? getReservationsForReel(reel) : [];
+                  const resWt = Number(reel.activeReservedWeight) || 0;
                   
                   return (
                     <tr 
@@ -1439,6 +1590,71 @@ export default function Inventory() {
                       <td className="px-6 py-4 font-bold text-green-600">
                         {Math.round(reel.currentBalance)} {reel.paperType === 'HDPE' ? 'Mtr' : 'Kg'}
                       </td>
+                      {activeTab === 'ACTIVE' && (
+                        <td 
+                          className="px-6 py-4"
+                          onClick={(e) => {
+                            if (resList.length > 0 || resWt > 0) {
+                              e.stopPropagation();
+                              setSelectedReservationModal({
+                                reel,
+                                reservations: resList,
+                              });
+                            }
+                          }}
+                        >
+                          {resList.length > 0 ? (
+                            <div className="flex flex-col gap-1 items-start">
+                              {resList.map((res, rIdx) => (
+                                <button
+                                  key={rIdx}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedReservationModal({
+                                      reel,
+                                      reservations: resList,
+                                      initialSelectedJobCardId: res.jobCardId,
+                                    });
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-md bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-xs transition-transform hover:scale-105 cursor-pointer text-left"
+                                  title={`Click to view reservation: Job Card #${res.jobCardNo} (${res.customerName})`}
+                                >
+                                  <span className="text-amber-600">🔒</span>
+                                  <span className="underline decoration-dotted font-mono">JC #{res.jobCardNo}</span>
+                                  <span className="text-[11px] font-bold text-amber-800 bg-amber-200/90 px-1 rounded">
+                                    {Math.round(res.allocatedWeight)} Kg
+                                  </span>
+                                </button>
+                              ))}
+                              {resList.length > 1 && (
+                                <span className="text-[10px] text-muted-foreground font-semibold">
+                                  Total Reserved: {Math.round(resWt)} Kg
+                                </span>
+                              )}
+                            </div>
+                          ) : resWt > 0 ? (
+                            <div className="flex flex-col gap-1 items-start">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedReservationModal({
+                                    reel,
+                                    reservations: [],
+                                  });
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 cursor-pointer"
+                                title="Click to view details or clear orphaned reservation"
+                              >
+                                <span>⚠️ Locked: {Math.round(resWt)} Kg</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-6 py-4 text-muted-foreground">
                         {reel.inwardDate ? new Date(reel.inwardDate).toLocaleDateString('en-IN') : '-'}
                       </td>
@@ -1458,7 +1674,7 @@ export default function Inventory() {
                 })}
                 {sortedAndFilteredReels.length === 0 && (
                   <tr>
-                    <td colSpan={hasRole('ADMIN') ? 10 : 9} className="px-6 py-12 text-center text-muted-foreground">
+                    <td colSpan={(hasRole('ADMIN') ? 10 : 9) + (activeTab === 'ACTIVE' ? 1 : 0)} className="px-6 py-12 text-center text-muted-foreground">
                       <Package className="w-12 h-12 mx-auto text-muted mb-3" />
                       <p>No {activeTab === 'EMPTY' ? 'empty' : 'active'} reels found.</p>
                     </td>
@@ -1747,6 +1963,48 @@ export default function Inventory() {
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reserved Job Card Details & Unreserve Action Modal */}
+      {selectedReservationModal && (
+        <ReservedJobCardDetailModal
+          isOpen={!!selectedReservationModal}
+          onClose={() => setSelectedReservationModal(null)}
+          reel={selectedReservationModal.reel}
+          reservations={selectedReservationModal.reservations}
+          initialSelectedJobCardId={selectedReservationModal.initialSelectedJobCardId}
+          onReservationReleased={() => {
+            refetch();
+            refetchJobCards();
+          }}
+          onViewPrintableJobCard={(jc) => setViewingJobCard(jc)}
+        />
+      )}
+
+      {/* Printable Job Card Preview Modal */}
+      {viewingJobCard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-card w-full max-w-4xl max-h-[92vh] rounded-xl shadow-2xl border border-border flex flex-col overflow-hidden">
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-secondary/30">
+              <div className="flex items-center gap-2">
+                <Printer className="w-5 h-5 text-primary" />
+                <h3 className="font-bold text-foreground">
+                  Job Card #{viewingJobCard.jobCardNo}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingJobCard(null)}
+                className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-muted"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1 bg-white text-black">
+              <PrintableJobCard jobCard={viewingJobCard} />
             </div>
           </div>
         </div>
